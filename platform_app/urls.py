@@ -17,8 +17,10 @@ urlpatterns = [
     path("api/batches/<uuid:batch_id>/preflight/", views.api_preflight, name="api_preflight"),
     path("api/batches/<uuid:batch_id>/confirm/", views.api_confirm_generation, name="api_confirm_generation"),
     path("api/clusters/<uuid:cluster_id>/", views.api_update_cluster, name="api_update_cluster"),
+    path("api/clusters/<uuid:cluster_id>/optimize-prompt/", views.api_optimize_prompt, name="api_optimize_prompt"),
     path("api/clusters/<uuid:cluster_id>/merge/", views.api_merge_asset, name="api_merge_asset"),
     path("api/assets/<uuid:asset_id>/split/", views.api_split_asset, name="api_split_asset"),
     path("api/generations/<uuid:generation_id>/retry/", views.api_generation_retry, name="api_generation_retry"),
     path("health/live", views.health_live, name="health_live"),
+    path("health/ready", views.health_ready, name="health_ready"),
 ]

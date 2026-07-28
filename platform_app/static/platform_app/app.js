@@ -116,5 +116,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  for (const button of document.querySelectorAll(".optimize-cluster")) {
+    button.addEventListener("click", async () => {
+      const card = button.closest(".cluster-card");
+      button.disabled = true;
+      const body = await postJson(card.dataset.optimizeUrl);
+      button.disabled = false;
+      if (body.error) alert(body.error);
+      else card.querySelector(".cluster-prompt").value = body.suggested_prompt || "";
+    });
+  }
+
   refreshSnapshot();
 });

@@ -4,7 +4,8 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.views import LoginView
-from django.http import Http404, JsonResponse
+from django.db import connection
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.http import require_POST
@@ -17,6 +18,7 @@ from .services import (
     move_asset_to_new_cluster,
     preflight_batch,
     register_uploaded_asset,
+    optimize_cluster_prompt,
 )
 
 
@@ -95,7 +97,17 @@ def batch_detail(request, batch_id):
 
 
 def health_live(request):
-    return render(request, "platform_app/health.txt", {"status": "ok"}, content_type="text/plain")
+    return HttpResponse("ok", content_type="text/plain")
+
+
+def health_ready(request):
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except Exception as exc:
+        return JsonResponse({"database": "error", "error": str(exc)}, status=503)
+    return JsonResponse({"database": "ok"})
 
 
 def _batch_for_user(user, batch_id):
@@ -155,6 +167,20 @@ def api_update_cluster(request, cluster_id):
         ]
     )
     return JsonResponse({"id": str(cluster.id), "version": cluster.version})
+
+
+@login_required
+@password_change_required
+@require_POST
+def api_optimize_prompt(request, cluster_id):
+    from .models import Cluster
+
+    cluster = get_object_or_404(Cluster.objects.select_related("batch"), id=cluster_id)
+    require_owner_or_admin(request.user, cluster.batch)
+    try:
+        return JsonResponse(optimize_cluster_prompt(cluster))
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=502)
 
 
 @login_required

@@ -21,7 +21,7 @@
   <h2>商品集群</h2>
   <div id="cluster-list">
     {% for cluster in clusters %}
-      <article class="panel cluster-card" style="margin: 10px 0;" data-cluster-id="{{ cluster.id }}" data-version="{{ cluster.version }}" data-merge-url="{% url 'api_merge_asset' cluster.id %}" data-update-url="{% url 'api_update_cluster' cluster.id %}">
+      <article class="panel cluster-card" style="margin: 10px 0;" data-cluster-id="{{ cluster.id }}" data-version="{{ cluster.version }}" data-merge-url="{% url 'api_merge_asset' cluster.id %}" data-update-url="{% url 'api_update_cluster' cluster.id %}" data-optimize-url="{% url 'api_optimize_prompt' cluster.id %}">
         <h3>{{ cluster.name }}</h3>
         <p class="muted">版本 {{ cluster.version }}</p>
         <ul>
@@ -36,6 +36,7 @@
         </ul>
         <label>集群提示词</label>
         <textarea rows="3" class="cluster-prompt">{{ cluster.prompt_override }}</textarea>
+        <button type="button" class="optimize-cluster">AI 优化提示词</button>
         <button type="button" class="save-cluster">保存提示词</button>
       </article>
     {% empty %}

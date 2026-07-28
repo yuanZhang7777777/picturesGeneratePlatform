@@ -121,3 +121,26 @@ def test_update_cluster_prompt_requires_current_version(client, tmp_path, settin
     cluster.refresh_from_db()
     assert cluster.prompt_override == "new prompt"
     assert cluster.version == 2
+
+
+def test_optimize_prompt_returns_draft_without_saving(client, tmp_path, settings):
+    from platform_app.services import create_batch, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.APIMART_FAKE_MODE = True
+    user = make_user()
+    batch = create_batch(user, "Batch 1")
+    batch.global_prompt = "white background"
+    batch.save(update_fields=["global_prompt"])
+    asset = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
+    cluster = asset.clusters.get()
+    cluster.product_name = "Desk lamp"
+    cluster.save(update_fields=["product_name"])
+    client.force_login(user)
+
+    response = client.post(reverse("api_optimize_prompt", args=[cluster.id]))
+
+    assert response.status_code == 200
+    assert "Desk lamp" in response.json()["suggested_prompt"]
+    cluster.refresh_from_db()
+    assert cluster.prompt_override == ""

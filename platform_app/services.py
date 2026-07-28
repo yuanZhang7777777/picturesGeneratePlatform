@@ -539,3 +539,35 @@ def process_generation_once(client=None, storage=None):
     active.save(update_fields=["status", "completed_at", "updated_at"])
     active.batch.recompute_status()
     return 1
+
+
+def optimize_cluster_prompt(cluster, client=None):
+    source_text = "\n".join(
+        part
+        for part in [
+            f"Product name: {cluster.product_name}",
+            f"Global requirements: {cluster.batch.global_prompt}",
+            f"Product facts: {cluster.product_facts}",
+            f"Identity lock: {cluster.identity_lock}",
+            f"Cluster requirements: {cluster.prompt_override}",
+        ]
+        if part and not part.endswith(": ")
+    )
+    if settings.APIMART_FAKE_MODE:
+        product = cluster.product_name or cluster.name
+        prompt = (
+            f"Create a 1:1 ecommerce product image for {product}. "
+            f"Keep the product identity unchanged. {cluster.batch.global_prompt}".strip()
+        )
+        return {"suggested_prompt": prompt, "missing_fields": []}
+
+    client = client or APIMartClient()
+    response = client.optimize_prompt(
+        {
+            "text": (
+                "Return a concise JSON object with suggested_prompt and missing_fields for an ecommerce image.\n"
+                f"{source_text}"
+            )
+        }
+    )
+    return {"suggested_prompt": response.get("output_text", ""), "raw": response}

@@ -1,6 +1,6 @@
 # 独立批量出图平台
 
-状态：产品与技术设计已形成，尚未开始实现或部署。
+状态：MVP 正在实现，已具备 Django 项目基线、登录、上传、集群、队列和 APIMart 客户端。
 
 本项目面向公司内部运营人员，提供文件夹上传、商品图片集群整理、全局与集群提示词、AI Prompt 优化、APIMart 异步生图、OSS 归档、单张失败重做和历史版本保留。
 
@@ -24,5 +24,7 @@
 权威设计：
 
 - [独立批量出图平台完整设计](docs/specs/2026-07-28-independent-image-platform-design.md)
+- [MVP 实施计划](docs/superpowers/plans/2026-07-28-independent-image-platform-mvp.md)
+- [运行与部署手册](docs/runbook.md)
 
 历史飞书/Coze 项目只作为经验来源。本项目不调用、不依赖也不复制飞书或 Coze 工作流。
