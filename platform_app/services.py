@@ -1,4 +1,7 @@
+import base64
 import hashlib
+import mimetypes
+import re
 import uuid
 from io import BytesIO
 from pathlib import Path
@@ -8,6 +11,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from PIL import Image, UnidentifiedImageError
+import requests
 
 from .models import (
     Asset,
@@ -28,6 +32,37 @@ BATCH_GENERATION_LIMIT = 300
 
 class SubmitUnknown(Exception):
     pass
+
+
+class ProviderError(Exception):
+    pass
+
+
+class RateLimited(ProviderError):
+    pass
+
+
+def _sanitize_provider_text(text):
+    text = str(text)
+    if settings.APIMART_API_KEY:
+        text = text.replace(settings.APIMART_API_KEY, "[redacted]")
+    return re.sub(r"Bearer\s+[A-Za-z0-9._-]+", "Bearer [redacted]", text)
+
+
+def _raise_provider_error(response):
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    message = (
+        payload.get("error", {}).get("message")
+        or payload.get("message")
+        or f"provider returned HTTP {response.status_code}"
+    )
+    sanitized = _sanitize_provider_text(message)
+    if response.status_code == 429:
+        raise RateLimited(sanitized)
+    raise ProviderError(sanitized)
 
 
 class LocalStorage:
@@ -69,6 +104,105 @@ class FakeAPIMartClient:
         buffer = BytesIO()
         Image.new("RGB", (8, 8), "white").save(buffer, "PNG")
         return buffer.getvalue()
+
+
+class APIMartClient:
+    def __init__(self, session=None, timeout=60):
+        self.session = session or requests.Session()
+        self.timeout = timeout
+
+    @property
+    def headers(self):
+        if not settings.APIMART_API_KEY:
+            raise ProviderError("APIMart API key is not configured")
+        return {
+            "Authorization": f"Bearer {settings.APIMART_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+    def _data_uri(self, path):
+        raw = Path(path).read_bytes()
+        mime = mimetypes.guess_type(path)[0] or "image/png"
+        encoded = base64.b64encode(raw).decode("ascii")
+        return f"data:{mime};base64,{encoded}"
+
+    def _json(self, response):
+        if response.status_code >= 400:
+            _raise_provider_error(response)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ProviderError("provider returned invalid JSON") from exc
+
+    def submit_generation(self, prompt, image_paths, size, resolution):
+        payload = {
+            "model": "gpt-image-2",
+            "prompt": prompt,
+            "n": 1,
+            "size": size,
+            "resolution": resolution,
+            "official_fallback": False,
+        }
+        if image_paths:
+            payload["image_urls"] = [self._data_uri(path) for path in image_paths]
+
+        try:
+            response = self.session.post(
+                f"{settings.APIMART_BASE_URL}/v1/images/generations",
+                json=payload,
+                headers=self.headers,
+                timeout=self.timeout,
+            )
+        except requests.Timeout as exc:
+            raise SubmitUnknown("generation submit timed out") from exc
+        except requests.RequestException as exc:
+            raise SubmitUnknown(_sanitize_provider_text(str(exc))) from exc
+
+        data = self._json(response).get("data")
+        first = data[0] if isinstance(data, list) and data else data
+        task_id = first.get("task_id") if isinstance(first, dict) else None
+        if not task_id:
+            raise ProviderError("provider response did not include task_id")
+        return task_id
+
+    def get_task(self, task_id):
+        response = self.session.get(
+            f"{settings.APIMART_BASE_URL}/v1/tasks/{task_id}",
+            headers=self.headers,
+            params={"language": "zh"},
+            timeout=self.timeout,
+        )
+        payload = self._json(response)
+        return payload.get("data", payload)
+
+    def download_image(self, url):
+        response = self.session.get(url, timeout=self.timeout)
+        if response.status_code >= 400:
+            _raise_provider_error(response)
+        return response.content
+
+    def optimize_prompt(self, payload):
+        text = payload.get("text", "")
+        response = self.session.post(
+            f"{settings.APIMART_BASE_URL}/v1/responses",
+            json={
+                "model": settings.APIMART_PROMPT_MODEL,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": text,
+                            }
+                        ],
+                    }
+                ],
+            },
+            headers=self.headers,
+            timeout=self.timeout,
+        )
+        return self._json(response)
 
 
 def create_batch(owner, name, platform="shopee", site="SG"):
@@ -326,7 +460,7 @@ def _image_urls(payload):
 
 
 def process_generation_once(client=None, storage=None):
-    client = client or FakeAPIMartClient()
+    client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
     queued = (
         Generation.objects.select_related("batch", "cluster", "output_slot")
