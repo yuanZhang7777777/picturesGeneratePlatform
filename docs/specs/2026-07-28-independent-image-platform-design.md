@@ -1,7 +1,7 @@
 # 独立批量出图平台完整设计
 
 日期：2026-07-28  
-状态：待用户复核；不是已完成实现或部署  
+状态：设计已批准；MVP 预览环境已部署，完整生产能力仍按阶段推进  
 目标读者：产品负责人、实现工程师、测试与运维人员
 
 ## 1. 结论
@@ -677,4 +677,3 @@ Docker 日志按大小轮转。服务重启后 worker 扫描 `submitting/submitt
 - Shopee Seller University：<https://cdngarenanow-a.akamaihd.net/shopee/seller/seller_cms/9ea9de96f9fbb81adeff19e4abe60f48/%5BMY%5D%20Shopee%20Uni%20Basic%20-%20Eng.pdf>
 - Shopee Mall Listing Guidelines：<https://cdngarenanow-a.akamaihd.net/shopee/seller/seller_cms/b71e298c6c220f22ef6f08608dbe1bd8/Mall%20Listing%20Guidelines.pdf>
 - TikTok Shop Product Listing Policy：<https://seller-us.tiktok.com/university/essay?knowledge_id=3196690250417921>
-

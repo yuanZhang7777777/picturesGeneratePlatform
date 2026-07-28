@@ -50,6 +50,25 @@ bridge_needed=no
 
 Use `.codex_locks/global.lock` before creating or updating `/opt/independent-image-platform`.
 
+Current preview deployment:
+
+- Remote path: `/opt/independent-image-platform`
+- Compose project: `independent-image-platform`
+- Port: `18083`
+- Mode: `APIMART_FAKE_MODE=1`
+- Deployment log: `/home/lxc/HengzheProjects/logs/independent_image_platform_deploy_20260728_2111.log`
+- Admin username: `admin`
+- Admin password file: `/opt/independent-image-platform/.admin_password`
+
+Smoke checks:
+
+```bash
+cd /opt/independent-image-platform
+docker compose -p independent-image-platform ps
+curl -fsS http://127.0.0.1:18083/health/ready
+docker compose -p independent-image-platform exec -T generation-worker python manage.py run_generation_worker --once
+```
+
 ## Security Notes
 
 - Rotate any key pasted into chat before real use.

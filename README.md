@@ -1,6 +1,6 @@
 # 独立批量出图平台
 
-状态：MVP 正在实现，已具备 Django 项目基线、登录、上传、集群、队列和 APIMart 客户端。
+状态：MVP 已部署到 2 号云服务器预览环境，入口为该服务器 IP 的 `18083` 端口。
 
 本项目面向公司内部运营人员，提供文件夹上传、商品图片集群整理、全局与集群提示词、AI Prompt 优化、APIMart 异步生图、OSS 归档、单张失败重做和历史版本保留。
 
@@ -20,6 +20,14 @@
 - 2 号云服务器独立 Docker Compose 栈。
 - 临时预览入口使用当前空闲的 `18083` 端口并限制来源 IP。
 - 真实员工密码和商品素材正式使用前必须升级为域名 HTTPS。
+
+当前预览边界：
+
+- 部署目录：`/opt/independent-image-platform`。
+- Compose 项目名：`independent-image-platform`。
+- 当前为 `APIMART_FAKE_MODE=1`，不会产生真实 APIMart 费用。
+- 已生成临时 `admin` 账号；密码保存在服务器 root-only 文件 `/opt/independent-image-platform/.admin_password`。
+- 聊天中出现过的 APIMart/OSS 密钥不写入仓库或文档；真实付费生图前必须轮换并写入服务器 `.env`。
 
 权威设计：
 
