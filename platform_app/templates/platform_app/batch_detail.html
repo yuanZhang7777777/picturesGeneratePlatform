@@ -1,0 +1,10 @@
+{% extends "platform_app/base.html" %}
+{% block title %}{{ batch.name }}{% endblock %}
+{% block content %}
+<h1>{{ batch.name }}</h1>
+<p class="muted">{{ batch.platform }} / {{ batch.site }} / {{ batch.status }}</p>
+<section class="panel">
+  <h2>全局要求</h2>
+  <p>{{ batch.global_prompt|linebreaksbr }}</p>
+</section>
+{% endblock %}

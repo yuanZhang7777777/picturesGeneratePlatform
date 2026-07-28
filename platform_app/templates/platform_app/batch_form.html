@@ -1,0 +1,12 @@
+{% extends "platform_app/base.html" %}
+{% block title %}新建批次{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>新建批次</h1>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">创建</button>
+  </form>
+</section>
+{% endblock %}

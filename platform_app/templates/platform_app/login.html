@@ -1,0 +1,12 @@
+{% extends "platform_app/base.html" %}
+{% block title %}登录{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 420px;">
+  <h1>登录</h1>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">登录</button>
+  </form>
+</section>
+{% endblock %}
