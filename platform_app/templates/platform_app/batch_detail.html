@@ -1,10 +1,59 @@
 {% extends "platform_app/base.html" %}
+{% load static %}
 {% block title %}{{ batch.name }}{% endblock %}
 {% block content %}
-<h1>{{ batch.name }}</h1>
+<h1 data-batch-id="{{ batch.id }}">{{ batch.name }}</h1>
 <p class="muted">{{ batch.platform }} / {{ batch.site }} / {{ batch.status }}</p>
 <section class="panel">
   <h2>全局要求</h2>
   <p>{{ batch.global_prompt|linebreaksbr }}</p>
 </section>
+<section class="panel" style="margin-top: 16px;">
+  <h2>Upload source files</h2>
+  <form id="upload-form" data-upload-url="{% url 'api_upload_assets' batch.id %}">
+    {% csrf_token %}
+    <input id="file-input" name="files" type="file" multiple webkitdirectory>
+    <button type="submit">上传</button>
+  </form>
+  <p id="upload-status" class="muted"></p>
+</section>
+<section class="panel" style="margin-top: 16px;">
+  <h2>商品集群</h2>
+  <div id="cluster-list">
+    {% for cluster in clusters %}
+      <article class="panel cluster-card" style="margin: 10px 0;" data-cluster-id="{{ cluster.id }}" data-version="{{ cluster.version }}" data-merge-url="{% url 'api_merge_asset' cluster.id %}" data-update-url="{% url 'api_update_cluster' cluster.id %}">
+        <h3>{{ cluster.name }}</h3>
+        <p class="muted">版本 {{ cluster.version }}</p>
+        <ul>
+          {% for item in cluster.cluster_assets.all %}
+            <li draggable="true" data-asset-id="{{ item.asset.id }}">
+              {{ item.asset.original_filename }} / {{ item.role }}
+              <button type="button" class="split-asset" data-url="{% url 'api_split_asset' item.asset.id %}">移出</button>
+            </li>
+          {% empty %}
+            <li class="muted">暂无图片</li>
+          {% endfor %}
+        </ul>
+        <label>集群提示词</label>
+        <textarea rows="3" class="cluster-prompt">{{ cluster.prompt_override }}</textarea>
+        <button type="button" class="save-cluster">保存提示词</button>
+      </article>
+    {% empty %}
+      <p class="muted">上传图片后，每张图片会默认成为一个商品集群。</p>
+    {% endfor %}
+  </div>
+</section>
+<section class="panel" style="margin-top: 16px;">
+  <h2>生成</h2>
+  <button id="preflight-button" data-url="{% url 'api_preflight' batch.id %}">预检</button>
+  <button id="confirm-button" data-url="{% url 'api_confirm_generation' batch.id %}">确认生成</button>
+  <pre id="preflight-output"></pre>
+</section>
+<section class="panel" style="margin-top: 16px;">
+  <h2>实时状态</h2>
+  <pre id="snapshot-output" data-url="{% url 'api_batch_snapshot' batch.id %}"></pre>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{% static 'platform_app/app.js' %}"></script>
 {% endblock %}
