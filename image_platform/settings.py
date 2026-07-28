@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -75,7 +76,8 @@ WSGI_APPLICATION = "image_platform.wsgi.application"
 
 
 def database_config():
-    if env_bool("USE_SQLITE_FOR_TESTS", False):
+    running_pytest = any("pytest" in arg for arg in sys.argv)
+    if env_bool("USE_SQLITE_FOR_TESTS", running_pytest):
         return {
             "default": {
                 "ENGINE": "django.db.backends.sqlite3",
@@ -121,6 +123,7 @@ MEDIA_URL = "media/"
 LOCAL_MEDIA_ROOT = Path(os.getenv("LOCAL_MEDIA_ROOT", BASE_DIR / "media"))
 MEDIA_ROOT = LOCAL_MEDIA_ROOT
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+AUTH_USER_MODEL = "platform_app.User"
 
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "batch_list"
