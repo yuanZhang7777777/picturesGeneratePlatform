@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: independent-image-platform
+Version: 0.1.0
+Requires-Python: >=3.12
+Requires-Dist: Django<5.3,>=5.2
+Requires-Dist: Pillow<11,>=10.4
+Requires-Dist: requests<3,>=2.32
+Requires-Dist: psycopg[binary]<4,>=3.2
+Requires-Dist: gunicorn<23,>=22
+Requires-Dist: whitenoise<7,>=6.7
+Provides-Extra: dev
+Requires-Dist: pytest<9,>=8.3; extra == "dev"
+Requires-Dist: pytest-django<5,>=4.9; extra == "dev"
