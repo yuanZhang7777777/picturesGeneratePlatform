@@ -12,3 +12,4 @@ media/
 staticfiles/
 *.log
 *.zip
+*.egg-info/
