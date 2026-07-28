@@ -6,13 +6,69 @@ from pathlib import Path
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Max
+from django.utils import timezone
 from PIL import Image, UnidentifiedImageError
 
-from .models import Asset, Batch, Cluster, ClusterAsset
+from .models import (
+    Asset,
+    Batch,
+    Cluster,
+    ClusterAsset,
+    Generation,
+    OutputSlot,
+    OutputTemplate,
+    ResultAsset,
+)
 
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_TXT_BYTES = 256 * 1024
+BATCH_GENERATION_LIMIT = 300
+
+
+class SubmitUnknown(Exception):
+    pass
+
+
+class LocalStorage:
+    def __init__(self, root=None):
+        self.root = Path(root or settings.MEDIA_ROOT)
+
+    def path(self, storage_path):
+        return self.root / storage_path
+
+    def archive_result(self, generation, source_url, data):
+        image_format, width, height = _inspect_image(data)
+        suffix = ".jpg" if image_format == "JPEG" else ".png"
+        storage_path = (
+            f"results/{generation.batch_id}/{generation.cluster_id}/"
+            f"{generation.output_slot_id}/{generation.attempt}/{uuid.uuid4().hex}{suffix}"
+        )
+        target = self.path(storage_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        return ResultAsset.objects.create(
+            generation=generation,
+            storage_path=storage_path,
+            source_url="" if source_url.startswith("fake://") else source_url,
+            sha256=hashlib.sha256(data).hexdigest(),
+            file_size=len(data),
+            width=width,
+            height=height,
+        )
+
+
+class FakeAPIMartClient:
+    def submit_generation(self, prompt, image_paths, size, resolution):
+        return f"fake-{uuid.uuid4().hex}"
+
+    def get_task(self, task_id):
+        return {"status": "completed", "image_urls": [f"fake://{task_id}/result.png"]}
+
+    def download_image(self, url):
+        buffer = BytesIO()
+        Image.new("RGB", (8, 8), "white").save(buffer, "PNG")
+        return buffer.getvalue()
 
 
 def create_batch(owner, name, platform="shopee", site="SG"):
@@ -150,3 +206,202 @@ def latest_attempt(cluster, slot):
         .aggregate(value=Max("attempt"))["value"]
         or 0
     )
+
+
+def ensure_default_template(platform="shopee", site="SG"):
+    template, _ = OutputTemplate.objects.get_or_create(
+        platform=platform,
+        site=site,
+        name="Default one image set",
+        defaults={"default_size": "1:1", "default_resolution": "1k"},
+    )
+    OutputSlot.objects.get_or_create(
+        template=template,
+        order=1,
+        defaults={"name": "main", "purpose": "Main ecommerce product image"},
+    )
+    return template
+
+
+def _used_generations_today(user=None):
+    today = timezone.localdate()
+    queryset = Generation.objects.exclude(status=Generation.Status.CANCELED).filter(created_at__date=today)
+    if user is not None:
+        queryset = queryset.filter(created_by=user)
+    return queryset.count()
+
+
+def preflight_batch(batch, user, template=None):
+    template = template or ensure_default_template(batch.platform, batch.site)
+    slot_count = template.slots.count()
+    cluster_count = batch.clusters.count()
+    generation_count = cluster_count * slot_count
+    org_used = _used_generations_today()
+    user_used = _used_generations_today(user)
+    user_limit = user.daily_generation_limit or settings.USER_DAILY_GENERATION_LIMIT
+    org_remaining = max(settings.ORG_DAILY_GENERATION_LIMIT - org_used, 0)
+    user_remaining = max(user_limit - user_used, 0)
+    blocking_errors = []
+
+    if cluster_count == 0:
+        blocking_errors.append("batch has no image clusters")
+    if generation_count > BATCH_GENERATION_LIMIT:
+        blocking_errors.append("batch generation limit exceeded")
+    if generation_count > org_remaining:
+        blocking_errors.append("organization daily quota exceeded")
+    if generation_count > user_remaining:
+        blocking_errors.append("user daily quota exceeded")
+
+    return {
+        "cluster_count": cluster_count,
+        "slot_count": slot_count,
+        "generation_count": generation_count,
+        "org_remaining": org_remaining,
+        "user_remaining": user_remaining,
+        "blocking_errors": blocking_errors,
+    }
+
+
+@transaction.atomic
+def confirm_generation(batch, user, template=None):
+    locked_batch = Batch.objects.select_for_update().get(id=batch.id)
+    existing = list(locked_batch.generations.order_by("created_at", "id"))
+    if locked_batch.confirmed_generation_key and existing:
+        return existing
+
+    template = template or ensure_default_template(locked_batch.platform, locked_batch.site)
+    preflight = preflight_batch(locked_batch, user, template)
+    if preflight["blocking_errors"]:
+        raise ValueError(", ".join(preflight["blocking_errors"]))
+
+    generations = []
+    for cluster in locked_batch.clusters.prefetch_related("cluster_assets__asset").order_by("created_at", "id"):
+        references = [
+            item.asset.storage_path
+            for item in cluster.cluster_assets.select_related("asset").order_by("order", "id")
+        ]
+        prompt = cluster.prompt_override or locked_batch.global_prompt or "Create a clean ecommerce product image."
+        for slot in template.slots.order_by("order", "id"):
+            generations.append(
+                Generation.objects.create(
+                    batch=locked_batch,
+                    cluster=cluster,
+                    output_slot=slot,
+                    created_by=user,
+                    prompt_text=prompt,
+                    size=template.default_size,
+                    resolution=template.default_resolution,
+                    reference_snapshot=references,
+                )
+            )
+
+    locked_batch.confirmed_generation_key = uuid.uuid4()
+    locked_batch.status = Batch.Status.QUEUED
+    locked_batch.save(update_fields=["confirmed_generation_key", "status", "updated_at"])
+    return generations
+
+
+def _normalize_provider_status(payload):
+    status = payload.get("status", "").lower()
+    if status in {"processing", "in_progress", "submitted", "queued"}:
+        return Generation.Status.PROCESSING
+    if status in {"completed", "succeeded", "success"}:
+        return Generation.Status.COMPLETED
+    if status in {"failed", "error", "canceled"}:
+        return Generation.Status.FAILED
+    return Generation.Status.PROCESSING
+
+
+def _image_urls(payload):
+    if "image_urls" in payload:
+        return list(payload["image_urls"])
+    urls = []
+    for image in payload.get("result", {}).get("images", []):
+        value = image.get("url")
+        if isinstance(value, list):
+            urls.extend(value)
+        elif value:
+            urls.append(value)
+    return urls
+
+
+def process_generation_once(client=None, storage=None):
+    client = client or FakeAPIMartClient()
+    storage = storage or LocalStorage()
+    queued = (
+        Generation.objects.select_related("batch", "cluster", "output_slot")
+        .filter(status=Generation.Status.QUEUED)
+        .order_by("created_at", "id")
+        .first()
+    )
+    if queued is not None:
+        queued.status = Generation.Status.SUBMITTING
+        queued.save(update_fields=["status", "updated_at"])
+        image_paths = [str(storage.path(path)) for path in queued.reference_snapshot]
+        try:
+            task_id = client.submit_generation(
+                queued.prompt_text,
+                image_paths,
+                queued.size,
+                queued.resolution,
+            )
+        except SubmitUnknown as exc:
+            queued.status = Generation.Status.SUBMIT_UNKNOWN
+            queued.failure_reason = str(exc)
+            queued.save(update_fields=["status", "failure_reason", "updated_at"])
+            queued.batch.recompute_status()
+            return 1
+        except Exception as exc:
+            queued.status = Generation.Status.FAILED
+            queued.failure_reason = str(exc)
+            queued.save(update_fields=["status", "failure_reason", "updated_at"])
+            queued.batch.recompute_status()
+            return 1
+        queued.provider_task_id = task_id
+        queued.status = Generation.Status.SUBMITTED
+        queued.submitted_at = timezone.now()
+        queued.save(update_fields=["provider_task_id", "status", "submitted_at", "updated_at"])
+        queued.batch.recompute_status()
+        return 1
+
+    active = (
+        Generation.objects.select_related("batch", "cluster", "output_slot")
+        .filter(status__in=[Generation.Status.SUBMITTED, Generation.Status.PROCESSING])
+        .order_by("submitted_at", "created_at", "id")
+        .first()
+    )
+    if active is None:
+        return 0
+
+    payload = client.get_task(active.provider_task_id)
+    provider_status = _normalize_provider_status(payload)
+    if provider_status == Generation.Status.PROCESSING:
+        active.status = Generation.Status.PROCESSING
+        active.provider_payload = {"status": payload.get("status")}
+        active.save(update_fields=["status", "provider_payload", "updated_at"])
+        return 1
+    if provider_status == Generation.Status.FAILED:
+        active.status = Generation.Status.FAILED
+        active.failure_reason = payload.get("error") or payload.get("message") or "provider failed"
+        active.provider_payload = {"status": payload.get("status")}
+        active.save(update_fields=["status", "failure_reason", "provider_payload", "updated_at"])
+        active.batch.recompute_status()
+        return 1
+
+    active.status = Generation.Status.ARCHIVING
+    active.provider_payload = {"status": payload.get("status")}
+    active.save(update_fields=["status", "provider_payload", "updated_at"])
+    urls = _image_urls(payload)
+    if not urls:
+        active.status = Generation.Status.FAILED
+        active.failure_reason = "provider completed without image URL"
+        active.save(update_fields=["status", "failure_reason", "updated_at"])
+        active.batch.recompute_status()
+        return 1
+    for url in urls:
+        storage.archive_result(active, url, client.download_image(url))
+    active.status = Generation.Status.COMPLETED
+    active.completed_at = timezone.now()
+    active.save(update_fields=["status", "completed_at", "updated_at"])
+    active.batch.recompute_status()
+    return 1

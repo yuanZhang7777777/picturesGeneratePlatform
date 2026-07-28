@@ -1,0 +1,108 @@
+from io import BytesIO
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.test import override_settings
+from PIL import Image
+
+
+pytestmark = pytest.mark.django_db
+
+
+def make_user(username="operator"):
+    return get_user_model().objects.create_user(
+        username=username,
+        password="long-enough-password",
+        daily_generation_limit=100,
+    )
+
+
+def image_bytes():
+    buffer = BytesIO()
+    Image.new("RGB", (8, 8), "white").save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def make_batch_with_images(tmp_path, settings, count=1):
+    from platform_app.services import create_batch, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = create_batch(user, "Batch 1")
+    for index in range(count):
+        register_uploaded_asset(batch, f"{index}.png", image_bytes(), "image/png")
+    return user, batch
+
+
+def test_preflight_counts_clusters_and_quota(tmp_path, settings):
+    from platform_app.services import preflight_batch
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=2)
+
+    result = preflight_batch(batch, user)
+
+    assert result["cluster_count"] == 2
+    assert result["generation_count"] == 2
+    assert result["org_remaining"] == 2000
+    assert result["user_remaining"] == 100
+    assert result["blocking_errors"] == []
+
+
+def test_confirm_generation_is_idempotent(tmp_path, settings):
+    from platform_app.services import confirm_generation
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=2)
+
+    first = confirm_generation(batch, user)
+    second = confirm_generation(batch, user)
+
+    assert [item.id for item in second] == [item.id for item in first]
+    assert batch.generations.count() == 2
+
+
+@override_settings(USER_DAILY_GENERATION_LIMIT=1)
+def test_confirm_generation_rejects_user_quota(tmp_path, settings):
+    from platform_app.services import confirm_generation
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=2)
+    user.daily_generation_limit = 1
+    user.save(update_fields=["daily_generation_limit"])
+
+    with pytest.raises(ValueError, match="user daily quota"):
+        confirm_generation(batch, user)
+
+
+def test_worker_archives_result_and_marks_completed(tmp_path, settings):
+    from platform_app.models import Generation, ResultAsset
+    from platform_app.services import FakeAPIMartClient, LocalStorage, confirm_generation, process_generation_once
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    generation = confirm_generation(batch, user)[0]
+
+    assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+    assert generation.status == Generation.Status.SUBMITTED
+
+    assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+    assert generation.status == Generation.Status.COMPLETED
+    assert ResultAsset.objects.filter(generation=generation).count() == 1
+
+
+def test_submit_unknown_is_not_reposted_automatically(tmp_path, settings):
+    from platform_app.models import Generation
+    from platform_app.services import LocalStorage, SubmitUnknown, confirm_generation, process_generation_once
+
+    class UnknownClient:
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            raise SubmitUnknown("network timeout")
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    generation = confirm_generation(batch, user)[0]
+
+    assert process_generation_once(UnknownClient(), LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+    assert generation.status == Generation.Status.SUBMIT_UNKNOWN
+
+    assert process_generation_once(UnknownClient(), LocalStorage(tmp_path)) == 0
+    assert Generation.objects.count() == 1
