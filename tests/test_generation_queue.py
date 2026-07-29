@@ -318,3 +318,37 @@ def test_used_prompt_version_cannot_be_mutated_before_hero_submission(tmp_path, 
 
     assert client.prompt == canonical_prompt
     assert generation.prompt_version_id == prompt_version.id
+
+
+def test_worker_rejects_a_queued_detail_image_without_its_required_hero(tmp_path, settings):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
+    from platform_app.services import LocalStorage, process_generation_once
+
+    class CapturingClient:
+        def __init__(self):
+            self.calls = 0
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.calls += 1
+            return "unexpected-detail-task"
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=detail_slot,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        prompt_text="A direct detail image",
+    )
+
+    client = CapturingClient()
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+
+    assert client.calls == 0
+    assert generation.status == Generation.Status.FAILED
+    assert "standard product hero" in generation.failure_reason.lower()

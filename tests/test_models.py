@@ -136,6 +136,7 @@ def test_output_slot_position_and_template_are_immutable_after_generation_uses_i
 
 def test_generation_slot_and_prompt_version_are_readonly_in_admin_after_creation():
     from django.contrib import admin
+    from django.test import RequestFactory
 
     from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
 
@@ -161,6 +162,9 @@ def test_generation_slot_and_prompt_version_are_readonly_in_admin_after_creation
         "template_snapshot",
         "rule_snapshot",
     } <= set(readonly_fields)
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser("admin", "admin@example.com", "long-enough-password")
+    assert not admin.site._registry[Generation].has_add_permission(request)
 
 
 def test_generation_identity_and_snapshot_cannot_be_displaced_after_creation():
