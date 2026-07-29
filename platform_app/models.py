@@ -232,6 +232,7 @@ class OutputSlot(models.Model):
     class Meta:
         ordering = ["order", "id"]
         constraints = [
+            models.CheckConstraint(condition=models.Q(order__gte=1), name="output_slot_order_gte_one"),
             models.UniqueConstraint(fields=["template", "order"], name="unique_template_slot_order"),
         ]
 

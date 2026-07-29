@@ -34,7 +34,7 @@ from .models import (
     ReviewFeedback,
     RuleProfile,
 )
-from .template_policy import STANDARD_PRODUCT_HERO_PROMPT_LINES, is_standard_product_hero_slot
+from .template_policy import apply_standard_product_hero_policy
 
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
@@ -603,10 +603,6 @@ def compile_slot_prompt(
     ]
     if node_instruction:
         prompt_lines.append(f"Node instruction: {node_instruction}")
-    standard_product_hero = is_standard_product_hero_slot(slot)
-    if standard_product_hero:
-        prompt_lines.extend(STANDARD_PRODUCT_HERO_PROMPT_LINES)
-    prompt = "\n".join(prompt_lines)
     input_snapshot = {
         "market": market,
         "product_name": cluster.product_name,
@@ -622,8 +618,8 @@ def compile_slot_prompt(
         "reference_snapshot": references,
         "size": size,
         "resolution": resolution,
-        "standard_product_hero": standard_product_hero,
     }
+    prompt, input_snapshot = apply_standard_product_hero_policy(slot, "\n".join(prompt_lines), input_snapshot)
     return {
         "node_name": resolved_node_name,
         "template_version": node_version,
@@ -842,12 +838,18 @@ def process_generation_once(client=None, storage=None):
     client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
     queued = (
-        Generation.objects.select_related("batch", "cluster", "output_slot")
+        Generation.objects.select_related("batch", "batch__owner", "cluster", "output_slot", "prompt_version")
         .filter(status=Generation.Status.QUEUED)
         .order_by("created_at", "id")
         .first()
     )
     if queued is not None:
+        prompt_version, prompt_text = _ensure_generation_prompt_policy(queued, queued.created_by)
+        if prompt_version_id := getattr(prompt_version, "id", None):
+            if queued.prompt_version_id != prompt_version_id or queued.prompt_text != prompt_text:
+                queued.prompt_version = prompt_version
+                queued.prompt_text = prompt_text
+                queued.save(update_fields=["prompt_version", "prompt_text", "updated_at"])
         queued.status = Generation.Status.SUBMITTING
         queued.save(update_fields=["status", "updated_at"])
         image_paths = [str(storage.path(path)) for path in queued.reference_snapshot]
@@ -962,6 +964,52 @@ ACTIVE_GENERATION_STATUSES = {
 }
 
 
+def _ensure_generation_prompt_policy(generation, user):
+    """Keep a paid generation and its immutable PromptVersion on the same enforced prompt."""
+    previous = generation.prompt_version
+    if previous is None:
+        input_snapshot = {
+            "product_facts": generation.cluster.product_facts,
+            "identity_lock": generation.cluster.identity_lock,
+            "reference_snapshot": copy.deepcopy(generation.reference_snapshot),
+        }
+        source_snapshot = copy.deepcopy(input_snapshot)
+    else:
+        input_snapshot = copy.deepcopy(previous.input_snapshot)
+        source_snapshot = copy.deepcopy(previous.source_snapshot)
+
+    prompt_text, input_snapshot = apply_standard_product_hero_policy(
+        generation.output_slot,
+        generation.prompt_text,
+        input_snapshot,
+    )
+    if previous is None and not input_snapshot.get("standard_product_hero"):
+        return None, prompt_text
+    if previous is not None and prompt_text == generation.prompt_text and input_snapshot == previous.input_snapshot:
+        return previous, prompt_text
+
+    _, source_snapshot = apply_standard_product_hero_policy(
+        generation.output_slot,
+        prompt_text,
+        source_snapshot,
+    )
+    structured_output = copy.deepcopy(previous.structured_output if previous else {})
+    structured_output["prompt"] = prompt_text
+    prompt_version = PromptVersion.objects.create(
+        cluster=generation.cluster,
+        created_by=user or generation.created_by or generation.batch.owner,
+        node_name=previous.node_name if previous else "slot_prompt",
+        template_version=previous.template_version if previous else "builtin-v1",
+        provider_model=previous.provider_model if previous else "gpt-image-2",
+        prompt_text=prompt_text,
+        input_snapshot=input_snapshot,
+        structured_output=structured_output,
+        evaluation=copy.deepcopy(previous.evaluation if previous else {}),
+        source_snapshot=source_snapshot,
+    )
+    return prompt_version, prompt_text
+
+
 def _create_followup_attempt(source, user, **overrides):
     siblings = Generation.objects.filter(
         cluster_id=source.cluster_id,
@@ -995,7 +1043,14 @@ def _create_followup_attempt(source, user, **overrides):
         "rule_snapshot": copy.deepcopy(source.rule_snapshot),
     }
     values.update(overrides)
-    return Generation.objects.create(**values)
+    followup = Generation.objects.create(**values)
+    prompt_version, prompt_text = _ensure_generation_prompt_policy(followup, user)
+    if prompt_version_id := getattr(prompt_version, "id", None):
+        if followup.prompt_version_id != prompt_version_id or followup.prompt_text != prompt_text:
+            followup.prompt_version = prompt_version
+            followup.prompt_text = prompt_text
+            followup.save(update_fields=["prompt_version", "prompt_text", "updated_at"])
+    return followup
 
 
 @transaction.atomic
@@ -1175,13 +1230,24 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
             f"Issue tags: {', '.join(normalized_tags) or 'not provided'}",
             f"Description: {description or 'not provided'}",
         ]
+        prompt_text, input_snapshot = apply_standard_product_hero_policy(
+            locked.output_slot,
+            "\n".join(delta_lines),
+            input_snapshot,
+        )
+        _, source_snapshot = apply_standard_product_hero_policy(
+            locked.output_slot,
+            prompt_text,
+            source_snapshot,
+        )
+        structured_output["prompt"] = prompt_text
         prompt_version = PromptVersion.objects.create(
             cluster=locked.cluster,
             created_by=reviewer,
             node_name=previous.node_name if previous else "slot_prompt",
             template_version=previous.template_version if previous else "builtin-v1",
             provider_model=previous.provider_model if previous else "gpt-image-2",
-            prompt_text="\n".join(delta_lines),
+            prompt_text=prompt_text,
             input_snapshot=input_snapshot,
             structured_output=structured_output,
             evaluation=copy.deepcopy(previous.evaluation if previous else {}),

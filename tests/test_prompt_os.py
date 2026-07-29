@@ -271,7 +271,7 @@ def test_first_output_slot_enforces_a_standard_white_background_product_hero():
     compiled = compile_slot_prompt(cluster, slot)
 
     assert "Standard product hero: show the complete, accurate product on a pure white background." in compiled["prompt"]
-    assert "Hero restrictions: no promotional text, text overlay, watermark, price, discount, badge, or lifestyle scene." in compiled["prompt"]
+    assert "Hero restrictions: no promotional text, text overlay, watermark, border, price, discount, badge, or lifestyle scene." in compiled["prompt"]
     assert compiled["input_snapshot"]["standard_product_hero"] is True
 
 

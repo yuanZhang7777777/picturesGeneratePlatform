@@ -1,6 +1,6 @@
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 
 
 pytestmark = pytest.mark.django_db
@@ -92,6 +92,15 @@ def test_generation_attempt_is_unique_per_cluster_and_slot():
         Generation.objects.create(batch=batch, cluster=cluster, output_slot=slot, attempt=1)
 
 
+def test_output_slot_order_must_start_at_one():
+    from platform_app.models import OutputSlot, OutputTemplate
+
+    template = OutputTemplate.objects.create(name="Invalid slots", platform="global")
+
+    with pytest.raises(IntegrityError), transaction.atomic():
+        OutputSlot.objects.create(template=template, name="Before hero", order=0)
+
+
 def test_retry_failed_generation_preserves_old_attempt():
     from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
 
@@ -113,8 +122,45 @@ def test_retry_failed_generation_preserves_old_attempt():
 
     assert retry.attempt == 2
     assert retry.status == Generation.Status.QUEUED
-    assert retry.prompt_text == failed.prompt_text
+    assert failed.prompt_text == "make product image"
+    assert "Hero restrictions: no promotional text" in retry.prompt_text
+    assert retry.prompt_version.prompt_text == retry.prompt_text
     assert Generation.objects.filter(cluster=cluster, output_slot=slot).count() == 2
+
+
+def test_retry_of_legacy_first_slot_rewrites_the_new_attempt_prompt_without_mutating_history():
+    from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate, PromptVersion
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Legacy retry")
+    cluster = Cluster.objects.create(batch=batch, name="Product 1")
+    template = OutputTemplate.objects.create(name="Shopee main", platform="shopee")
+    slot = OutputSlot.objects.create(template=template, name="main", order=1)
+    legacy_prompt = PromptVersion.objects.create(
+        cluster=cluster,
+        created_by=user,
+        prompt_text="Legacy product prompt",
+        input_snapshot={"reference_snapshot": []},
+    )
+    failed = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        prompt_version=legacy_prompt,
+        created_by=user,
+        attempt=1,
+        status=Generation.Status.FAILED,
+        prompt_text=legacy_prompt.prompt_text,
+    )
+
+    retry = failed.retry_failed(user)
+
+    assert failed.prompt_text == "Legacy product prompt"
+    assert failed.prompt_version_id == legacy_prompt.id
+    assert retry.prompt_version_id != legacy_prompt.id
+    assert "Hero restrictions: no promotional text" in retry.prompt_text
+    assert retry.prompt_version.prompt_text == retry.prompt_text
+    assert retry.prompt_version.input_snapshot["standard_product_hero"] is True
 
 
 def test_retry_non_failed_generation_is_rejected():

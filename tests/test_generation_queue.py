@@ -109,3 +109,46 @@ def test_submit_unknown_is_not_reposted_automatically(tmp_path, settings):
 
     assert process_generation_once(UnknownClient(), LocalStorage(tmp_path)) == 0
     assert Generation.objects.count() == 1
+
+
+def test_worker_rewrites_a_legacy_first_slot_prompt_before_paid_submission(tmp_path, settings):
+    from platform_app.models import Generation, OutputTemplate, PromptVersion
+    from platform_app.services import LocalStorage, process_generation_once
+
+    class CapturingClient:
+        def __init__(self):
+            self.prompt = ""
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.prompt = prompt
+            return "legacy-policy-task"
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    first_slot = template.slots.get(order=1)
+    legacy_prompt = PromptVersion.objects.create(
+        cluster=cluster,
+        created_by=user,
+        prompt_text="Legacy queued prompt",
+        input_snapshot={"reference_snapshot": [batch.assets.first().storage_path]},
+    )
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=first_slot,
+        prompt_version=legacy_prompt,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        prompt_text=legacy_prompt.prompt_text,
+        reference_snapshot=[batch.assets.first().storage_path],
+    )
+
+    client = CapturingClient()
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+
+    assert "Hero restrictions: no promotional text" in client.prompt
+    assert generation.prompt_text == client.prompt
+    assert generation.prompt_version_id != legacy_prompt.id
+    assert generation.prompt_version.prompt_text == client.prompt
