@@ -27,7 +27,7 @@
 - Compose 项目名：`independent-image-platform`。
 - 当前为 `APIMART_FAKE_MODE=1`，不会产生真实 APIMart 费用。
 - 已生成临时 `admin` 账号；密码保存在服务器 root-only 文件 `/opt/independent-image-platform/.admin_password`。
-- 聊天中出现过的 APIMart/OSS 密钥不写入仓库或文档，也不能用于真实调用；真实付费生图前必须轮换并写入服务器 `.env`。
+- 聊天中出现过的 APIMart/OSS 密钥一律视为已暴露：即使曾获一次性测试授权，也不写入仓库、文档或生产环境；部署前必须轮换并写入服务器 `.env`。
 - 模型名称、端点、参数、响应和限流以 [APIMart 中文文档](https://docs.apimart.ai/cn) 与受限账户契约测试为准；不以模型原厂文档直接推断可接入性。
 - `APIMART_FAKE_MODE=1` 是唯一允许的默认预览模式。切换到真实付费调用、真实 OSS 或员工真实素材前，必须完成密钥轮换、供应商契约测试、HTTPS 和主 Agent 发布签核。
 - HTTP 的 IP:端口入口只允许测试账号与非敏感素材；正式入口不做来源 IP 白名单，但在域名 HTTPS 与账号安全就绪前，不得面向 100 名员工开放。
