@@ -81,3 +81,12 @@
   `USE_SQLITE_FOR_TESTS=1` 生成，并由 pytest 的迁移数据库完整验证。
 - README、runbook、STATUS 与架构规格需要主 Agent 在集成交付时同步；
   本任务按文件边界未修改这些权威文档。
+
+## Integration fix round 1
+
+- 前端合并与 Brief 保存需要提交 `expected_version`，workspace/project snapshot 的每个
+  SKU 现返回对应 `Cluster.version`。
+- 旧 batch snapshot 原本已返回 cluster version，保持不变。
+- 严格 TDD：先新增 snapshot 断言并确认因 `KeyError: 'version'` 红灯，再在视图层复用
+  现有 serializer 补字段；未修改模型、服务、路由或前端。
+- 验证：Task 2 测试 7 项通过；全量 pytest 53 项通过。

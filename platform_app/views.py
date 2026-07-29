@@ -137,6 +137,17 @@ def _generation_for_user(user, generation_id):
     return generation
 
 
+def _serialize_project(batch):
+    payload = serialize_project(batch)
+    versions = {
+        str(cluster_id): version
+        for cluster_id, version in batch.clusters.values_list("id", "version")
+    }
+    for sku in payload["skus"]:
+        sku["version"] = versions[sku["id"]]
+    return payload
+
+
 @login_required
 @password_change_required
 @require_http_methods(["GET"])
@@ -163,7 +174,7 @@ def api_project_create(request):
         )
     except (ValueError, TypeError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
-    return JsonResponse(serialize_project(batch), status=201)
+    return JsonResponse(_serialize_project(batch), status=201)
 
 
 @login_required
@@ -173,14 +184,14 @@ def api_workspace_snapshot(request):
     queryset = Batch.objects.select_related("output_template").order_by("-updated_at", "-id")
     if not request.user.is_platform_admin:
         queryset = queryset.filter(owner=request.user)
-    return JsonResponse({"projects": [serialize_project(batch) for batch in queryset]})
+    return JsonResponse({"projects": [_serialize_project(batch) for batch in queryset]})
 
 
 @login_required
 @password_change_required
 @require_http_methods(["GET"])
 def api_project_snapshot(request, batch_id):
-    return JsonResponse(serialize_project(_batch_for_user(request.user, batch_id)))
+    return JsonResponse(_serialize_project(_batch_for_user(request.user, batch_id)))
 
 
 @login_required

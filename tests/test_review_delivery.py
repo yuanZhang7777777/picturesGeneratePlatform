@@ -209,7 +209,9 @@ def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_pa
     owner = make_user("owner")
     other = make_user("other")
     platform_admin = make_user("admin", role="admin")
-    owner_batch, _, _, generation, result = make_generation(owner, tmp_path, name="Owner project")
+    owner_batch, owner_cluster, _, generation, result = make_generation(
+        owner, tmp_path, name="Owner project"
+    )
     other_batch, *_ = make_project(other, "Other project")
     generation.provider_task_id = "provider-secret"
     generation.provider_payload = {"raw": "provider-secret"}
@@ -225,6 +227,7 @@ def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_pa
         ["id", "name", "platform", "market", "template", "size", "status", "updatedAt", "assets", "skus"]
     ) <= set(project)
     sku = project["skus"][0]
+    assert sku["version"] == owner_cluster.version
     assert sku["facts"] == "BPA-free silicone"
     assert sku["identityLock"] == "Keep the sage green cup and two handles"
     assert sku["brief"] == "Calm breakfast mood"
