@@ -858,7 +858,7 @@ def process_generation_once(client=None, storage=None):
             .order_by("-attempt", "-created_at", "-id")
             .first()
         )
-        if hero is None or hero.status in {Generation.Status.FAILED, Generation.Status.CANCELED}:
+        if hero is None:
             candidate.status = Generation.Status.FAILED
             candidate.failure_reason = "A completed standard product hero is required before detail outputs can be generated"
             candidate.save(update_fields=["status", "failure_reason", "updated_at"])

@@ -400,21 +400,62 @@ def test_worker_requires_a_completed_hero_from_the_same_template_before_detail_s
         cluster=cluster,
         output_slot=hero_slot,
         created_by=user,
-        status=Generation.Status.FAILED,
+        status=Generation.Status.COMPLETED,
     )
-    failed_hero_detail = Generation.objects.create(
+    completed_hero_detail = Generation.objects.create(
         batch=batch,
         cluster=cluster,
         output_slot=detail_slot,
         created_by=user,
         attempt=2,
         status=Generation.Status.QUEUED,
-        prompt_text="Detail after failed hero",
+        prompt_text="Detail after completed hero",
     )
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
-    failed_hero_detail.refresh_from_db()
+    completed_hero_detail.refresh_from_db()
+    assert client.calls == 1
+    assert completed_hero_detail.status == Generation.Status.SUBMITTED
+
+
+@pytest.mark.parametrize("hero_status", ["failed", "canceled"])
+def test_worker_keeps_detail_queued_until_a_failed_or_canceled_hero_is_redone(tmp_path, settings, hero_status):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
+    from platform_app.services import LocalStorage, process_generation_once
+
+    class CapturingClient:
+        def __init__(self):
+            self.calls = 0
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.calls += 1
+            return f"detail-task-{self.calls}"
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    hero_slot = template.slots.get(order=1)
+    detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
+    client = CapturingClient()
+    Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=hero_slot,
+        created_by=user,
+        status=hero_status,
+    )
+    detail = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=detail_slot,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        prompt_text="Detail after hero needs a redo",
+    )
+
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 0
+    detail.refresh_from_db()
     assert client.calls == 0
-    assert failed_hero_detail.status == Generation.Status.FAILED
+    assert detail.status == Generation.Status.QUEUED
 
     Generation.objects.create(
         batch=batch,
@@ -424,19 +465,10 @@ def test_worker_requires_a_completed_hero_from_the_same_template_before_detail_s
         attempt=2,
         status=Generation.Status.COMPLETED,
     )
-    completed_hero_detail = Generation.objects.create(
-        batch=batch,
-        cluster=cluster,
-        output_slot=detail_slot,
-        created_by=user,
-        attempt=3,
-        status=Generation.Status.QUEUED,
-        prompt_text="Detail after completed hero",
-    )
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
-    completed_hero_detail.refresh_from_db()
+    detail.refresh_from_db()
     assert client.calls == 1
-    assert completed_hero_detail.status == Generation.Status.SUBMITTED
+    assert detail.status == Generation.Status.SUBMITTED
 
 
 def test_worker_defers_detail_until_hero_completes_without_blocking_hero_or_polling(tmp_path, settings):
