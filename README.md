@@ -19,8 +19,7 @@
 - 组织级每日最多 2,000 次生图提交尝试。
 - 供应商 API 活跃异步任务上限为 500；当前预览默认并发为 2，必须完成原子队列、限流与分级压测后才可逐步提高。
 - 2 号云服务器独立 Docker Compose 栈。
-- 临时预览入口使用当前空闲的 `18083` 端口并限制来源 IP。
-- 真实员工密码和商品素材正式使用前必须升级为域名 HTTPS。
+- 临时预览入口使用当前空闲的 `18083` 端口；正式使用不做来源 IP 白名单，但必须通过域名 HTTPS 登录。
 
 当前预览边界：
 
@@ -28,9 +27,9 @@
 - Compose 项目名：`independent-image-platform`。
 - 当前为 `APIMART_FAKE_MODE=1`，不会产生真实 APIMart 费用。
 - 已生成临时 `admin` 账号；密码保存在服务器 root-only 文件 `/opt/independent-image-platform/.admin_password`。
-- 聊天中出现过的 APIMart/OSS 密钥不写入仓库或文档；真实付费生图前必须轮换并写入服务器 `.env`。
+- 聊天中出现过的 APIMart/OSS 密钥不写入仓库或文档，也不能用于真实调用；真实付费生图前必须轮换并写入服务器 `.env`。
 - `APIMART_FAKE_MODE=1` 是唯一允许的默认预览模式。切换到真实付费调用、真实 OSS 或员工真实素材前，必须完成密钥轮换、供应商契约测试、HTTPS 和主 Agent 发布签核。
-- HTTP 的 IP:端口入口只允许测试账号与非敏感素材；在域名 HTTPS、受控来源和账号安全就绪前，不得面向 100 名员工开放。
+- HTTP 的 IP:端口入口只允许测试账号与非敏感素材；正式入口不做来源 IP 白名单，但在域名 HTTPS 与账号安全就绪前，不得面向 100 名员工开放。
 
 ## 本地运行与静态验证
 
@@ -67,6 +66,7 @@ React 开发模式与 Docker 预览是两条路径：前者运行 Django 与 `np
 
 - [独立批量出图平台完整设计](docs/specs/2026-07-28-independent-image-platform-design.md)
 - [顶级 AI 商品出图平台调研与产品重设](docs/research/2026-07-29-top-image-platform-redesign-research.md)
+- [Shopee/TikTok 商品图规则官方来源登记册](docs/research/2026-07-29-platform-image-rule-source-register.md)
 - [主 Agent 协作与项目集群交付设计](docs/superpowers/specs/2026-07-29-agent-orchestrated-delivery-design.md)
 - [React 前端架构设计](docs/superpowers/specs/2026-07-29-react-frontend-architecture-design.md)
 - [项目控制板（角色、任务、决定与阻塞）](docs/project/STATUS.md)
