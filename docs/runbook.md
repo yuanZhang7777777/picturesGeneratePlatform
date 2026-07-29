@@ -1,6 +1,37 @@
-# Runbook
+# 运行与部署手册
 
-## Local Development
+## 架构与入口
+
+Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worker 和 Caddy。Caddy 是唯一对浏览器开放的同源入口：它在镜像构建时把 `frontend/dist` 写入 `/srv/frontend`，提供 React 静态资源，并将 `/api/`、`/auth/`、`/admin/`、登录/退出/改密、健康检查和 Django 静态资源反向代理到 Web 服务。
+
+浏览器只持有 Django session Cookie 与 CSRF，不持有供应商或 OSS 凭据。生产容器不运行 Node 前端服务器。
+
+## 环境变量与门禁
+
+复制 `.env.example` 到 `.env`，`.env` 绝不提交。样例中的 `replace-with-*` 是故意不可部署的替换标记，只用于 Compose 静态解析。
+
+必填值：
+
+- `DJANGO_SECRET_KEY`
+- `POSTGRES_PASSWORD`，并同步更新 `DATABASE_URL` 中对应的密码
+- `DJANGO_ALLOWED_HOSTS`
+- `ADMIN_PASSWORD`
+- `DJANGO_CSRF_TRUSTED_ORIGINS`，仅在同源以外的受信来源确有需要时设置
+
+预览默认值必须保持 `APIMART_FAKE_MODE=1`，`APIMART_API_KEY` 可以为空。以下全部满足前，不得设为 `0`：已轮换的供应商凭据、主 Agent 明确的付费授权、供应商契约测试、真实任务限流/重试验收、私有存储验收和发布记录。
+
+在启动真实环境前检查替换标记，但不要打印 `.env` 内容：
+
+```bash
+if grep -qE '^(DJANGO_SECRET_KEY|POSTGRES_PASSWORD|ADMIN_PASSWORD)=(|replace-with-)' .env; then
+  echo 'replace environment placeholders before deployment'
+  exit 1
+fi
+```
+
+## 本地开发
+
+后端：
 
 ```powershell
 python -m venv .venv
@@ -12,32 +43,48 @@ $env:APIMART_FAKE_MODE='1'
 .\.venv\Scripts\python manage.py runserver 127.0.0.1:8000
 ```
 
-## Docker Preview
+前端在另一终端运行。Vite 开发代理由 `frontend/` 配置负责将 Django 路径转给本地后端：
 
-Create `.env` from `.env.example`. Do not put `.env` into Git.
+```powershell
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
 
-Required production values:
+## Compose 静态验证与本地预览
 
-- `DJANGO_SECRET_KEY`
-- `POSTGRES_PASSWORD`
-- `DATABASE_URL`
-- `DJANGO_ALLOWED_HOSTS`
-- `ADMIN_PASSWORD`
-- `APIMART_API_KEY` only after key rotation
+先运行不启动容器的静态解析。该命令是配置改动的最低验证：
 
-Start:
+```powershell
+docker compose --env-file .env.example config --quiet
+```
+
+完成 `.env` 的本地安全值替换后，构建并启动预览：
 
 ```bash
 docker compose up -d --build
-docker compose exec -T web python manage.py seed_admin --username admin
+docker compose ps
+docker compose exec -T web python manage.py seed_admin
+docker compose exec -T web python manage.py check
+curl -fsS http://127.0.0.1:18083/health/live
 curl -fsS http://127.0.0.1:18083/health/ready
+docker compose logs --tail=100 web generation-worker prompt-worker proxy
 ```
 
-## Hermes Preview Deployment
+`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。当前 Prompt Worker 是占位循环，因此它的存活不等同于异步 Prompt 功能已完成。
 
-Hermes operations must use `ssh hermes-remote` and must not hard-code the server IP in scripts or docs.
+不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 尚未实现跨进程任务原子认领；并发 one-shot 调试可能在真实付费模式重复提交。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 
-Deployment is a global write operation:
+假模式手工验收路径：登录测试账号 → 创建项目 → 上传两张 PNG → 默认两个商品/SKU → 拖拽合并 → 预检 → 确认生成 → 等待队列完成 → 审核结果 → 验证未通过/失败项只生成新版本。不得把技术完成的图片当作可导出结果；只有审核 `accepted` 的版本可导出。
+
+## 管理员规则、模板与审核发布
+
+管理员通过同源 `/admin/` 登录后维护平台规则、输出模板及槽位。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。只有明确为 `published` 的规则/模板才可被运营项目选择；草稿或未核对规则不得被描述为自动合规。
+
+竞品图可供人工提炼抽象的构图或风格策略，但不得作为商品参考图、事实来源或供应商上传内容。Prompt OS 只能把确认过的商品事实、身份锁、模板与本项目参考图编译为生成指令。
+
+## Hermes 预览与真实发布
+
+本任务不执行任何远端操作。需要部署时只能使用 `ssh hermes-remote`，且先声明：
 
 ```text
 project_key=global
@@ -48,30 +95,14 @@ global_touch=yes
 bridge_needed=no
 ```
 
-Use `.codex_locks/global.lock` before creating or updating `/opt/independent-image-platform`.
+持有 `.codex_locks/global.lock` 后，在目标目录执行 Compose 静态解析、构建、迁移、健康检查和人工假模式验收，并把命令输出与镜像版本写入发布记录。只有主 Agent 可以签核该发布。
 
-Current preview deployment:
+HTTP 的 IP:端口入口仅供测试账号和非敏感素材。域名 HTTPS、受控来源、账号安全、备份恢复、私有存储和真实供应商契约测试完成前，不得向 100 名员工开放真实素材或付费生成。
 
-- Remote path: `/opt/independent-image-platform`
-- Compose project: `independent-image-platform`
-- Port: `18083`
-- Mode: `APIMART_FAKE_MODE=1`
-- Deployment log: `/home/lxc/HengzheProjects/logs/independent_image_platform_deploy_20260728_2111.log`
-- Admin username: `admin`
-- Admin password file: `/opt/independent-image-platform/.admin_password`
+## 发布证据最小清单
 
-Smoke checks:
-
-```bash
-cd /opt/independent-image-platform
-docker compose -p independent-image-platform ps
-curl -fsS http://127.0.0.1:18083/health/ready
-docker compose -p independent-image-platform exec -T generation-worker python manage.py run_generation_worker --once
-```
-
-## Security Notes
-
-- Rotate any key pasted into chat before real use.
-- The current preview is HTTP on port `18083`; use only test accounts and non-sensitive materials until domain HTTPS is configured.
-- Keep `APIMART_FAKE_MODE=1` unless a paid smoke test is explicitly authorized.
-- Store OSS credentials only in server `.env` after rotation; the MVP works with local private media storage.
+- `docker compose --env-file .env.example config --quiet` 成功。
+- 镜像构建包含 React 静态产物，Caddy 同源入口能返回前端并代理 Django 健康检查。
+- Django 检查、迁移状态、Web/数据库健康、两个 worker 的容器状态和日志已记录。
+- 假模式端到端人工路径和对象权限回归已通过。
+- 真实 API/OSS/HTTPS 如未启用，发布记录必须明确标注“未启用”，不能以预览结果替代生产证明。

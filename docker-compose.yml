@@ -1,3 +1,20 @@
+x-app-environment: &app-environment
+  DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}"
+  DJANGO_DEBUG: "${DJANGO_DEBUG:-0}"
+  DJANGO_ALLOWED_HOSTS: "${DJANGO_ALLOWED_HOSTS:?Set DJANGO_ALLOWED_HOSTS in .env}"
+  DJANGO_CSRF_TRUSTED_ORIGINS: "${DJANGO_CSRF_TRUSTED_ORIGINS:-}"
+  DATABASE_URL: "${DATABASE_URL:?Set DATABASE_URL in .env}"
+  USE_SQLITE_FOR_TESTS: "${USE_SQLITE_FOR_TESTS:-0}"
+  APIMART_API_KEY: "${APIMART_API_KEY:-}"
+  APIMART_BASE_URL: "${APIMART_BASE_URL:-https://api.apimart.ai}"
+  APIMART_PROMPT_MODEL: "${APIMART_PROMPT_MODEL:-gpt-5.2-pro}"
+  APIMART_FAKE_MODE: "${APIMART_FAKE_MODE:-1}"
+  STORAGE_BACKEND: "${STORAGE_BACKEND:-local}"
+  LOCAL_MEDIA_ROOT: "${LOCAL_MEDIA_ROOT:-/app/media}"
+  MAX_ACTIVE_GENERATIONS: "${MAX_ACTIVE_GENERATIONS:-2}"
+  ORG_DAILY_GENERATION_LIMIT: "${ORG_DAILY_GENERATION_LIMIT:-2000}"
+  USER_DAILY_GENERATION_LIMIT: "${USER_DAILY_GENERATION_LIMIT:-100}"
+
 services:
   postgres:
     image: postgres:16
@@ -5,7 +22,7 @@ services:
     environment:
       POSTGRES_DB: image_platform
       POSTGRES_USER: image_platform
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-image_platform}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,20 +36,29 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     restart: unless-stopped
-    env_file: .env
+    environment:
+      <<: *app-environment
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - media_data:/app/media
     command: gunicorn image_platform.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; assert urlopen('http://127.0.0.1:8000/health/live', timeout=2).status == 200\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   generation-worker:
     build:
       context: .
       dockerfile: docker/Dockerfile
     restart: unless-stopped
-    env_file: .env
+    environment: *app-environment
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,21 +71,22 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     restart: unless-stopped
-    env_file: .env
+    environment: *app-environment
     depends_on:
       postgres:
         condition: service_healthy
     command: python manage.py run_prompt_worker
 
   proxy:
-    image: caddy:2
+    build:
+      context: .
+      dockerfile: docker/Caddy.Dockerfile
     restart: unless-stopped
     depends_on:
-      - web
+      web:
+        condition: service_healthy
     ports:
-      - "18083:18083"
-    volumes:
-      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - "${PREVIEW_PORT:-18083}:8080"
 
 volumes:
   postgres_data:

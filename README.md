@@ -2,7 +2,7 @@
 
 状态：MVP 已部署到 2 号云服务器预览环境，入口为该服务器 IP 的 `18083` 端口；2026-07-29 已根据业务反馈进入产品体验重设，当前预览只作为技术链路验证，不作为最终前端方向。
 
-本项目面向公司内部运营人员，提供文件夹上传、商品图片集群整理、全局与集群提示词、AI Prompt 优化、APIMart 异步生图、OSS 归档、单张失败重做和历史版本保留。后端使用 Django；运营工作台已确认迁移为 React + TypeScript + Vite 前端。
+本项目面向公司内部运营人员，提供文件夹上传、商品图片分组、结构化 Brief、AI Prompt、异步生图、审核、失败项重做和历史版本保留。Django 负责登录、权限、任务和数据；`frontend/` 中的 React + TypeScript + Vite 工作台由 Caddy 同源提供静态文件，并由 Caddy 代理 Django API、认证、后台与健康检查。
 
 核心任务模型：
 
@@ -28,6 +28,38 @@
 - 当前为 `APIMART_FAKE_MODE=1`，不会产生真实 APIMart 费用。
 - 已生成临时 `admin` 账号；密码保存在服务器 root-only 文件 `/opt/independent-image-platform/.admin_password`。
 - 聊天中出现过的 APIMart/OSS 密钥不写入仓库或文档；真实付费生图前必须轮换并写入服务器 `.env`。
+- `APIMART_FAKE_MODE=1` 是唯一允许的默认预览模式。切换到真实付费调用、真实 OSS 或员工真实素材前，必须完成密钥轮换、供应商契约测试、HTTPS 和主 Agent 发布签核。
+- HTTP 的 IP:端口入口只允许测试账号与非敏感素材；在域名 HTTPS、受控来源和账号安全就绪前，不得面向 100 名员工开放。
+
+## 本地运行与静态验证
+
+先用环境样例验证 Compose 形状；它含有替换标记，只用于解析，不可直接启动服务：
+
+```powershell
+docker compose --env-file .env.example config --quiet
+```
+
+实际本地预览时，复制 `.env.example` 为 `.env`，把所有 `replace-with-*` 替换为本地安全值，再执行：
+
+```powershell
+docker compose up -d --build
+docker compose ps
+curl.exe -fsS http://127.0.0.1:18083/health/ready
+```
+
+React 开发模式与 Docker 预览是两条路径：前者运行 Django 与 `npm --prefix frontend run dev`；后者由 `docker/Caddy.Dockerfile` 构建 `frontend/dist`，不保留 Node 前端服务器。完整命令、健康要求和发布门禁见 [运行与部署手册](docs/runbook.md)。
+
+## 规则、模板与审核
+
+- 平台规则和套图模板只能由管理员在同源 `/admin/` 路径维护和发布，并记录官方来源、核对日期、适用平台/站点和版本。
+- 未发布或未核对的规则不能被宣称为自动合规。竞品图只能形成抽象策略，不能作为生成参考图、商品事实或供应商上传内容。
+- 生成完成不等于业务验收；只有人工标记 `accepted` 的版本可以进入平台导出。失败重做和人工修改均保留旧版本。
+
+## Worker 边界
+
+- `generation-worker` 提交、轮询并归档图片任务。
+- `prompt-worker` 为结构化 Brief/Prompt 预留；当前实现仍是占位循环，不能作为异步 Prompt 工作已交付的证据。
+- 健康检查目前验证 Web 与数据库；发布时还必须确认两个 worker 容器持续运行且日志无重复退出。
 
 设计与调研：
 
