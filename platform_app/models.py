@@ -40,6 +40,23 @@ class Batch(models.Model):
     name = models.CharField(max_length=200)
     platform = models.CharField(max_length=40, default="shopee")
     site = models.CharField(max_length=40, default="SG")
+    market = models.CharField(max_length=40, blank=True)
+    output_template = models.ForeignKey(
+        "OutputTemplate",
+        on_delete=models.PROTECT,
+        related_name="batches",
+        null=True,
+        blank=True,
+    )
+    rule_profile = models.ForeignKey(
+        "RuleProfile",
+        on_delete=models.PROTECT,
+        related_name="batches",
+        null=True,
+        blank=True,
+    )
+    size = models.CharField(max_length=20, blank=True)
+    resolution = models.CharField(max_length=20, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     global_prompt = models.TextField(blank=True)
     confirmed_generation_key = models.UUIDField(null=True, blank=True, unique=True)
@@ -107,6 +124,7 @@ class Cluster(models.Model):
     product_name = models.CharField(max_length=200, blank=True)
     product_facts = models.TextField(blank=True)
     identity_lock = models.TextField(blank=True)
+    target_consumer = models.CharField(max_length=40, blank=True)
     prompt_override = models.TextField(blank=True)
     version = models.PositiveIntegerField(default=1)
     assets = models.ManyToManyField(Asset, through="ClusterAsset", related_name="clusters")
@@ -187,6 +205,7 @@ class OutputTemplate(models.Model):
     platform = models.CharField(max_length=40)
     site = models.CharField(max_length=40, blank=True)
     name = models.CharField(max_length=120)
+    version = models.CharField(max_length=40, default="v1")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PUBLISHED)
     default_size = models.CharField(max_length=20, default="1:1")
     default_resolution = models.CharField(max_length=20, default="1k")
@@ -212,12 +231,48 @@ class OutputSlot(models.Model):
         return self.name
 
 
+class PromptNodeTemplate(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        PUBLISHED = "published", "Published"
+        RETIRED = "retired", "Retired"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    node_name = models.CharField(max_length=80)
+    version = models.CharField(max_length=40, default="v1")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    instruction = models.TextField()
+    output_schema = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["node_name", "version"], name="unique_prompt_node_version"),
+        ]
+
+    def __str__(self):
+        return f"{self.node_name}/{self.version}"
+
+
+class CompetitorInsight(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    cluster = models.ForeignKey(Cluster, on_delete=models.CASCADE, related_name="competitor_insights")
+    style_dna = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class PromptVersion(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cluster = models.ForeignKey(Cluster, on_delete=models.CASCADE, related_name="prompt_versions")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    node_name = models.CharField(max_length=80, default="slot_prompt")
+    template_version = models.CharField(max_length=40, default="builtin-v1")
+    model = models.CharField(max_length=80, default="gpt-image-2")
     prompt_text = models.TextField()
+    input_snapshot = models.JSONField(default=dict, blank=True)
     structured_output = models.JSONField(default=dict, blank=True)
+    evaluation = models.JSONField(default=dict, blank=True)
     source_snapshot = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -271,6 +326,8 @@ class Generation(models.Model):
     provider_task_id = models.CharField(max_length=120, blank=True, null=True, unique=True)
     provider_payload = models.JSONField(default=dict, blank=True)
     reference_snapshot = models.JSONField(default=list, blank=True)
+    template_snapshot = models.JSONField(default=dict, blank=True)
+    rule_snapshot = models.JSONField(default=dict, blank=True)
     failure_reason = models.TextField(blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -306,6 +363,8 @@ class Generation(models.Model):
             size=self.size,
             resolution=self.resolution,
             reference_snapshot=self.reference_snapshot,
+            template_snapshot=self.template_snapshot,
+            rule_snapshot=self.rule_snapshot,
         )
 
 

@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import json
 import mimetypes
 import re
 import uuid
@@ -21,6 +22,8 @@ from .models import (
     Generation,
     OutputSlot,
     OutputTemplate,
+    PromptNodeTemplate,
+    PromptVersion,
     ResultAsset,
 )
 
@@ -28,6 +31,20 @@ from .models import (
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_TXT_BYTES = 256 * 1024
 BATCH_GENERATION_LIMIT = 300
+STYLE_DNA_FIELDS = {
+    "scene",
+    "grounding",
+    "composition",
+    "lighting",
+    "material",
+    "palette",
+    "mood",
+    "background",
+    "camera",
+    "texture",
+}
+INFANT_KEYWORDS = ("baby", "infant", "newborn", "toddler", "婴", "幼儿", "宝宝")
+ADULT_KEYWORDS = ("adult", "clothing", "apparel", "beauty", "fashion", "成人", "服装", "美容")
 
 
 class SubmitUnknown(Exception):
@@ -342,6 +359,22 @@ def latest_attempt(cluster, slot):
     )
 
 
+def publish_prompt_node_template(node_template):
+    with transaction.atomic():
+        target = PromptNodeTemplate.objects.select_for_update().get(id=node_template.id)
+        PromptNodeTemplate.objects.select_for_update().filter(node_name=target.node_name).exclude(
+            id=target.id
+        ).update(status=PromptNodeTemplate.Status.RETIRED)
+        target.status = PromptNodeTemplate.Status.PUBLISHED
+        target.save(update_fields=["status", "updated_at"])
+        return target
+
+
+def rollback_prompt_node_template(node_name, version):
+    target = PromptNodeTemplate.objects.get(node_name=node_name, version=version)
+    return publish_prompt_node_template(target)
+
+
 def ensure_default_template(platform="shopee", site="SG"):
     template, _ = OutputTemplate.objects.get_or_create(
         platform=platform,
@@ -357,6 +390,164 @@ def ensure_default_template(platform="shopee", site="SG"):
     return template
 
 
+def _sanitize_style_dna(style_dna):
+    if not isinstance(style_dna, dict):
+        return {}
+    sanitized = {}
+    for key, value in style_dna.items():
+        if key not in STYLE_DNA_FIELDS or value in (None, ""):
+            continue
+        if isinstance(value, (list, tuple)):
+            value = ", ".join(str(item) for item in value if item not in (None, ""))
+        elif isinstance(value, dict):
+            continue
+        else:
+            value = str(value)
+        if value:
+            sanitized[key] = value
+    return sanitized
+
+
+def _cluster_style_dna(cluster, supplied_style_dna=None):
+    if supplied_style_dna is not None:
+        return _sanitize_style_dna(supplied_style_dna)
+    style_dna = {}
+    for insight in cluster.competitor_insights.order_by("created_at", "id"):
+        style_dna.update(_sanitize_style_dna(insight.style_dna))
+    return style_dna
+
+
+def target_consumer_for_cluster(cluster):
+    if cluster.target_consumer.strip():
+        return cluster.target_consumer.strip().lower()
+    product_text = f"{cluster.product_name} {cluster.product_facts}".lower()
+    if any(keyword in product_text for keyword in INFANT_KEYWORDS):
+        return "baby"
+    if any(keyword in product_text for keyword in ADULT_KEYWORDS):
+        return "adult"
+    return "adult"
+
+
+def _template_snapshot(template, slot):
+    return {
+        "id": str(template.id),
+        "name": template.name,
+        "version": template.version,
+        "platform": template.platform,
+        "site": template.site,
+        "slot": {"id": str(slot.id), "name": slot.name, "order": slot.order, "purpose": slot.purpose},
+    }
+
+
+def _rule_snapshot(rule_profile):
+    if rule_profile is None:
+        return {}
+    return {
+        "id": str(rule_profile.id),
+        "name": rule_profile.name,
+        "version": rule_profile.version,
+        "platform": rule_profile.platform,
+        "site": rule_profile.site,
+        "rules": rule_profile.rules,
+    }
+
+
+def _prompt_node(node_name):
+    node_template = (
+        PromptNodeTemplate.objects.filter(
+            node_name=node_name,
+            status=PromptNodeTemplate.Status.PUBLISHED,
+        )
+        .order_by("-updated_at", "-created_at", "-id")
+        .first()
+    )
+    if node_template is None:
+        return node_name, "builtin-v1", ""
+    return node_template.node_name, node_template.version, node_template.instruction
+
+
+def compile_slot_prompt(cluster, slot, *, batch=None, model="gpt-image-2", style_dna=None, node_name="slot_prompt"):
+    batch = batch or cluster.batch
+    template = slot.template
+    market = batch.market or batch.site
+    size = batch.size or template.default_size
+    resolution = batch.resolution or template.default_resolution
+    consumer = target_consumer_for_cluster(cluster)
+    sanitized_style_dna = _cluster_style_dna(cluster, style_dna)
+    template_snapshot = _template_snapshot(template, slot)
+    rule_snapshot = _rule_snapshot(batch.rule_profile)
+    references = list(
+        cluster.cluster_assets.filter(asset__kind=Asset.Kind.IMAGE)
+        .select_related("asset")
+        .order_by("order", "id")
+        .values_list("asset__storage_path", flat=True)
+    )
+    resolved_node_name, node_version, node_instruction = _prompt_node(node_name)
+    product_name = cluster.product_name or "not provided"
+    product_facts = cluster.product_facts or "not provided"
+    identity_lock = cluster.identity_lock or "Preserve visible product identity; do not change unprovided attributes."
+    global_requirements = batch.global_prompt or "not provided"
+    scene = sanitized_style_dna.get("scene") or slot.purpose or "not specified"
+    composition = sanitized_style_dna.get("composition") or slot.purpose or "not specified"
+    lighting = sanitized_style_dna.get("lighting") or "not specified"
+    material = sanitized_style_dna.get(
+        "material", "Use only material explicitly stated in Product facts; otherwise not specified."
+    )
+    prompt_lines = [
+        "Create one ecommerce product image using only the supplied product information and references.",
+        f"Product name: {product_name}",
+        f"Product facts: {product_facts}",
+        f"Global requirements: {global_requirements}",
+        f"Identity lock: {identity_lock}",
+        f"Market: {market or 'not provided'}",
+        f"Model persona: {consumer}",
+        f"Slot purpose: {slot.purpose or 'not provided'}",
+        f"Rules: {json.dumps(rule_snapshot.get('rules', {}), ensure_ascii=False, sort_keys=True)}",
+        f"Scene: {scene}",
+        "Grounding: Do not invent product facts, claims, dimensions, certification, material, logos, text, or parts not provided above.",
+        f"Composition: {composition}",
+        f"Lighting: {lighting}",
+        f"Material: {material}",
+        f"Style DNA: {json.dumps(sanitized_style_dna, ensure_ascii=False, sort_keys=True)}",
+        f"Size: {size}",
+        f"Resolution: {resolution}",
+    ]
+    if node_instruction:
+        prompt_lines.append(f"Node instruction: {node_instruction}")
+    prompt = "\n".join(prompt_lines)
+    input_snapshot = {
+        "market": market,
+        "product_name": cluster.product_name,
+        "product_facts": cluster.product_facts,
+        "identity_lock": cluster.identity_lock,
+        "global_requirements": batch.global_prompt,
+        "slot_purpose": slot.purpose,
+        "target_consumer": consumer,
+        "style_dna": sanitized_style_dna,
+        "rule_snapshot": rule_snapshot,
+        "template_snapshot": template_snapshot,
+        "reference_snapshot": references,
+        "size": size,
+        "resolution": resolution,
+    }
+    return {
+        "node_name": resolved_node_name,
+        "template_version": node_version,
+        "model": model,
+        "target_consumer": consumer,
+        "model_persona": consumer,
+        "prompt": prompt,
+        "reference_snapshot": references,
+        "style_dna": sanitized_style_dna,
+        "template_snapshot": template_snapshot,
+        "rule_snapshot": rule_snapshot,
+        "input_snapshot": input_snapshot,
+        "evaluation": {"fact_policy": "user-provided-only"},
+        "size": size,
+        "resolution": resolution,
+    }
+
+
 def _used_generations_today(user=None):
     today = timezone.localdate()
     queryset = Generation.objects.exclude(status=Generation.Status.CANCELED).filter(created_at__date=today)
@@ -366,7 +557,7 @@ def _used_generations_today(user=None):
 
 
 def preflight_batch(batch, user, template=None):
-    template = template or ensure_default_template(batch.platform, batch.site)
+    template = template or batch.output_template or ensure_default_template(batch.platform, batch.site)
     slot_count = template.slots.count()
     cluster_count = batch.clusters.count()
     generation_count = cluster_count * slot_count
@@ -403,35 +594,65 @@ def confirm_generation(batch, user, template=None):
     if locked_batch.confirmed_generation_key and existing:
         return existing
 
-    template = template or ensure_default_template(locked_batch.platform, locked_batch.site)
+    template = template or locked_batch.output_template or ensure_default_template(locked_batch.platform, locked_batch.site)
     preflight = preflight_batch(locked_batch, user, template)
     if preflight["blocking_errors"]:
         raise ValueError(", ".join(preflight["blocking_errors"]))
 
+    if locked_batch.output_template_id != template.id:
+        locked_batch.output_template = template
+    if not locked_batch.market:
+        locked_batch.market = locked_batch.site
+    if not locked_batch.size:
+        locked_batch.size = template.default_size
+    if not locked_batch.resolution:
+        locked_batch.resolution = template.default_resolution
+
     generations = []
     for cluster in locked_batch.clusters.prefetch_related("cluster_assets__asset").order_by("created_at", "id"):
-        references = [
-            item.asset.storage_path
-            for item in cluster.cluster_assets.select_related("asset").order_by("order", "id")
-        ]
-        prompt = cluster.prompt_override or locked_batch.global_prompt or "Create a clean ecommerce product image."
         for slot in template.slots.order_by("order", "id"):
+            compiled = compile_slot_prompt(cluster, slot, batch=locked_batch)
+            prompt_version = PromptVersion.objects.create(
+                cluster=cluster,
+                created_by=user,
+                node_name=compiled["node_name"],
+                template_version=compiled["template_version"],
+                model=compiled["model"],
+                prompt_text=compiled["prompt"],
+                input_snapshot=compiled["input_snapshot"],
+                structured_output=compiled,
+                evaluation=compiled["evaluation"],
+                source_snapshot=compiled["input_snapshot"],
+            )
             generations.append(
                 Generation.objects.create(
                     batch=locked_batch,
                     cluster=cluster,
                     output_slot=slot,
+                    prompt_version=prompt_version,
                     created_by=user,
-                    prompt_text=prompt,
-                    size=template.default_size,
-                    resolution=template.default_resolution,
-                    reference_snapshot=references,
+                    prompt_text=compiled["prompt"],
+                    size=compiled["size"],
+                    resolution=compiled["resolution"],
+                    reference_snapshot=compiled["reference_snapshot"],
+                    template_snapshot=compiled["template_snapshot"],
+                    rule_snapshot=compiled["rule_snapshot"],
                 )
             )
 
     locked_batch.confirmed_generation_key = uuid.uuid4()
     locked_batch.status = Batch.Status.QUEUED
-    locked_batch.save(update_fields=["confirmed_generation_key", "status", "updated_at"])
+    locked_batch.save(
+        update_fields=[
+            "output_template",
+            "market",
+            "size",
+            "resolution",
+            "confirmed_generation_key",
+            "status",
+            "updated_at",
+        ]
+    )
     return generations
 
 
