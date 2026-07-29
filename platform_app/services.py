@@ -1085,8 +1085,8 @@ def retry_failed_generation(generation, user):
         .select_related("batch", "cluster", "output_slot", "prompt_version")
         .get(id=generation.id)
     )
-    if locked.status != Generation.Status.FAILED:
-        raise ValueError("Only failed generations can be retried")
+    if locked.status not in {Generation.Status.FAILED, Generation.Status.CANCELED}:
+        raise ValueError("Only failed or canceled generations can be retried")
     retry = _create_followup_attempt(locked, user)
     Batch.objects.filter(id=locked.batch_id).update(
         status=Batch.Status.QUEUED,

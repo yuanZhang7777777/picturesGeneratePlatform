@@ -436,7 +436,7 @@ def test_worker_keeps_detail_queued_until_a_failed_or_canceled_hero_is_redone(tm
     hero_slot = template.slots.get(order=1)
     detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
     client = CapturingClient()
-    Generation.objects.create(
+    hero = Generation.objects.create(
         batch=batch,
         cluster=cluster,
         output_slot=hero_slot,
@@ -457,14 +457,11 @@ def test_worker_keeps_detail_queued_until_a_failed_or_canceled_hero_is_redone(tm
     assert client.calls == 0
     assert detail.status == Generation.Status.QUEUED
 
-    Generation.objects.create(
-        batch=batch,
-        cluster=cluster,
-        output_slot=hero_slot,
-        created_by=user,
-        attempt=2,
-        status=Generation.Status.COMPLETED,
-    )
+    retry = hero.retry_failed(user)
+    assert retry.attempt == 2
+    assert retry.status == Generation.Status.QUEUED
+    retry.status = Generation.Status.COMPLETED
+    retry.save(update_fields=["status", "updated_at"])
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
     detail.refresh_from_db()
     assert client.calls == 1
