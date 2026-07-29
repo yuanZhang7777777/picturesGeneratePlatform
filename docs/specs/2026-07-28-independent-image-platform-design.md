@@ -209,7 +209,7 @@ Prompt AI 一次接收：
 
 AI 结果只是新 Prompt 草稿，不自动付费生图。用户确认后形成不可变 `prompt_version`。
 
-首选 APIMart `/v1/responses` 的 `gpt-5` 多模态调用；模型名、超时和最大输出配置保存在服务端环境变量中。若契约测试失败，AI 优化按钮关闭，用户仍可手工填写 Prompt，不阻断基本生图流程。
+首选 `deepseek-v4-pro` 的 Chat Completions 调用承担所有文本语义节点；模型名、网关、超时和最大输出配置保存在服务端环境变量中。`gpt-image-2` 只承担图片生成和局部修订。若文本模型契约测试失败，系统关闭 AI Brief/Prompt 编译，员工仍可填写结构化商品资料但不提交未通过预检的生图任务。
 
 ### 4.7 生成预检
 
@@ -386,7 +386,7 @@ Caddy :18083 / 443
       → OSS 预签名
 
 prompt-worker
-  → APIMart 多模态 Responses
+  → DeepSeek `deepseek-v4-pro` Chat Completions
   → PostgreSQL
 
 generation-worker
@@ -661,7 +661,7 @@ Docker 日志按大小轮转。服务重启后 worker 扫描 `submitting/submitt
 
 ### 阶段 3：Prompt AI
 
-- 接 APIMart `gpt-5` 多模态 Responses。
+- 接 `deepseek-v4-pro` 文本语义节点与结构化输出。
 - 结构化输出校验、缺资料提示、人工确认和版本快照。
 
 ### 阶段 4：真实 APIMart 单图
