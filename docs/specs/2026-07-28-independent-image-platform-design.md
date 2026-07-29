@@ -1,7 +1,7 @@
 # 独立批量出图平台完整设计
 
 日期：2026-07-28  
-状态：设计已批准；MVP 预览环境已部署，完整生产能力仍按阶段推进  
+状态：2026-07-29 已确认产品体验重设；本文保留后端安全、任务、存储和部署基线，前端流程以 `../research/2026-07-29-top-image-platform-redesign-research.md` 为准，协作与交付顺序以 `../superpowers/specs/2026-07-29-agent-orchestrated-delivery-design.md` 为准
 目标读者：产品负责人、实现工程师、测试与运维人员
 
 ## 1. 结论
@@ -356,7 +356,7 @@ APIMart 文档给出的常见单张耗时约 30–60 秒，高分辨率可能更
 - Python 3.12。
 - Django 5.2 LTS：登录、权限、CSRF、ORM、后台和模板。
 - PostgreSQL 16：业务数据和数据库任务队列。
-- Django 模板 + 原生 JavaScript：文件夹上传、拖拽和实时刷新。
+- React + TypeScript + Vite：运营工作台、文件夹上传、拖拽、实时刷新和审核；Django 提供同源 API、Session 和 CSRF。
 - Pillow：实际图片格式验证和 EXIF 方向处理。
 - Aliyun OSS SDK：预签名上传、归档和下载。
 - Gunicorn：Web 进程。
@@ -368,8 +368,9 @@ APIMart 文档给出的常见单张耗时约 30–60 秒，高分辨率可能更
 ### 7.2 进程
 
 ```text
-Caddy :18083
-  → web（Django/Gunicorn）
+Caddy :18083 / 443
+  → React 静态工作台
+  → /api、/admin、/auth → web（Django/Gunicorn）
       → PostgreSQL
       → OSS 预签名
 
@@ -383,7 +384,7 @@ generation-worker
   → PostgreSQL
 ```
 
-Prompt worker 与生图 worker 使用同一份代码镜像和不同启动命令。
+Prompt worker 与生图 worker 使用同一份代码镜像和不同启动命令。React 构建产物由 Caddy 提供，生产不运行 Node 前端服务器。
 
 ### 7.3 数据模型
 
