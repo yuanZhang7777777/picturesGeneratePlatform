@@ -36,7 +36,16 @@ admin.site.register(Cluster)
 admin.site.register(ClusterAsset)
 admin.site.register(CompetitorInsight)
 admin.site.register(OutputTemplate)
-admin.site.register(OutputSlot)
+
+
+@admin.register(OutputSlot)
+class OutputSlotAdmin(admin.ModelAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.generations.exists():
+            return ("template", "order")
+        return super().get_readonly_fields(request, obj)
+
+
 admin.site.register(PromptNodeTemplate)
 
 

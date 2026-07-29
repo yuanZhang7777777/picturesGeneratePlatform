@@ -980,12 +980,12 @@ def _ensure_generation_prompt_policy(generation, user):
 
     prompt_text, input_snapshot = apply_standard_product_hero_policy(
         generation.output_slot,
-        generation.prompt_text,
+        previous.prompt_text if previous else generation.prompt_text,
         input_snapshot,
     )
     if previous is None and not input_snapshot.get("standard_product_hero"):
         return None, prompt_text
-    if previous is not None and prompt_text == generation.prompt_text and input_snapshot == previous.input_snapshot:
+    if previous is not None and prompt_text == previous.prompt_text and input_snapshot == previous.input_snapshot:
         return previous, prompt_text
 
     _, source_snapshot = apply_standard_product_hero_policy(

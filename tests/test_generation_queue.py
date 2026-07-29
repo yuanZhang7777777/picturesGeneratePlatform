@@ -152,3 +152,46 @@ def test_worker_rewrites_a_legacy_first_slot_prompt_before_paid_submission(tmp_p
     assert generation.prompt_text == client.prompt
     assert generation.prompt_version_id != legacy_prompt.id
     assert generation.prompt_version.prompt_text == client.prompt
+
+
+def test_worker_restores_the_prompt_version_as_the_canonical_hero_prompt(tmp_path, settings):
+    from platform_app.models import Generation, OutputTemplate, PromptVersion
+    from platform_app.services import LocalStorage, process_generation_once
+    from platform_app.template_policy import STANDARD_PRODUCT_HERO_PROMPT_LINES
+
+    class CapturingClient:
+        def __init__(self):
+            self.prompt = ""
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.prompt = prompt
+            return "canonical-policy-task"
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    first_slot = OutputTemplate.objects.get(platform="global", site="").slots.get(order=1)
+    canonical_prompt = "\n".join(("Canonical product prompt", *STANDARD_PRODUCT_HERO_PROMPT_LINES))
+    prompt_version = PromptVersion.objects.create(
+        cluster=cluster,
+        created_by=user,
+        prompt_text=canonical_prompt,
+        input_snapshot={"standard_product_hero": True},
+    )
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=first_slot,
+        prompt_version=prompt_version,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        prompt_text="Lifestyle campaign with a sale headline",
+    )
+
+    client = CapturingClient()
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+
+    assert client.prompt == canonical_prompt
+    assert "Lifestyle campaign" not in client.prompt
+    assert generation.prompt_text == canonical_prompt
+    assert generation.prompt_version_id == prompt_version.id

@@ -13,6 +13,13 @@ class ImmutableReviewQuerySet(models.QuerySet):
         raise ValidationError("Review records are immutable")
 
 
+class ProtectedOutputSlotQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if {"order", "template", "template_id"} & kwargs.keys() and self.filter(generations__isnull=False).exists():
+            raise ValidationError("OutputSlot order and template are immutable after generation")
+        return super().update(**kwargs)
+
+
 class User(AbstractUser):
     class Role(models.TextChoices):
         OPERATOR = "operator", "Operator"
@@ -228,6 +235,7 @@ class OutputSlot(models.Model):
     name = models.CharField(max_length=120)
     order = models.PositiveIntegerField()
     purpose = models.TextField(blank=True)
+    objects = ProtectedOutputSlotQuerySet.as_manager()
 
     class Meta:
         ordering = ["order", "id"]
@@ -238,6 +246,15 @@ class OutputSlot(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            current = type(self).objects.filter(pk=self.pk).values("template_id", "order").first()
+            if current and self.generations.exists() and (
+                current["template_id"] != self.template_id or current["order"] != self.order
+            ):
+                raise ValidationError("OutputSlot order and template are immutable after generation")
+        return super().save(*args, **kwargs)
 
 
 class PromptNodeTemplate(models.Model):

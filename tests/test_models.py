@@ -1,5 +1,6 @@
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
 
@@ -99,6 +100,38 @@ def test_output_slot_order_must_start_at_one():
 
     with pytest.raises(IntegrityError), transaction.atomic():
         OutputSlot.objects.create(template=template, name="Before hero", order=0)
+
+
+def test_output_slot_position_and_template_are_immutable_after_generation_uses_it():
+    from django.contrib import admin
+
+    from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Used slot")
+    cluster = Cluster.objects.create(batch=batch, name="Product 1")
+    template = OutputTemplate.objects.create(name="Original", platform="global")
+    replacement = OutputTemplate.objects.create(name="Replacement", platform="global")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    slot.template = replacement
+    slot.order = 2
+    slot.save()
+    slot.template = template
+    slot.order = 1
+    slot.save()
+    Generation.objects.create(batch=batch, cluster=cluster, output_slot=slot)
+
+    slot.order = 2
+    with pytest.raises(ValidationError, match="immutable"):
+        slot.save()
+
+    slot.refresh_from_db()
+    slot.template = replacement
+    with pytest.raises(ValidationError, match="immutable"):
+        slot.save()
+
+    readonly_fields = admin.site._registry[OutputSlot].get_readonly_fields(None, slot)
+    assert {"template", "order"} <= set(readonly_fields)
 
 
 def test_retry_failed_generation_preserves_old_attempt():
