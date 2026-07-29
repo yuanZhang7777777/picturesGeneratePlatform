@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { createProject, loadWorkspace, mergeAsset, submitReview } from "../api";
+import { createProject, loadWorkspace, mergeAsset, submitReview, uploadAssets } from "../api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -33,11 +33,51 @@ test("obtains a CSRF token from the same-origin bootstrap endpoint before creati
   expect(fetchMock.mock.calls[1][1].headers.get("X-CSRFToken")).toBe("csrf-for-test");
 });
 
+test("canonicalizes market codes to uppercase without restricting unlisted countries", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ csrf_token: "csrf-for-test" }) })
+    .mockResolvedValueOnce(response(201, project));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await createProject({ name: "Brazil launch", platform: "shopee", market: "br", template: "", size: "1:1" });
+
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ market: "BR" });
+});
+
 test("does not turn a 403 workspace response into mock data outside explicit demo mode", async () => {
   vi.stubEnv("VITE_DEMO_MODE", "false");
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(403, { error: "forbidden" })));
 
   await expect(loadWorkspace()).rejects.toMatchObject({ status: 403, message: "forbidden" });
+});
+
+test("treats a redirected HTML login page as an authentication error instead of JSON", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    redirected: true,
+    headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
+    json: async () => "<html>login</html>",
+  }));
+
+  await expect(loadWorkspace()).rejects.toMatchObject({
+    status: 401,
+    message: "登录已失效或需修改密码",
+  });
+});
+
+test("keeps the relative folder path when posting a selected upload", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(200, { asset_count: 1 }));
+  vi.stubGlobal("fetch", fetchMock);
+  const file = new File(["image"], "front.png", { type: "image/png" });
+  Object.defineProperty(file, "webkitRelativePath", { value: "lamp/angles/front.png" });
+
+  await uploadAssets("project-1", [file]);
+
+  const form = fetchMock.mock.calls[1][1].body as FormData;
+  expect((form.get("files") as File).name).toBe("lamp/angles/front.png");
 });
 
 test("merges an asset through the versioned Django cluster endpoint", async () => {

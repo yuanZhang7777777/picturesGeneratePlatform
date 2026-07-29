@@ -31,9 +31,9 @@ export const developmentWorkspace: WorkspaceSnapshot = {
           identityLock: "保持深蓝色灯头、金属细杆和底座比例，不增加按钮或文字。",
           brief: "明亮的极简书桌场景，展示深蓝色护眼灯，柔和晨光，商品结构与颜色保持一致。",
           outputs: [
-            { id: "output-lamp-main", name: "白底主图", slot: "主图", attempt: 1, status: "completed", reviewStatus: "pending", version: 1, imageUrl: image("主图", "#eff6ff") },
-            { id: "output-lamp-scene", name: "书桌场景", slot: "场景图", attempt: 1, status: "running", reviewStatus: "pending", version: 1, imageUrl: image("场景", "#ede9fe") },
-            { id: "output-lamp-detail", name: "灯头细节", slot: "细节图", attempt: 1, status: "queued", reviewStatus: "pending", version: 1 },
+            { id: "output-lamp-main", name: "白底主图", slot: "主图", slotId: "lamp-main", slotOrder: 1, attempt: 1, status: "completed", reviewStatus: "pending", version: 1, imageUrl: image("主图", "#eff6ff") },
+            { id: "output-lamp-scene", name: "书桌场景", slot: "场景图", slotId: "lamp-scene", slotOrder: 2, attempt: 1, status: "running", reviewStatus: "pending", version: 1, imageUrl: image("场景", "#ede9fe") },
+            { id: "output-lamp-detail", name: "灯头细节", slot: "细节图", slotId: "lamp-detail", slotOrder: 3, attempt: 1, status: "queued", reviewStatus: "pending", version: 1 },
           ],
         },
         {
@@ -45,8 +45,8 @@ export const developmentWorkspace: WorkspaceSnapshot = {
           identityLock: "保持椅脚数量、米白软包颜色和靠背弧度。",
           brief: "通透客厅场景中的北欧单椅，保留材质纹理和真实比例。",
           outputs: [
-            { id: "output-chair-main", name: "白底主图", slot: "主图", attempt: 1, status: "completed", reviewStatus: "accepted", version: 1, imageUrl: image("主图", "#fff7ed") },
-            { id: "output-chair-scene", name: "客厅场景", slot: "场景图", attempt: 1, status: "failed", reviewStatus: "pending", version: 1, failureReason: "场景服务暂时不可用" },
+            { id: "output-chair-main", name: "白底主图", slot: "主图", slotId: "chair-main", slotOrder: 1, attempt: 1, status: "completed", reviewStatus: "accepted", version: 1, imageUrl: image("主图", "#fff7ed") },
+            { id: "output-chair-scene", name: "客厅场景", slot: "场景图", slotId: "chair-scene", slotOrder: 2, attempt: 1, status: "failed", reviewStatus: "pending", version: 1, failureReason: "场景服务暂时不可用" },
           ],
         },
       ],

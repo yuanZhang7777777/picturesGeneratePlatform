@@ -1,16 +1,18 @@
 export interface AttemptedOutput {
   id: string;
   slot: string;
+  slotId: string;
+  slotOrder: number;
   attempt: number;
 }
 
 export function currentOutputs<T extends AttemptedOutput>(outputs: T[]): T[] {
   const latest = new Map<string, T>();
   outputs.forEach((output) => {
-    const current = latest.get(output.slot);
-    if (!current || output.attempt > current.attempt) latest.set(output.slot, output);
+    const current = latest.get(output.slotId);
+    if (!current || output.attempt > current.attempt) latest.set(output.slotId, output);
   });
-  return Array.from(latest.values());
+  return Array.from(latest.values()).sort((left, right) => left.slotOrder - right.slotOrder);
 }
 
 export function snapshotPollInterval(active: boolean, hidden: boolean): number | false {

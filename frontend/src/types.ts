@@ -13,6 +13,8 @@ export interface OutputImage {
   id: string;
   name: string;
   slot: string;
+  slotId: string;
+  slotOrder: number;
   attempt: number;
   version: number;
   status: GenerationStatus;
@@ -73,4 +75,13 @@ export interface ReviewInput {
   issue_tags: string[];
   description: string;
   annotations: ReviewAnnotation[];
+}
+
+export interface PreflightResult {
+  cluster_count: number;
+  slot_count: number;
+  generation_count: number;
+  org_remaining: number;
+  user_remaining: number;
+  blocking_errors: string[];
 }
