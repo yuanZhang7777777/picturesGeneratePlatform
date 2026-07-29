@@ -35,7 +35,16 @@ admin.site.register(CompetitorInsight)
 admin.site.register(OutputTemplate)
 admin.site.register(OutputSlot)
 admin.site.register(PromptNodeTemplate)
-admin.site.register(PromptVersion)
+
+
+@admin.register(PromptVersion)
+class PromptVersionAdmin(admin.ModelAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.generations.exists():
+            return [field.name for field in self.model._meta.fields]
+        return super().get_readonly_fields(request, obj)
+
+
 admin.site.register(RuleProfile)
 admin.site.register(Generation)
 admin.site.register(ResultAsset)

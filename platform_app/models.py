@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Max
 from django.utils import timezone
@@ -263,18 +264,38 @@ class CompetitorInsight(models.Model):
 
 
 class PromptVersion(models.Model):
+    IMMUTABLE_SNAPSHOT_FIELDS = (
+        "cluster_id",
+        "created_by_id",
+        "node_name",
+        "template_version",
+        "provider_model",
+        "prompt_text",
+        "input_snapshot",
+        "structured_output",
+        "evaluation",
+        "source_snapshot",
+    )
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cluster = models.ForeignKey(Cluster, on_delete=models.CASCADE, related_name="prompt_versions")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     node_name = models.CharField(max_length=80, default="slot_prompt")
     template_version = models.CharField(max_length=40, default="builtin-v1")
-    model = models.CharField(max_length=80, default="gpt-image-2")
+    provider_model = models.CharField(max_length=80, default="gpt-image-2")
     prompt_text = models.TextField()
     input_snapshot = models.JSONField(default=dict, blank=True)
     structured_output = models.JSONField(default=dict, blank=True)
     evaluation = models.JSONField(default=dict, blank=True)
     source_snapshot = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding and self.generations.exists():
+            current = type(self).objects.filter(pk=self.pk).values(*self.IMMUTABLE_SNAPSHOT_FIELDS).get()
+            if any(current[field] != getattr(self, field) for field in self.IMMUTABLE_SNAPSHOT_FIELDS):
+                raise ValidationError("PromptVersion snapshots are immutable after use by a generation")
+        return super().save(*args, **kwargs)
 
 
 class Generation(models.Model):
