@@ -191,7 +191,7 @@ TXT 是提示词资料来源，不是任务主键。
 
 用户点击“AI 优化”后创建异步 `prompt_job`，页面显示排队、分析中、待确认、失败或完成。
 
-`prompt_job` 先调用 APIMart 多模态 Responses 的 `gpt-4-vision`，将图片转换为受限 `VisualFactPacket`；之后才调用 `deepseek-v4-pro`。文本模型一次接收：
+`prompt_job` 先调用 APIMart 多模态 Responses 的 `gpt-5-nano-2025-08-07`，将图片转换为受限 `VisualFactPacket`；之后才调用 `deepseek-v4-pro`。文本模型一次接收：
 
 - 当前集群最多 16 张我方参考图的视觉事实包。
 - 全局要求。
@@ -199,7 +199,7 @@ TXT 是提示词资料来源，不是任务主键。
 - 平台、站点、语言和已发布规则版本。
 - 输出模板中每张图的职责。
 
-竞品图的观察请求只允许输出抽象 Style DNA 候选（色彩、光线、构图、场景密度等），不得输出或传递竞品商标、包装文字、人物、独特插画或可识别版式。竞品原图只到 `gpt-4-vision`，不进入 `deepseek-v4-pro`、`gpt-image-2`、生产 Prompt、生成任务或导出包。
+竞品图的观察请求只允许输出抽象 Style DNA 候选（色彩、光线、构图、场景密度等），不得输出或传递竞品商标、包装文字、人物、独特插画或可识别版式。竞品原图只到 `gpt-5-nano-2025-08-07`，不进入 `deepseek-v4-pro`、`gpt-image-2`、生产 Prompt、生成任务或导出包。
 
 输出必须是受校验的结构化 JSON：
 
@@ -211,7 +211,7 @@ TXT 是提示词资料来源，不是任务主键。
 
 AI 结果只是新 Prompt 草稿，不自动付费生图。用户确认后形成不可变 `prompt_version`。
 
-APIMart 多模态 Responses 的 `gpt-4-vision` 是唯一视觉观察器，只产生后端 Schema 校验后的 `VisualFactPacket`；经 APIMart 网关的 `deepseek-v4-pro` Chat Completions 承担所有文本语义节点；APIMart 的 `gpt-image-2` 只承担图片生成和局部修订。模型名、网关、超时和最大输出配置保存在服务器受限环境变量中。三个精确模型 ID 都必须先通过账户契约测试：模型可用、图片输入、结构化输出、超时、内容安全错误和脱敏日志。任一模型未开通、模型未知或输出不符合契约时，系统关闭依赖它的自动节点，不得降级为 V3 或其他模型；员工仍可填写结构化商品资料，但不提交未通过预检的生图任务。
+APIMart 多模态 Responses 的 `gpt-5-nano-2025-08-07` 是唯一视觉观察器，只产生后端 Schema 校验后的 `VisualFactPacket`；经 APIMart 网关的 `deepseek-v4-pro` Chat Completions 承担所有文本语义节点；APIMart 的 `gpt-image-2` 只承担图片生成和局部修订。模型名、网关、超时和最大输出配置保存在服务器受限环境变量中。三个精确模型 ID 都必须先通过账户契约测试：模型可用、图片输入、结构化输出、超时、内容安全错误和脱敏日志。任一模型未开通、模型未知或输出不符合契约时，系统关闭依赖它的自动节点，不得降级为 V3 或其他模型；员工仍可填写结构化商品资料，但不提交未通过预检的生图任务。该视觉模型固定快照须在 2026-12-11 前以同一 Schema 完成候选替换模型的回归、发布与回滚验证。
 
 ### 4.7 生成预检
 
@@ -388,7 +388,7 @@ Caddy :18083 / 443
       → OSS 预签名
 
 prompt-worker
-  → APIMart `gpt-4-vision` Multimodal Responses → VisualFactPacket（仅视觉观察）
+  → APIMart `gpt-5-nano-2025-08-07` Multimodal Responses → VisualFactPacket（仅视觉观察）
   → APIMart `deepseek-v4-pro` Chat Completions（仅文本推理；均在契约验证后）
   → PostgreSQL
 
@@ -452,7 +452,7 @@ Prompt worker 与生图 worker 使用同一份代码镜像和不同启动命令�
 1. 浏览器通过精确对象键预签名 URL 上传私有 OSS。
 2. 服务端验证大小、真实格式、解码和 EXIF。
 3. 生成不可变标准参考副本。
-4. Prompt worker 可将我方标准副本或私有竞品图传给 `gpt-4-vision`，只保存 Schema 校验后的视觉事实包；竞品原图不进入后续 Prompt 或生成路径。
+4. Prompt worker 可将我方标准副本或私有竞品图传给 `gpt-5-nano-2025-08-07`，只保存 Schema 校验后的视觉事实包；竞品原图不进入后续 Prompt 或生成路径。
 5. 生图 worker 仅将我方标准副本上传 APIMart 官方上传接口，保存返回 URL。
 6. 每个 generation 保存实际使用的 APIMart URL 与 OSS 对象快照。
 
@@ -666,7 +666,7 @@ Docker 日志按大小轮转。服务重启后 worker 扫描 `submitting/submitt
 
 ### 阶段 3：Prompt AI
 
-- 接经 APIMart 的 `gpt-4-vision` 视觉观察器、`deepseek-v4-pro` 文本语义节点与结构化输出；先验证竞品原图不会进入文本、生成、Prompt 或导出路径，不允许模型替换降级。
+- 接经 APIMart 的 `gpt-5-nano-2025-08-07` 视觉观察器、`deepseek-v4-pro` 文本语义节点与结构化输出；先验证竞品原图不会进入文本、生成、Prompt 或导出路径，不允许模型替换降级。
 - 结构化输出校验、缺资料提示、人工确认和版本快照。
 
 ### 阶段 4：真实 APIMart 单图

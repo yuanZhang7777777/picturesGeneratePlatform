@@ -89,7 +89,7 @@ docker compose logs --tail=100 web generation-worker prompt-worker proxy
 
 管理员通过同源 `/admin/` 登录后维护平台规则、输出模板及槽位。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。正式种子不由本运维任务写入，而由独立 `template-seed` 任务提交：仅 global generic 模板可作为 `published` 基线；Shopee/TikTok 必须在官方规则发布前保持 `draft`。草稿或未核对规则不得被描述为自动合规。
 
-竞品图可经批准的 `gpt-4-vision` 视觉观察器提炼为抽象构图或风格策略；不得作为商品参考图、事实来源、生产 Prompt、导出内容或传给 `gpt-image-2`。Prompt OS 只能把确认过的商品事实、身份锁、模板、我方参考图与受限 Style DNA 编译为生成指令。
+竞品图可经批准的 `gpt-5-nano-2025-08-07` 视觉观察器提炼为抽象构图或风格策略；不得作为商品参考图、事实来源、生产 Prompt、导出内容或传给 `gpt-image-2`。Prompt OS 只能把确认过的商品事实、身份锁、模板、我方参考图与受限 Style DNA 编译为生成指令。
 
 ## Hermes 预览与真实发布
 
