@@ -7,7 +7,7 @@
     Referrer-Policy "same-origin"
   }
 
-  @django path /api /api/* /admin /admin/* /auth /auth/* /login /login/* /logout /logout/* /password /password/* /health /health/* /static /static/*
+  @django path /api /api/* /admin /admin/* /auth /auth/* /login /login/* /logout /logout/* /password /password/* /batches /batches/* /health /health/* /static /static/*
   handle @django {
     reverse_proxy web:8000
   }

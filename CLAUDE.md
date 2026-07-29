@@ -34,7 +34,8 @@
 - 密钥、密码、OSS 凭据、供应商 token 只能存在本地/服务器 `.env`；不得写入仓库、文档、前端、日志或聊天摘要。
 - 真实付费调用、真实 OSS、生产部署、账号策略或网络入口变更属于发布门禁，需主 Agent 明确签核。
 - Hermes 操作只使用 `ssh hermes-remote`；部署属于全局写操作，先声明操作并获取 `.codex_locks/global.lock`。
-- React 生产构建由 Caddy 同源提供静态资源，Caddy 只代理 Django 的 API、认证、后台、健康检查和 Django 静态资源；浏览器不保存认证 token。
+- React 生产构建由 Caddy 同源提供静态资源，Caddy 只代理 Django 的 API、认证、后台、健康检查、迁移期 `/batches/` 和 Django 静态资源；浏览器不保存认证 token。
+- 正式规则/模板种子只能由独立 `template-seed` 任务提交：仅 global generic 可处于 `published` 基线，Shopee/TikTok 在官方规则、来源和版本获批前一律 `draft`，不得宣称自动合规。
 
 ## 权威文档
 

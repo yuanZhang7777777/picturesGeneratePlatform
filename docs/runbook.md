@@ -2,7 +2,7 @@
 
 ## 架构与入口
 
-Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worker 和 Caddy。Caddy 是唯一对浏览器开放的同源入口：它在镜像构建时把 `frontend/dist` 写入 `/srv/frontend`，提供 React 静态资源，并将 `/api/`、`/auth/`、`/admin/`、登录/退出/改密、健康检查和 Django 静态资源反向代理到 Web 服务。
+Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worker 和 Caddy。Caddy 是唯一对浏览器开放的同源入口：它在镜像构建时把 `frontend/dist` 写入 `/srv/frontend`，提供 React 静态资源，并将 `/api/`、`/auth/`、`/admin/`、登录/退出/改密、迁移期 `/batches/`、健康检查和 Django 静态资源反向代理到 Web 服务。
 
 浏览器只持有 Django session Cookie 与 CSRF，不持有供应商或 OSS 凭据。生产容器不运行 Node 前端服务器。
 
@@ -58,6 +58,13 @@ npm --prefix frontend run dev
 docker compose --env-file .env.example config --quiet
 ```
 
+同时保留 Django `/batches/` 页面，避免 React 根路由的 SPA 回退遮挡旧工作流。以下静态检查应通过：
+
+```powershell
+$content = Get-Content -Raw 'docker/Caddyfile'
+if ($content -notmatch '(?m)^\s*@django path .*\/batches \/batches\/\*') { throw 'Caddy does not preserve Django /batches/ routes' }
+```
+
 完成 `.env` 的本地安全值替换后，构建并启动预览：
 
 ```bash
@@ -78,7 +85,7 @@ docker compose logs --tail=100 web generation-worker prompt-worker proxy
 
 ## 管理员规则、模板与审核发布
 
-管理员通过同源 `/admin/` 登录后维护平台规则、输出模板及槽位。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。只有明确为 `published` 的规则/模板才可被运营项目选择；草稿或未核对规则不得被描述为自动合规。
+管理员通过同源 `/admin/` 登录后维护平台规则、输出模板及槽位。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。正式种子不由本运维任务写入，而由独立 `template-seed` 任务提交：仅 global generic 模板可作为 `published` 基线；Shopee/TikTok 必须在官方规则发布前保持 `draft`。草稿或未核对规则不得被描述为自动合规。
 
 竞品图可供人工提炼抽象的构图或风格策略，但不得作为商品参考图、事实来源或供应商上传内容。Prompt OS 只能把确认过的商品事实、身份锁、模板与本项目参考图编译为生成指令。
 
