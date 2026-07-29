@@ -136,7 +136,7 @@ flowchart LR
 
 - 输入：用户业务决定、已发布平台规则、商品素材、现有 Django API、APIMart/OSS 的已授权配置。
 - 输出：可运行页面、测试、规格与运行手册、部署记录、可追溯的任务/结果快照。
-- 文档优先级：本文件定义协作与交付顺序；产品体验以 `../../research/2026-07-29-top-image-platform-redesign-research.md` 为准；后端安全和部署边界以 `../../specs/2026-07-28-independent-image-platform-design.md` 为准。
+- 文档优先级：本文件定义协作与交付顺序；已确认的产品体验以 `2026-07-29-product-workbench-experience-design.md` 为准，竞品调研保留在 `../../research/2026-07-29-top-image-platform-redesign-research.md`；后端安全和部署边界以 `../../specs/2026-07-28-independent-image-platform-design.md` 为准。
 
 ## 下一步
 
