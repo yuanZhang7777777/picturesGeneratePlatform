@@ -352,3 +352,143 @@ def test_worker_rejects_a_queued_detail_image_without_its_required_hero(tmp_path
     assert client.calls == 0
     assert generation.status == Generation.Status.FAILED
     assert "standard product hero" in generation.failure_reason.lower()
+
+
+def test_worker_requires_a_completed_hero_from_the_same_template_before_detail_submission(tmp_path, settings):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
+    from platform_app.services import LocalStorage, process_generation_once
+
+    class CapturingClient:
+        def __init__(self):
+            self.calls = 0
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.calls += 1
+            return f"detail-task-{self.calls}"
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    hero_slot = template.slots.get(order=1)
+    detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
+    other_template = OutputTemplate.objects.create(platform="global", name="Other template")
+    other_hero_slot = OutputSlot.objects.create(template=other_template, name="Hero", order=1)
+    client = CapturingClient()
+
+    Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=other_hero_slot,
+        created_by=user,
+        status=Generation.Status.COMPLETED,
+    )
+    wrong_template_detail = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=detail_slot,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        prompt_text="Detail after wrong-template hero",
+    )
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    wrong_template_detail.refresh_from_db()
+    assert client.calls == 0
+    assert wrong_template_detail.status == Generation.Status.FAILED
+
+    Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=hero_slot,
+        created_by=user,
+        status=Generation.Status.FAILED,
+    )
+    failed_hero_detail = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=detail_slot,
+        created_by=user,
+        attempt=2,
+        status=Generation.Status.QUEUED,
+        prompt_text="Detail after failed hero",
+    )
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    failed_hero_detail.refresh_from_db()
+    assert client.calls == 0
+    assert failed_hero_detail.status == Generation.Status.FAILED
+
+    Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=hero_slot,
+        created_by=user,
+        attempt=2,
+        status=Generation.Status.COMPLETED,
+    )
+    completed_hero_detail = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=detail_slot,
+        created_by=user,
+        attempt=3,
+        status=Generation.Status.QUEUED,
+        prompt_text="Detail after completed hero",
+    )
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    completed_hero_detail.refresh_from_db()
+    assert client.calls == 1
+    assert completed_hero_detail.status == Generation.Status.SUBMITTED
+
+
+def test_worker_defers_detail_until_hero_completes_without_blocking_hero_or_polling(tmp_path, settings):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
+    from platform_app.services import LocalStorage, process_generation_once
+
+    class CapturingClient:
+        def __init__(self):
+            self.submitted_prompts = []
+            self.polls = 0
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.submitted_prompts.append(prompt)
+            return "hero-task"
+
+        def get_task(self, task_id):
+            self.polls += 1
+            return {"status": "processing"}
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    hero_slot = template.slots.get(order=1)
+    detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
+    detail = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=detail_slot,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        prompt_text="DETAIL PROMPT",
+    )
+    hero = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=hero_slot,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        prompt_text="HERO PROMPT",
+    )
+
+    client = CapturingClient()
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    detail.refresh_from_db()
+    hero.refresh_from_db()
+    assert detail.status == Generation.Status.QUEUED
+    assert hero.status == Generation.Status.SUBMITTED
+    assert client.submitted_prompts[0].startswith("HERO PROMPT")
+
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    detail.refresh_from_db()
+    hero.refresh_from_db()
+    assert detail.status == Generation.Status.QUEUED
+    assert hero.status == Generation.Status.PROCESSING
+    assert client.polls == 1

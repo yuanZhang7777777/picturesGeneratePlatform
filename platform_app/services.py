@@ -837,23 +837,40 @@ def _image_urls(payload):
 def process_generation_once(client=None, storage=None):
     client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
-    queued = (
-        Generation.objects.select_related("batch", "batch__owner", "cluster", "output_slot", "prompt_version")
+    queued = None
+    rejected_queued = False
+    queued_candidates = (
+        Generation.objects.select_related("batch", "batch__owner", "cluster", "output_slot__template", "prompt_version")
         .filter(status=Generation.Status.QUEUED)
         .order_by("created_at", "id")
-        .first()
     )
+    for candidate in queued_candidates:
+        if candidate.output_slot.order == 1:
+            queued = candidate
+            break
+        hero = (
+            Generation.objects.filter(
+                batch_id=candidate.batch_id,
+                cluster_id=candidate.cluster_id,
+                output_slot__template_id=candidate.output_slot.template_id,
+                output_slot__order=1,
+            )
+            .order_by("-attempt", "-created_at", "-id")
+            .first()
+        )
+        if hero is None or hero.status in {Generation.Status.FAILED, Generation.Status.CANCELED}:
+            candidate.status = Generation.Status.FAILED
+            candidate.failure_reason = "A completed standard product hero is required before detail outputs can be generated"
+            candidate.save(update_fields=["status", "failure_reason", "updated_at"])
+            candidate.batch.recompute_status()
+            rejected_queued = True
+            continue
+        if hero.status != Generation.Status.COMPLETED:
+            continue
+        queued = candidate
+        break
+
     if queued is not None:
-        if queued.output_slot.order != 1 and not Generation.objects.filter(
-            batch_id=queued.batch_id,
-            cluster_id=queued.cluster_id,
-            output_slot__order=1,
-        ).exists():
-            queued.status = Generation.Status.FAILED
-            queued.failure_reason = "A standard product hero is required before detail outputs can be generated"
-            queued.save(update_fields=["status", "failure_reason", "updated_at"])
-            queued.batch.recompute_status()
-            return 1
         prompt_version, prompt_text = _ensure_generation_prompt_policy(queued, queued.created_by)
         if prompt_version_id := getattr(prompt_version, "id", None):
             if queued.prompt_version_id != prompt_version_id or queued.prompt_text != prompt_text:
@@ -894,7 +911,7 @@ def process_generation_once(client=None, storage=None):
         .first()
     )
     if active is None:
-        return 0
+        return 1 if rejected_queued else 0
 
     payload = client.get_task(active.provider_task_id)
     provider_status = _normalize_provider_status(payload)
