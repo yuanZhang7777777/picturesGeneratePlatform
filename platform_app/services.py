@@ -1,21 +1,24 @@
 import base64
+import copy
 import hashlib
 import json
 import mimetypes
 import re
 import uuid
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Max, Prefetch
+from django.urls import reverse
 from django.utils import timezone
 from PIL import Image, UnidentifiedImageError
 import requests
 
 from .models import (
     Asset,
+    AuditEvent,
     Batch,
     Cluster,
     ClusterAsset,
@@ -26,6 +29,8 @@ from .models import (
     PromptNodeTemplate,
     PromptVersion,
     ResultAsset,
+    ReviewAnnotation,
+    ReviewFeedback,
     RuleProfile,
 )
 
@@ -223,6 +228,72 @@ class APIMartClient:
 
 def create_batch(owner, name, platform="shopee", site="SG"):
     return Batch.objects.create(owner=owner, name=name, platform=platform, site=site)
+
+
+def _published_configuration(model, value, *, platform, site):
+    if not value:
+        return None
+    queryset = model.objects.filter(platform=platform, site=site)
+    try:
+        item = queryset.filter(id=uuid.UUID(str(value))).first()
+    except (ValueError, AttributeError):
+        named = queryset.filter(name=str(value))
+        item = (
+            named.filter(status=model.Status.PUBLISHED)
+            .order_by("-version", "-id")
+            .first()
+            or named.order_by("-version", "-id").first()
+        )
+    if item is None:
+        raise ValueError(f"{model._meta.verbose_name} not found")
+    if item.status != model.Status.PUBLISHED:
+        raise ValueError(f"{model._meta.verbose_name} must be published")
+    return item
+
+
+def create_project(
+    owner,
+    *,
+    name,
+    platform="shopee",
+    market="SG",
+    template=None,
+    rule_profile=None,
+    size="",
+    resolution="",
+    global_prompt="",
+):
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    platform = str(platform or "shopee").strip()
+    market = str(market or "SG").strip()
+    output_template = _published_configuration(
+        OutputTemplate,
+        template,
+        platform=platform,
+        site=market,
+    )
+    if output_template is None:
+        output_template = ensure_default_template(platform, market)
+    rules = _published_configuration(
+        RuleProfile,
+        rule_profile,
+        platform=platform,
+        site=market,
+    )
+    return Batch.objects.create(
+        owner=owner,
+        name=name,
+        platform=platform,
+        site=market,
+        market=market,
+        output_template=output_template,
+        rule_profile=rules,
+        size=str(size or output_template.default_size),
+        resolution=str(resolution or output_template.default_resolution),
+        global_prompt=str(global_prompt or ""),
+    )
 
 
 def _bytes(content):
@@ -840,3 +911,293 @@ def optimize_cluster_prompt(cluster, client=None):
         }
     )
     return {"suggested_prompt": response.get("output_text", ""), "raw": response}
+
+
+def _coordinate(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+        raise ValueError("Annotation coordinates must be numbers from 0 to 1")
+    return float(value)
+
+
+def _normalize_annotations(annotations):
+    if not isinstance(annotations, list):
+        raise ValueError("annotations must be a list")
+    normalized = []
+    for annotation in annotations:
+        if not isinstance(annotation, dict):
+            raise ValueError("annotation must be an object")
+        kind = annotation.get("kind")
+        if kind not in ReviewAnnotation.Kind.values:
+            raise ValueError("annotation kind must be stroke or circle")
+        points = []
+        rect = []
+        if kind == ReviewAnnotation.Kind.STROKE:
+            raw_points = annotation.get("points")
+            if not isinstance(raw_points, list) or len(raw_points) < 2:
+                raise ValueError("stroke annotation requires at least two points")
+            for point in raw_points:
+                if isinstance(point, dict):
+                    point = [point.get("x"), point.get("y")]
+                if not isinstance(point, (list, tuple)) or len(point) != 2:
+                    raise ValueError("annotation point must contain x and y")
+                points.append([_coordinate(point[0]), _coordinate(point[1])])
+        else:
+            raw_rect = annotation.get("rect")
+            if isinstance(raw_rect, dict):
+                raw_rect = [
+                    raw_rect.get("x"),
+                    raw_rect.get("y"),
+                    raw_rect.get("width"),
+                    raw_rect.get("height"),
+                ]
+            if not isinstance(raw_rect, (list, tuple)) or len(raw_rect) != 4:
+                raise ValueError("circle annotation requires x, y, width, and height")
+            rect = [_coordinate(value) for value in raw_rect]
+        color = annotation.get("color", "#ff0000")
+        if not isinstance(color, str) or not color.strip() or len(color) > 32:
+            raise ValueError("annotation color is invalid")
+        width = annotation.get("width", 2)
+        if isinstance(width, bool) or not isinstance(width, (int, float)) or not 0 < width <= 64:
+            raise ValueError("annotation width must be between 0 and 64")
+        normalized.append(
+            {
+                "kind": kind,
+                "points": points,
+                "rect": rect,
+                "color": color.strip(),
+                "width": float(width),
+            }
+        )
+    return normalized
+
+
+@transaction.atomic
+def review_generation(generation, reviewer, *, decision, issue_tags=None, description="", annotations=None):
+    locked = (
+        Generation.objects.select_for_update()
+        .select_related("prompt_version", "cluster", "output_slot", "batch")
+        .get(id=generation.id)
+    )
+    if locked.status != Generation.Status.COMPLETED:
+        raise ValueError("Only completed generations can be reviewed")
+    if decision not in ReviewFeedback.Decision.values:
+        raise ValueError("decision must be accept or changes_requested")
+    if hasattr(locked, "review_feedback"):
+        raise ValueError("Generation has already been reviewed")
+    if not isinstance(issue_tags, list):
+        raise ValueError("issue_tags must be a list")
+    normalized_tags = sorted(
+        {
+            tag.strip().lower()
+            for tag in issue_tags
+            if isinstance(tag, str) and tag.strip()
+        }
+    )
+    if len(normalized_tags) != len(
+        {tag.strip().lower() for tag in issue_tags if isinstance(tag, str) and tag.strip()}
+    ) or any(not isinstance(tag, str) for tag in issue_tags):
+        raise ValueError("issue_tags must contain strings")
+    normalized_annotations = _normalize_annotations(annotations or [])
+    description = str(description or "").strip()
+
+    feedback = ReviewFeedback.objects.create(
+        generation=locked,
+        reviewer=reviewer,
+        decision=decision,
+        issue_tags=normalized_tags,
+        description=description,
+    )
+    ReviewAnnotation.objects.bulk_create(
+        [ReviewAnnotation(feedback=feedback, **annotation) for annotation in normalized_annotations]
+    )
+
+    revision = None
+    if decision == ReviewFeedback.Decision.ACCEPT:
+        locked.review_status = Generation.ReviewStatus.ACCEPTED
+        audit_action = "generation.accept"
+    else:
+        locked.review_status = Generation.ReviewStatus.CHANGES_REQUESTED
+        audit_action = "generation.changes_requested"
+        next_attempt = (
+            Generation.objects.filter(cluster=locked.cluster, output_slot=locked.output_slot)
+            .aggregate(value=Max("attempt"))["value"]
+            or 0
+        ) + 1
+        previous = locked.prompt_version
+        revision_delta = {
+            "issue_tags": normalized_tags,
+            "description": description,
+        }
+        input_snapshot = copy.deepcopy(previous.input_snapshot if previous else {})
+        input_snapshot.setdefault("product_facts", locked.cluster.product_facts)
+        input_snapshot.setdefault("identity_lock", locked.cluster.identity_lock)
+        input_snapshot.setdefault("reference_snapshot", list(locked.reference_snapshot))
+        input_snapshot["revision_delta"] = revision_delta
+        source_snapshot = copy.deepcopy(previous.source_snapshot if previous else input_snapshot)
+        source_snapshot["revision_delta"] = revision_delta
+        structured_output = copy.deepcopy(previous.structured_output if previous else {})
+        structured_output["revision_delta"] = {
+            **revision_delta,
+            "prior_prompt_version_id": str(previous.id) if previous else None,
+        }
+        delta_lines = [
+            locked.prompt_text,
+            "Revision request:",
+            f"Issue tags: {', '.join(normalized_tags) or 'not provided'}",
+            f"Description: {description or 'not provided'}",
+        ]
+        prompt_version = PromptVersion.objects.create(
+            cluster=locked.cluster,
+            created_by=reviewer,
+            node_name=previous.node_name if previous else "slot_prompt",
+            template_version=previous.template_version if previous else "builtin-v1",
+            provider_model=previous.provider_model if previous else "gpt-image-2",
+            prompt_text="\n".join(delta_lines),
+            input_snapshot=input_snapshot,
+            structured_output=structured_output,
+            evaluation=copy.deepcopy(previous.evaluation if previous else {}),
+            source_snapshot=source_snapshot,
+        )
+        revision = Generation.objects.create(
+            batch=locked.batch,
+            cluster=locked.cluster,
+            output_slot=locked.output_slot,
+            prompt_version=prompt_version,
+            created_by=reviewer,
+            attempt=next_attempt,
+            status=Generation.Status.QUEUED,
+            prompt_text=prompt_version.prompt_text,
+            size=locked.size,
+            resolution=locked.resolution,
+            reference_snapshot=copy.deepcopy(locked.reference_snapshot),
+            template_snapshot=copy.deepcopy(locked.template_snapshot),
+            rule_snapshot=copy.deepcopy(locked.rule_snapshot),
+        )
+        locked.batch.status = Batch.Status.QUEUED
+        locked.batch.save(update_fields=["status", "updated_at"])
+    locked.save(update_fields=["review_status", "updated_at"])
+    AuditEvent.objects.create(
+        actor=reviewer,
+        action=audit_action,
+        object_type="generation",
+        object_id=str(locked.id),
+        metadata={"decision": decision, "revision_generation_id": str(revision.id) if revision else ""},
+    )
+    return feedback, revision
+
+
+def safe_storage_path(storage_path, expected_prefix):
+    if (
+        not isinstance(storage_path, str)
+        or not storage_path
+        or "\\" in storage_path
+        or "\x00" in storage_path
+        or Path(storage_path).is_absolute()
+    ):
+        raise ValueError("Invalid storage path")
+    relative = PurePosixPath(storage_path)
+    prefix = PurePosixPath(expected_prefix)
+    if ".." in relative.parts or relative.parts[: len(prefix.parts)] != prefix.parts:
+        raise ValueError("Invalid storage path")
+    root = Path(settings.MEDIA_ROOT).resolve()
+    target = (root / Path(*relative.parts)).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        raise ValueError("Stored file is unavailable")
+    return target
+
+
+def _generation_status(status):
+    if status == Generation.Status.COMPLETED:
+        return "completed"
+    if status in {
+        Generation.Status.FAILED,
+        Generation.Status.SUBMIT_UNKNOWN,
+        Generation.Status.CANCELED,
+    }:
+        return "failed"
+    if status == Generation.Status.QUEUED:
+        return "queued"
+    return "running"
+
+
+def _project_status(status):
+    if status in {Batch.Status.COMPLETED, Batch.Status.ARCHIVED}:
+        return "completed"
+    if status in {Batch.Status.FAILED, Batch.Status.PARTIAL}:
+        return "failed"
+    if status == Batch.Status.QUEUED:
+        return "queued"
+    if status == Batch.Status.RUNNING:
+        return "running"
+    return "draft"
+
+
+def serialize_project(batch):
+    assets = list(batch.assets.order_by("created_at", "id"))
+    serialized_assets = {
+        asset.id: {
+            "id": str(asset.id),
+            "name": asset.original_filename,
+            "kind": asset.kind,
+            **(
+                {"imageUrl": reverse("api_asset_media", args=[asset.id])}
+                if asset.kind == Asset.Kind.IMAGE
+                else {}
+            ),
+        }
+        for asset in assets
+    }
+    skus = []
+    for cluster in batch.clusters.order_by("created_at", "id"):
+        cluster_assets = list(
+            cluster.cluster_assets.select_related("asset").order_by("order", "id")
+        )
+        outputs = []
+        for generation in cluster.generations.select_related("output_slot").prefetch_related(
+            "result_assets"
+        ).order_by("output_slot__order", "attempt", "id"):
+            result = next(iter(generation.result_assets.all()), None)
+            review_status = (
+                Generation.ReviewStatus.CHANGES_REQUESTED
+                if generation.review_status == Generation.ReviewStatus.REJECTED
+                else generation.review_status
+            )
+            output = {
+                "id": str(generation.id),
+                "name": generation.output_slot.name,
+                "slot": generation.output_slot.name,
+                "attempt": generation.attempt,
+                "version": generation.attempt,
+                "status": _generation_status(generation.status),
+                "reviewStatus": review_status,
+            }
+            if generation.failure_reason:
+                output["failureReason"] = generation.failure_reason
+            if result is not None:
+                output["imageUrl"] = reverse("api_result_media", args=[result.id])
+            outputs.append(output)
+        sku_assets = [serialized_assets[item.asset_id] for item in cluster_assets]
+        skus.append(
+            {
+                "id": str(cluster.id),
+                "name": cluster.product_name or cluster.name,
+                "assetIds": [str(item.asset_id) for item in cluster_assets],
+                "assets": sku_assets,
+                "facts": cluster.product_facts,
+                "identityLock": cluster.identity_lock,
+                "brief": cluster.prompt_override,
+                "outputs": outputs,
+            }
+        )
+    return {
+        "id": str(batch.id),
+        "name": batch.name,
+        "platform": batch.platform,
+        "market": batch.market or batch.site,
+        "template": batch.output_template.name if batch.output_template_id else "",
+        "size": batch.size,
+        "status": _project_status(batch.status),
+        "updatedAt": batch.updated_at.isoformat(),
+        "assets": list(serialized_assets.values()),
+        "skus": skus,
+    }

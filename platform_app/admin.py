@@ -14,6 +14,8 @@ from .models import (
     PromptNodeTemplate,
     PromptVersion,
     ResultAsset,
+    ReviewAnnotation,
+    ReviewFeedback,
     RuleProfile,
     User,
 )
@@ -49,3 +51,44 @@ admin.site.register(RuleProfile)
 admin.site.register(Generation)
 admin.site.register(ResultAsset)
 admin.site.register(AuditEvent)
+
+
+class ReviewAnnotationInline(admin.TabularInline):
+    model = ReviewAnnotation
+    extra = 0
+    can_delete = False
+    readonly_fields = ("kind", "points", "rect", "color", "width", "created_at")
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ReviewFeedback)
+class ReviewFeedbackAdmin(admin.ModelAdmin):
+    list_display = ("generation", "reviewer", "decision", "created_at")
+    readonly_fields = (
+        "generation",
+        "reviewer",
+        "decision",
+        "issue_tags",
+        "description",
+        "created_at",
+    )
+    inlines = (ReviewAnnotationInline,)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ReviewAnnotation)
+class ReviewAnnotationAdmin(admin.ModelAdmin):
+    readonly_fields = ("feedback", "kind", "points", "rect", "color", "width", "created_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

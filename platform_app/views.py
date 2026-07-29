@@ -1,24 +1,33 @@
 import json
+import mimetypes
+import zipfile
+from io import BytesIO
+from pathlib import Path
 
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.views import LoginView
+from django.middleware.csrf import get_token
 from django.db import connection
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.http import require_POST
 
 from .forms import BatchForm, FirstPasswordChangeForm
-from .models import Batch, Generation
+from .models import Asset, AuditEvent, Batch, Generation, ResultAsset
 from .services import (
     confirm_generation,
+    create_project,
     merge_asset_into_cluster,
     move_asset_to_new_cluster,
+    review_generation,
     preflight_batch,
     register_uploaded_asset,
     optimize_cluster_prompt,
+    safe_storage_path,
+    serialize_project,
 )
 
 
@@ -111,7 +120,10 @@ def health_ready(request):
 
 
 def _batch_for_user(user, batch_id):
-    batch = get_object_or_404(Batch.objects.select_related("owner"), id=batch_id)
+    batch = get_object_or_404(
+        Batch.objects.select_related("owner", "output_template"),
+        id=batch_id,
+    )
     require_owner_or_admin(user, batch)
     return batch
 
@@ -123,6 +135,52 @@ def _generation_for_user(user, generation_id):
     )
     require_owner_or_admin(user, generation.batch)
     return generation
+
+
+@login_required
+@password_change_required
+@require_http_methods(["GET"])
+def api_csrf(request):
+    return JsonResponse({"csrf_token": get_token(request)})
+
+
+@login_required
+@password_change_required
+@require_POST
+def api_project_create(request):
+    try:
+        payload = json.loads(request.body or "{}")
+        batch = create_project(
+            request.user,
+            name=payload.get("name"),
+            platform=payload.get("platform", "shopee"),
+            market=payload.get("market", "SG"),
+            template=payload.get("template"),
+            rule_profile=payload.get("rule_profile"),
+            size=payload.get("size", ""),
+            resolution=payload.get("resolution", ""),
+            global_prompt=payload.get("global_prompt", ""),
+        )
+    except (ValueError, TypeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(serialize_project(batch), status=201)
+
+
+@login_required
+@password_change_required
+@require_http_methods(["GET"])
+def api_workspace_snapshot(request):
+    queryset = Batch.objects.select_related("output_template").order_by("-updated_at", "-id")
+    if not request.user.is_platform_admin:
+        queryset = queryset.filter(owner=request.user)
+    return JsonResponse({"projects": [serialize_project(batch) for batch in queryset]})
+
+
+@login_required
+@password_change_required
+@require_http_methods(["GET"])
+def api_project_snapshot(request, batch_id):
+    return JsonResponse(serialize_project(_batch_for_user(request.user, batch_id)))
 
 
 @login_required
@@ -214,6 +272,7 @@ def api_split_asset(request, asset_id):
 
 @login_required
 @password_change_required
+@require_http_methods(["GET"])
 def api_batch_snapshot(request, batch_id):
     batch = _batch_for_user(request.user, batch_id)
     clusters = []
@@ -293,3 +352,149 @@ def api_generation_retry(request, generation_id):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     return JsonResponse({"id": str(retry.id), "attempt": retry.attempt, "status": retry.status})
+
+
+@login_required
+@password_change_required
+@require_http_methods(["GET"])
+def api_asset_media(request, asset_id):
+    asset = get_object_or_404(Asset.objects.select_related("batch"), id=asset_id)
+    require_owner_or_admin(request.user, asset.batch)
+    try:
+        path = safe_storage_path(asset.storage_path, f"originals/{asset.batch_id}")
+    except ValueError:
+        raise Http404()
+    return FileResponse(path.open("rb"), content_type=asset.content_type)
+
+
+@login_required
+@password_change_required
+@require_http_methods(["GET"])
+def api_result_media(request, result_id):
+    result = get_object_or_404(
+        ResultAsset.objects.select_related(
+            "generation__batch",
+            "generation__cluster",
+            "generation__output_slot",
+        ),
+        id=result_id,
+    )
+    generation = result.generation
+    require_owner_or_admin(request.user, generation.batch)
+    try:
+        path = safe_storage_path(
+            result.storage_path,
+            (
+                f"results/{generation.batch_id}/{generation.cluster_id}/"
+                f"{generation.output_slot_id}/{generation.attempt}"
+            ),
+        )
+    except ValueError:
+        raise Http404()
+    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(path.open("rb"), content_type=content_type)
+
+
+@login_required
+@password_change_required
+@require_POST
+def api_generation_review(request, generation_id):
+    generation = _generation_for_user(request.user, generation_id)
+    try:
+        payload = json.loads(request.body or "{}")
+        feedback, revision = review_generation(
+            generation,
+            request.user,
+            decision=payload.get("decision"),
+            issue_tags=payload.get("issue_tags", []),
+            description=payload.get("description", ""),
+            annotations=payload.get("annotations", []),
+        )
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(
+        {
+            "review": {
+                "id": str(feedback.id),
+                "decision": feedback.decision,
+            },
+            "generation": (
+                {
+                    "id": str(revision.id),
+                    "attempt": revision.attempt,
+                    "status": revision.status,
+                    "review_status": revision.review_status,
+                }
+                if revision
+                else {
+                    "id": str(generation.id),
+                    "attempt": generation.attempt,
+                    "status": generation.status,
+                    "review_status": Generation.ReviewStatus.ACCEPTED,
+                }
+            ),
+        }
+    )
+
+
+@login_required
+@password_change_required
+@require_http_methods(["GET"])
+def api_project_export(request, batch_id):
+    batch = _batch_for_user(request.user, batch_id)
+    latest = {}
+    generations = (
+        batch.generations.select_related("cluster", "output_slot")
+        .prefetch_related("result_assets")
+        .order_by("cluster_id", "output_slot_id", "-attempt", "-id")
+    )
+    for generation in generations:
+        latest.setdefault((generation.cluster_id, generation.output_slot_id), generation)
+
+    buffer = BytesIO()
+    file_count = 0
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for generation in latest.values():
+            if (
+                generation.status != Generation.Status.COMPLETED
+                or generation.review_status != Generation.ReviewStatus.ACCEPTED
+            ):
+                continue
+            results = list(generation.result_assets.all())
+            for index, result in enumerate(results, 1):
+                try:
+                    path = safe_storage_path(
+                        result.storage_path,
+                        (
+                            f"results/{generation.batch_id}/{generation.cluster_id}/"
+                            f"{generation.output_slot_id}/{generation.attempt}"
+                        ),
+                    )
+                except ValueError:
+                    continue
+                suffix = Path(path.name).suffix.lower()
+                if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+                    suffix = ".bin"
+                result_suffix = f"-result-{result.id}" if len(results) > 1 else ""
+                archive.write(
+                    path,
+                    (
+                        f"project-{batch.id}/cluster-{generation.cluster_id}/"
+                        f"slot-{generation.output_slot_id}/attempt-{generation.attempt}"
+                        f"{result_suffix}{suffix}"
+                    ),
+                )
+                file_count += 1
+    if not file_count:
+        return JsonResponse({"error": "No accepted images are available to export"}, status=400)
+
+    AuditEvent.objects.create(
+        actor=request.user,
+        action="project.export",
+        object_type="batch",
+        object_id=str(batch.id),
+        metadata={"file_count": file_count},
+    )
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = f'attachment; filename="project-{batch.id}.zip"'
+    return response

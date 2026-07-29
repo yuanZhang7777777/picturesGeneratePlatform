@@ -3,7 +3,7 @@ import uuid
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Max
 from django.utils import timezone
 
@@ -314,6 +314,7 @@ class Generation(models.Model):
     class ReviewStatus(models.TextChoices):
         PENDING = "pending", "Pending"
         ACCEPTED = "accepted", "Accepted"
+        CHANGES_REQUESTED = "changes_requested", "Changes requested"
         REJECTED = "rejected", "Rejected"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -364,6 +365,7 @@ class Generation(models.Model):
             ),
         ]
 
+    @transaction.atomic
     def retry_failed(self, user):
         if self.status != self.Status.FAILED:
             raise ValueError("Only failed generations can be retried")
@@ -372,7 +374,7 @@ class Generation(models.Model):
             .aggregate(value=Max("attempt"))["value"]
             or 0
         ) + 1
-        return Generation.objects.create(
+        retry = Generation.objects.create(
             batch=self.batch,
             cluster=self.cluster,
             output_slot=self.output_slot,
@@ -387,6 +389,9 @@ class Generation(models.Model):
             template_snapshot=self.template_snapshot,
             rule_snapshot=self.rule_snapshot,
         )
+        self.batch.status = Batch.Status.QUEUED
+        self.batch.save(update_fields=["status", "updated_at"])
+        return retry
 
 
 class ResultAsset(models.Model):
@@ -404,6 +409,57 @@ class ResultAsset(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["storage_path"], name="unique_result_storage_path"),
         ]
+
+
+class ReviewFeedback(models.Model):
+    class Decision(models.TextChoices):
+        ACCEPT = "accept", "Accept"
+        CHANGES_REQUESTED = "changes_requested", "Changes requested"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    generation = models.OneToOneField(
+        Generation,
+        on_delete=models.PROTECT,
+        related_name="review_feedback",
+    )
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="review_feedback",
+    )
+    decision = models.CharField(max_length=20, choices=Decision.choices)
+    issue_tags = models.JSONField(default=list, blank=True)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Review feedback is immutable")
+        return super().save(*args, **kwargs)
+
+
+class ReviewAnnotation(models.Model):
+    class Kind(models.TextChoices):
+        STROKE = "stroke", "Stroke"
+        CIRCLE = "circle", "Circle"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    feedback = models.ForeignKey(
+        ReviewFeedback,
+        on_delete=models.PROTECT,
+        related_name="annotations",
+    )
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    points = models.JSONField(default=list, blank=True)
+    rect = models.JSONField(default=list, blank=True)
+    color = models.CharField(max_length=32, default="#ff0000")
+    width = models.FloatField(default=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Review annotation is immutable")
+        return super().save(*args, **kwargs)
 
 
 class AuditEvent(models.Model):
