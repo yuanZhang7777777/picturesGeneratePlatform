@@ -80,6 +80,9 @@ class GenerationAdmin(admin.ModelAdmin):
             )
         return super().get_readonly_fields(request, obj)
 
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 admin.site.register(ResultAsset)
 admin.site.register(AuditEvent)

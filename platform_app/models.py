@@ -56,11 +56,21 @@ class ProtectedOutputSlotQuerySet(models.QuerySet):
         return super().update(**kwargs)
 
 
+class ArchivableWithGenerationQuerySet(models.QuerySet):
+    def delete(self, *args, **kwargs):
+        if self.filter(generations__isnull=False).exists():
+            raise ValidationError("Records with generation history must be archived, not deleted")
+        return super().delete(*args, **kwargs)
+
+
 class ProtectedGenerationQuerySet(models.QuerySet):
     def update(self, **kwargs):
         if GENERATION_IMMUTABLE_UPDATE_FIELDS & kwargs.keys():
             raise ValidationError("Generation identity and snapshot are immutable")
         return super().update(**kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Generation records are undeletable")
 
     def _replace_prompt_version_for_policy(self, generation, prompt_version, prompt_text):
         return models.QuerySet.update(
@@ -133,6 +143,7 @@ class Batch(models.Model):
     confirmed_generation_key = models.UUIDField(null=True, blank=True, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    objects = ArchivableWithGenerationQuerySet.as_manager()
 
     def recompute_status(self):
         generations = list(self.generations.all())
@@ -154,6 +165,11 @@ class Batch(models.Model):
 
     def __str__(self):
         return self.name
+
+    def delete(self, *args, **kwargs):
+        if self.generations.exists():
+            raise ValidationError("Records with generation history must be archived, not deleted")
+        return super().delete(*args, **kwargs)
 
 
 class Asset(models.Model):
@@ -201,6 +217,7 @@ class Cluster(models.Model):
     assets = models.ManyToManyField(Asset, through="ClusterAsset", related_name="clusters")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    objects = ArchivableWithGenerationQuerySet.as_manager()
 
     @classmethod
     def create_for_asset(cls, batch, asset):
@@ -227,6 +244,11 @@ class Cluster(models.Model):
 
     def __str__(self):
         return self.name
+
+    def delete(self, *args, **kwargs):
+        if self.generations.exists():
+            raise ValidationError("Records with generation history must be archived, not deleted")
+        return super().delete(*args, **kwargs)
 
 
 class ClusterAsset(models.Model):
@@ -458,6 +480,9 @@ class Generation(models.Model):
         type(self).objects.get_queryset()._replace_prompt_version_for_policy(self, prompt_version, prompt_text)
         self.prompt_version = prompt_version
         self.prompt_text = prompt_text
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Generation records are undeletable")
 
 
 class ResultAsset(models.Model):

@@ -194,6 +194,58 @@ def test_generation_identity_and_snapshot_cannot_be_displaced_after_creation():
         Generation.objects.filter(id=generation.id).update(attempt=2)
 
 
+def test_generation_is_undeletable_after_it_is_queued():
+    from django.contrib import admin
+
+    from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Queued hero")
+    cluster = Cluster.objects.create(batch=batch, name="SKU 1")
+    template = OutputTemplate.objects.create(name="Template", platform="global")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        status=Generation.Status.QUEUED,
+    )
+
+    with pytest.raises(ValidationError, match="undeletable"):
+        generation.delete()
+    with pytest.raises(ValidationError, match="undeletable"):
+        Generation.objects.filter(id=generation.id).delete()
+
+    assert not admin.site._registry[Generation].has_delete_permission(None, generation)
+    assert Generation.objects.filter(id=generation.id).exists()
+
+
+def test_generated_batch_and_cluster_cannot_be_deleted_but_unused_drafts_can():
+    from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Generated project")
+    cluster = Cluster.objects.create(batch=batch, name="Generated SKU")
+    template = OutputTemplate.objects.create(name="Template", platform="global")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    Generation.objects.create(batch=batch, cluster=cluster, output_slot=slot)
+
+    with pytest.raises(ValidationError, match="archive"):
+        batch.delete()
+    with pytest.raises(ValidationError, match="archive"):
+        Batch.objects.filter(id=batch.id).delete()
+    with pytest.raises(ValidationError, match="archive"):
+        cluster.delete()
+    with pytest.raises(ValidationError, match="archive"):
+        Cluster.objects.filter(id=cluster.id).delete()
+
+    draft = Batch.objects.create(owner=user, name="Unused draft")
+    draft_cluster = Cluster.objects.create(batch=draft, name="Unused SKU")
+    draft_cluster.delete()
+    draft.delete()
+    assert not Batch.objects.filter(id=draft.id).exists()
+
+
 def test_retry_failed_generation_preserves_old_attempt():
     from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
 
