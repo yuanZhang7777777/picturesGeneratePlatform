@@ -34,6 +34,7 @@ from .models import (
     ReviewFeedback,
     RuleProfile,
 )
+from .template_policy import STANDARD_PRODUCT_HERO_PROMPT_LINES, is_standard_product_hero_slot
 
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
@@ -602,6 +603,9 @@ def compile_slot_prompt(
     ]
     if node_instruction:
         prompt_lines.append(f"Node instruction: {node_instruction}")
+    standard_product_hero = is_standard_product_hero_slot(slot)
+    if standard_product_hero:
+        prompt_lines.extend(STANDARD_PRODUCT_HERO_PROMPT_LINES)
     prompt = "\n".join(prompt_lines)
     input_snapshot = {
         "market": market,
@@ -618,6 +622,7 @@ def compile_slot_prompt(
         "reference_snapshot": references,
         "size": size,
         "resolution": resolution,
+        "standard_product_hero": standard_product_hero,
     }
     return {
         "node_name": resolved_node_name,
@@ -685,6 +690,8 @@ def preflight_batch(batch, user, template=None):
 
     if cluster_count == 0:
         blocking_errors.append("batch has no image clusters")
+    if not template.slots.filter(order=1).exists():
+        blocking_errors.append("output template requires a standard product hero at order 1")
     if generation_count > BATCH_GENERATION_LIMIT:
         blocking_errors.append("batch generation limit exceeded")
     if generation_count > org_remaining:

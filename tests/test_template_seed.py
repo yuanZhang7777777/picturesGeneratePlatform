@@ -24,7 +24,10 @@ def test_seed_platform_templates_creates_published_global_baseline_and_drafts():
     assert template.default_size == "1:1"
     assert template.default_resolution == "1k"
     assert list(template.slots.values_list("name", "purpose")) == [
-        ("Main listing", "Primary marketplace listing image"),
+        (
+            "Standard white-background product hero",
+            "Complete, accurate product on a pure white background with no promotional text or watermark",
+        ),
         ("Benefit scene", "Product benefit in context"),
         ("Detail/quality", "Material, detail, or quality evidence"),
         ("Usage scene", "Product use in a realistic scene"),
@@ -44,6 +47,12 @@ def test_seed_platform_templates_creates_published_global_baseline_and_drafts():
         assert set(RuleProfile.objects.filter(platform=platform).values_list("site", flat=True)) == sites
         assert not OutputTemplate.objects.filter(platform=platform).exclude(status=OutputTemplate.Status.DRAFT).exists()
         assert not RuleProfile.objects.filter(platform=platform).exclude(status=RuleProfile.Status.DRAFT).exists()
+
+    for seeded_template in OutputTemplate.objects.all():
+        assert seeded_template.slots.filter(order=1).values_list("name", "purpose").get() == (
+            "Standard white-background product hero",
+            "Complete, accurate product on a pure white background with no promotional text or watermark",
+        )
 
 
 def test_seed_platform_templates_is_idempotent_and_preserves_existing_edits():

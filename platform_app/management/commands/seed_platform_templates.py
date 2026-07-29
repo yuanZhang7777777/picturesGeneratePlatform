@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand
 
 from platform_app.models import OutputSlot, OutputTemplate, RuleProfile
+from platform_app.template_policy import STANDARD_PRODUCT_HERO_NAME, STANDARD_PRODUCT_HERO_PURPOSE
 
 
 GLOBAL_NAME = "Global marketplace baseline"
@@ -8,7 +9,7 @@ VERSION = "2026.07"
 GLOBAL_TEMPLATE_KEY = "global-marketplace-baseline-template"
 GLOBAL_RULE_KEY = "global-marketplace-baseline-rule"
 GLOBAL_SLOTS = (
-    (1, "Main listing", "Primary marketplace listing image"),
+    (1, STANDARD_PRODUCT_HERO_NAME, STANDARD_PRODUCT_HERO_PURPOSE),
     (2, "Benefit scene", "Product benefit in context"),
     (3, "Detail/quality", "Material, detail, or quality evidence"),
     (4, "Usage scene", "Product use in a realistic scene"),
@@ -61,7 +62,7 @@ class Command(BaseCommand):
         for platform, sites in REGIONAL_SITES.items():
             for site in sites:
                 name = f"{platform.title()} {site} official rules pending"
-                OutputTemplate.objects.get_or_create(
+                template, _ = OutputTemplate.objects.get_or_create(
                     seed_key=f"{platform}-{site.lower()}-template",
                     defaults={
                         "platform": platform,
@@ -71,6 +72,14 @@ class Command(BaseCommand):
                         "status": OutputTemplate.Status.DRAFT,
                         "default_size": "1:1",
                         "default_resolution": "1k",
+                    },
+                )
+                OutputSlot.objects.get_or_create(
+                    template=template,
+                    order=1,
+                    defaults={
+                        "name": STANDARD_PRODUCT_HERO_NAME,
+                        "purpose": STANDARD_PRODUCT_HERO_PURPOSE,
                     },
                 )
                 RuleProfile.objects.get_or_create(

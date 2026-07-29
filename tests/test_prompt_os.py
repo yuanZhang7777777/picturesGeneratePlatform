@@ -252,6 +252,44 @@ def test_confirm_generation_keeps_prompt_override_as_extra_creative_requirements
     assert "Keep sage green cup and two handles" in generation.prompt_text
 
 
+def test_first_output_slot_enforces_a_standard_white_background_product_hero():
+    """The first output cannot be repurposed into a promotional or lifestyle image."""
+    from platform_app.models import Batch, OutputSlot, OutputTemplate
+    from platform_app.services import compile_slot_prompt
+
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", name="Custom template")
+    slot = OutputSlot.objects.create(
+        template=template,
+        name="Promotional cover",
+        order=1,
+        purpose="Lifestyle campaign image with a sale headline",
+    )
+    batch = Batch.objects.create(owner=user, name="hero", output_template=template, global_prompt="Add a sale headline")
+    cluster = make_cluster(batch)
+
+    compiled = compile_slot_prompt(cluster, slot)
+
+    assert "Standard product hero: show the complete, accurate product on a pure white background." in compiled["prompt"]
+    assert "Hero restrictions: no promotional text, text overlay, watermark, price, discount, badge, or lifestyle scene." in compiled["prompt"]
+    assert compiled["input_snapshot"]["standard_product_hero"] is True
+
+
+def test_confirm_generation_rejects_a_template_without_the_required_first_output_slot():
+    """A set without slot 1 would omit the mandatory standard product hero."""
+    from platform_app.models import Batch, OutputSlot, OutputTemplate
+    from platform_app.services import confirm_generation
+
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", name="Incomplete template")
+    OutputSlot.objects.create(template=template, name="Detail image", order=2)
+    batch = Batch.objects.create(owner=user, name="missing hero", output_template=template)
+    make_cluster(batch)
+
+    with pytest.raises(ValueError, match="order 1"):
+        confirm_generation(batch, user)
+
+
 @pytest.mark.parametrize("status", ["draft", "retired"])
 def test_confirm_generation_rejects_unpublished_template(status):
     """Paid generation cannot run against a draft or retired output template."""
