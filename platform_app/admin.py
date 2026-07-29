@@ -58,7 +58,16 @@ class PromptVersionAdmin(admin.ModelAdmin):
 
 
 admin.site.register(RuleProfile)
-admin.site.register(Generation)
+
+
+@admin.register(Generation)
+class GenerationAdmin(admin.ModelAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        if obj:
+            return ("output_slot", "prompt_version")
+        return super().get_readonly_fields(request, obj)
+
+
 admin.site.register(ResultAsset)
 admin.site.register(AuditEvent)
 

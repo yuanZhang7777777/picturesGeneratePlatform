@@ -20,6 +20,23 @@ class ProtectedOutputSlotQuerySet(models.QuerySet):
         return super().update(**kwargs)
 
 
+class ProtectedGenerationQuerySet(models.QuerySet):
+    IMMUTABLE_REFERENCE_FIELDS = {"output_slot", "output_slot_id", "prompt_version", "prompt_version_id"}
+
+    def update(self, **kwargs):
+        if self.IMMUTABLE_REFERENCE_FIELDS & kwargs.keys():
+            raise ValidationError("Generation output slot and prompt version are immutable")
+        return super().update(**kwargs)
+
+    def _replace_prompt_version_for_policy(self, generation, prompt_version, prompt_text):
+        return models.QuerySet.update(
+            self.filter(pk=generation.pk),
+            prompt_version=prompt_version,
+            prompt_text=prompt_text,
+            updated_at=timezone.now(),
+        )
+
+
 class User(AbstractUser):
     class Role(models.TextChoices):
         OPERATOR = "operator", "Operator"
@@ -324,6 +341,7 @@ class PromptVersion(models.Model):
 
 
 class Generation(models.Model):
+    IMMUTABLE_REFERENCE_FIELDS = ("output_slot_id", "prompt_version_id")
     class Status(models.TextChoices):
         QUEUED = "queued", "Queued"
         PREPARING = "preparing", "Preparing"
@@ -380,6 +398,7 @@ class Generation(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    objects = ProtectedGenerationQuerySet.as_manager()
 
     class Meta:
         ordering = ["created_at", "id"]
@@ -394,6 +413,20 @@ class Generation(models.Model):
         from .services import retry_failed_generation
 
         return retry_failed_generation(self, user)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            current = type(self).objects.filter(pk=self.pk).values(*self.IMMUTABLE_REFERENCE_FIELDS).first()
+            if current and any(current[field] != getattr(self, field) for field in self.IMMUTABLE_REFERENCE_FIELDS):
+                raise ValidationError("Generation output slot and prompt version are immutable")
+        return super().save(*args, **kwargs)
+
+    def _replace_prompt_version_for_policy(self, prompt_version, prompt_text):
+        if self._state.adding:
+            raise ValidationError("Generation must be saved before policy upgrade")
+        type(self).objects.get_queryset()._replace_prompt_version_for_policy(self, prompt_version, prompt_text)
+        self.prompt_version = prompt_version
+        self.prompt_text = prompt_text
 
 
 class ResultAsset(models.Model):

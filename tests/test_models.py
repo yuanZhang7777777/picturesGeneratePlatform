@@ -134,6 +134,22 @@ def test_output_slot_position_and_template_are_immutable_after_generation_uses_i
     assert {"template", "order"} <= set(readonly_fields)
 
 
+def test_generation_slot_and_prompt_version_are_readonly_in_admin_after_creation():
+    from django.contrib import admin
+
+    from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Generation admin")
+    cluster = Cluster.objects.create(batch=batch, name="Product 1")
+    template = OutputTemplate.objects.create(name="Template", platform="global")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    generation = Generation.objects.create(batch=batch, cluster=cluster, output_slot=slot)
+
+    readonly_fields = admin.site._registry[Generation].get_readonly_fields(None, generation)
+    assert {"output_slot", "prompt_version"} <= set(readonly_fields)
+
+
 def test_retry_failed_generation_preserves_old_attempt():
     from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
 

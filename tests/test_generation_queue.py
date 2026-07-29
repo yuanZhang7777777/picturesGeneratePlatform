@@ -195,3 +195,69 @@ def test_worker_restores_the_prompt_version_as_the_canonical_hero_prompt(tmp_pat
     assert "Lifestyle campaign" not in client.prompt
     assert generation.prompt_text == canonical_prompt
     assert generation.prompt_version_id == prompt_version.id
+
+
+def test_generation_cannot_be_reassigned_away_from_its_hero_before_submission(tmp_path, settings):
+    from django.core.exceptions import ValidationError
+
+    from platform_app.models import Generation, OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.services import LocalStorage, process_generation_once
+    from platform_app.template_policy import STANDARD_PRODUCT_HERO_PROMPT_LINES
+
+    class CapturingClient:
+        def __init__(self):
+            self.prompt = ""
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.prompt = prompt
+            return "locked-hero-task"
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    hero_slot = template.slots.get(order=1)
+    detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
+    canonical_prompt = "\n".join(("Canonical product prompt", *STANDARD_PRODUCT_HERO_PROMPT_LINES))
+    hero_prompt = PromptVersion.objects.create(
+        cluster=cluster,
+        created_by=user,
+        prompt_text=canonical_prompt,
+        input_snapshot={"standard_product_hero": True},
+    )
+    detail_prompt = PromptVersion.objects.create(
+        cluster=cluster,
+        created_by=user,
+        prompt_text="Lifestyle campaign with a sale headline",
+    )
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=hero_slot,
+        prompt_version=hero_prompt,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        prompt_text=canonical_prompt,
+    )
+
+    generation.output_slot = detail_slot
+    with pytest.raises(ValidationError, match="immutable"):
+        generation.save()
+
+    generation.refresh_from_db()
+    generation.prompt_version = detail_prompt
+    with pytest.raises(ValidationError, match="immutable"):
+        generation.save()
+
+    with pytest.raises(ValidationError, match="immutable"):
+        Generation.objects.filter(id=generation.id).update(output_slot=detail_slot)
+
+    with pytest.raises(ValidationError, match="immutable"):
+        Generation.objects.filter(id=generation.id).update(prompt_version=detail_prompt)
+
+    client = CapturingClient()
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+
+    assert client.prompt == canonical_prompt
+    assert generation.output_slot_id == hero_slot.id
+    assert generation.prompt_version_id == hero_prompt.id

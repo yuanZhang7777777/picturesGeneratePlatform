@@ -847,9 +847,7 @@ def process_generation_once(client=None, storage=None):
         prompt_version, prompt_text = _ensure_generation_prompt_policy(queued, queued.created_by)
         if prompt_version_id := getattr(prompt_version, "id", None):
             if queued.prompt_version_id != prompt_version_id or queued.prompt_text != prompt_text:
-                queued.prompt_version = prompt_version
-                queued.prompt_text = prompt_text
-                queued.save(update_fields=["prompt_version", "prompt_text", "updated_at"])
+                queued._replace_prompt_version_for_policy(prompt_version, prompt_text)
         queued.status = Generation.Status.SUBMITTING
         queued.save(update_fields=["status", "updated_at"])
         image_paths = [str(storage.path(path)) for path in queued.reference_snapshot]
@@ -1047,9 +1045,7 @@ def _create_followup_attempt(source, user, **overrides):
     prompt_version, prompt_text = _ensure_generation_prompt_policy(followup, user)
     if prompt_version_id := getattr(prompt_version, "id", None):
         if followup.prompt_version_id != prompt_version_id or followup.prompt_text != prompt_text:
-            followup.prompt_version = prompt_version
-            followup.prompt_text = prompt_text
-            followup.save(update_fields=["prompt_version", "prompt_text", "updated_at"])
+            followup._replace_prompt_version_for_policy(prompt_version, prompt_text)
     return followup
 
 
