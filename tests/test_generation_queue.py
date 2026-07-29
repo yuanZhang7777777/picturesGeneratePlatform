@@ -261,3 +261,60 @@ def test_generation_cannot_be_reassigned_away_from_its_hero_before_submission(tm
     assert client.prompt == canonical_prompt
     assert generation.output_slot_id == hero_slot.id
     assert generation.prompt_version_id == hero_prompt.id
+
+
+def test_used_prompt_version_cannot_be_mutated_before_hero_submission(tmp_path, settings):
+    from django.core.exceptions import ValidationError
+
+    from platform_app.models import Generation, OutputTemplate, PromptVersion
+    from platform_app.services import LocalStorage, process_generation_once
+    from platform_app.template_policy import STANDARD_PRODUCT_HERO_PROMPT_LINES
+
+    class CapturingClient:
+        def __init__(self):
+            self.prompt = ""
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.prompt = prompt
+            return "immutable-prompt-task"
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    hero_slot = OutputTemplate.objects.get(platform="global", site="").slots.get(order=1)
+    canonical_prompt = "\n".join(("Canonical product prompt", *STANDARD_PRODUCT_HERO_PROMPT_LINES))
+    prompt_version = PromptVersion.objects.create(
+        cluster=cluster,
+        created_by=user,
+        prompt_text=canonical_prompt,
+        input_snapshot={"standard_product_hero": True},
+    )
+    unused_prompt = PromptVersion.objects.create(
+        cluster=cluster,
+        created_by=user,
+        prompt_text="Editable draft",
+    )
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=hero_slot,
+        prompt_version=prompt_version,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        prompt_text=canonical_prompt,
+    )
+
+    with pytest.raises(ValidationError, match="immutable"):
+        PromptVersion.objects.filter(id=prompt_version.id).update(prompt_text="Lifestyle campaign")
+    with pytest.raises(ValidationError, match="immutable"):
+        PromptVersion.objects.filter(id=prompt_version.id).update(input_snapshot={"sale": True})
+
+    PromptVersion.objects.filter(id=unused_prompt.id).update(prompt_text="Editable revision")
+    unused_prompt.refresh_from_db()
+    assert unused_prompt.prompt_text == "Editable revision"
+
+    client = CapturingClient()
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+
+    assert client.prompt == canonical_prompt
+    assert generation.prompt_version_id == prompt_version.id

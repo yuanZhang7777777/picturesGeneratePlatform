@@ -8,6 +8,20 @@ from django.db.models import Max
 from django.utils import timezone
 
 
+PROMPT_VERSION_IMMUTABLE_SNAPSHOT_FIELDS = (
+    "cluster_id",
+    "created_by_id",
+    "node_name",
+    "template_version",
+    "provider_model",
+    "prompt_text",
+    "input_snapshot",
+    "structured_output",
+    "evaluation",
+    "source_snapshot",
+)
+
+
 class ImmutableReviewQuerySet(models.QuerySet):
     def delete(self, *args, **kwargs):
         raise ValidationError("Review records are immutable")
@@ -35,6 +49,13 @@ class ProtectedGenerationQuerySet(models.QuerySet):
             prompt_text=prompt_text,
             updated_at=timezone.now(),
         )
+
+
+class ProtectedPromptVersionQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if set(PROMPT_VERSION_IMMUTABLE_SNAPSHOT_FIELDS) & kwargs.keys() and self.filter(generations__isnull=False).exists():
+            raise ValidationError("PromptVersion snapshots are immutable after use by a generation")
+        return super().update(**kwargs)
 
 
 class User(AbstractUser):
@@ -306,18 +327,7 @@ class CompetitorInsight(models.Model):
 
 
 class PromptVersion(models.Model):
-    IMMUTABLE_SNAPSHOT_FIELDS = (
-        "cluster_id",
-        "created_by_id",
-        "node_name",
-        "template_version",
-        "provider_model",
-        "prompt_text",
-        "input_snapshot",
-        "structured_output",
-        "evaluation",
-        "source_snapshot",
-    )
+    IMMUTABLE_SNAPSHOT_FIELDS = PROMPT_VERSION_IMMUTABLE_SNAPSHOT_FIELDS
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cluster = models.ForeignKey(Cluster, on_delete=models.CASCADE, related_name="prompt_versions")
@@ -331,6 +341,7 @@ class PromptVersion(models.Model):
     evaluation = models.JSONField(default=dict, blank=True)
     source_snapshot = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = ProtectedPromptVersionQuerySet.as_manager()
 
     def save(self, *args, **kwargs):
         if not self._state.adding and self.generations.exists():
