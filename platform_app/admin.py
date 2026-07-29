@@ -64,7 +64,20 @@ admin.site.register(RuleProfile)
 class GenerationAdmin(admin.ModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         if obj:
-            return ("output_slot", "prompt_version")
+            return (
+                "batch",
+                "cluster",
+                "output_slot",
+                "prompt_version",
+                "created_by",
+                "attempt",
+                "prompt_text",
+                "size",
+                "resolution",
+                "reference_snapshot",
+                "template_snapshot",
+                "rule_snapshot",
+            )
         return super().get_readonly_fields(request, obj)
 
 

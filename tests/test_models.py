@@ -147,7 +147,51 @@ def test_generation_slot_and_prompt_version_are_readonly_in_admin_after_creation
     generation = Generation.objects.create(batch=batch, cluster=cluster, output_slot=slot)
 
     readonly_fields = admin.site._registry[Generation].get_readonly_fields(None, generation)
-    assert {"output_slot", "prompt_version"} <= set(readonly_fields)
+    assert {
+        "batch",
+        "cluster",
+        "output_slot",
+        "prompt_version",
+        "created_by",
+        "attempt",
+        "prompt_text",
+        "size",
+        "resolution",
+        "reference_snapshot",
+        "template_snapshot",
+        "rule_snapshot",
+    } <= set(readonly_fields)
+
+
+def test_generation_identity_and_snapshot_cannot_be_displaced_after_creation():
+    from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Original batch")
+    other_batch = Batch.objects.create(owner=user, name="Other batch")
+    cluster = Cluster.objects.create(batch=batch, name="Original SKU")
+    other_cluster = Cluster.objects.create(batch=other_batch, name="Other SKU")
+    template = OutputTemplate.objects.create(name="Template", platform="global")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        prompt_text="Original prompt",
+        reference_snapshot=["original.png"],
+    )
+
+    generation.cluster = other_cluster
+    with pytest.raises(ValidationError, match="immutable"):
+        generation.save()
+
+    generation.refresh_from_db()
+    generation.batch = other_batch
+    with pytest.raises(ValidationError, match="immutable"):
+        generation.save()
+
+    with pytest.raises(ValidationError, match="immutable"):
+        Generation.objects.filter(id=generation.id).update(attempt=2)
 
 
 def test_retry_failed_generation_preserves_old_attempt():

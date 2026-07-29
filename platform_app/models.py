@@ -20,6 +20,28 @@ PROMPT_VERSION_IMMUTABLE_SNAPSHOT_FIELDS = (
     "evaluation",
     "source_snapshot",
 )
+GENERATION_IMMUTABLE_SNAPSHOT_FIELDS = (
+    "batch_id",
+    "cluster_id",
+    "output_slot_id",
+    "prompt_version_id",
+    "created_by_id",
+    "attempt",
+    "prompt_text",
+    "size",
+    "resolution",
+    "reference_snapshot",
+    "template_snapshot",
+    "rule_snapshot",
+)
+GENERATION_IMMUTABLE_UPDATE_FIELDS = {
+    *GENERATION_IMMUTABLE_SNAPSHOT_FIELDS,
+    "batch",
+    "cluster",
+    "output_slot",
+    "prompt_version",
+    "created_by",
+}
 
 
 class ImmutableReviewQuerySet(models.QuerySet):
@@ -35,11 +57,9 @@ class ProtectedOutputSlotQuerySet(models.QuerySet):
 
 
 class ProtectedGenerationQuerySet(models.QuerySet):
-    IMMUTABLE_REFERENCE_FIELDS = {"output_slot", "output_slot_id", "prompt_version", "prompt_version_id"}
-
     def update(self, **kwargs):
-        if self.IMMUTABLE_REFERENCE_FIELDS & kwargs.keys():
-            raise ValidationError("Generation output slot and prompt version are immutable")
+        if GENERATION_IMMUTABLE_UPDATE_FIELDS & kwargs.keys():
+            raise ValidationError("Generation identity and snapshot are immutable")
         return super().update(**kwargs)
 
     def _replace_prompt_version_for_policy(self, generation, prompt_version, prompt_text):
@@ -352,7 +372,7 @@ class PromptVersion(models.Model):
 
 
 class Generation(models.Model):
-    IMMUTABLE_REFERENCE_FIELDS = ("output_slot_id", "prompt_version_id")
+    IMMUTABLE_SNAPSHOT_FIELDS = GENERATION_IMMUTABLE_SNAPSHOT_FIELDS
     class Status(models.TextChoices):
         QUEUED = "queued", "Queued"
         PREPARING = "preparing", "Preparing"
@@ -427,9 +447,9 @@ class Generation(models.Model):
 
     def save(self, *args, **kwargs):
         if not self._state.adding:
-            current = type(self).objects.filter(pk=self.pk).values(*self.IMMUTABLE_REFERENCE_FIELDS).first()
-            if current and any(current[field] != getattr(self, field) for field in self.IMMUTABLE_REFERENCE_FIELDS):
-                raise ValidationError("Generation output slot and prompt version are immutable")
+            current = type(self).objects.filter(pk=self.pk).values(*self.IMMUTABLE_SNAPSHOT_FIELDS).first()
+            if current and any(current[field] != getattr(self, field) for field in self.IMMUTABLE_SNAPSHOT_FIELDS):
+                raise ValidationError("Generation identity and snapshot are immutable")
         return super().save(*args, **kwargs)
 
     def _replace_prompt_version_for_policy(self, prompt_version, prompt_text):

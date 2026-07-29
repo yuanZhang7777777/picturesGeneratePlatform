@@ -620,7 +620,9 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
     original_references = list(original.prompt_version.input_snapshot["reference_snapshot"])
     original.prompt_text = "TAMPERED mutable generation prompt"
     original.reference_snapshot = ["originals/other-batch/overlay.png"]
-    original.save(update_fields=["prompt_text", "reference_snapshot"])
+    with pytest.raises(ValidationError, match="immutable"):
+        original.save(update_fields=["prompt_text", "reference_snapshot"])
+    original.refresh_from_db()
     client.force_login(owner)
     payload = {
         "decision": "changes_requested",
@@ -653,7 +655,7 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
     assert original.review_status == Generation.ReviewStatus.CHANGES_REQUESTED
     assert original.prompt_version_id == original_prompt_id
     assert original.prompt_version.prompt_text == original_prompt
-    assert original.reference_snapshot == ["originals/other-batch/overlay.png"]
+    assert original.reference_snapshot == original_references
     assert feedback.issue_tags == ["composition", "lighting"]
     assert annotations["stroke"].points == [[0.0, 0.25], [1.0, 0.75]]
     assert annotations["circle"].rect == [0.2, 0.3, 0.4, 0.5]
