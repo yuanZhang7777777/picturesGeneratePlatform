@@ -239,6 +239,8 @@ def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_pa
     output = sku["outputs"][0]
     assert output["attempt"] == 1
     assert output["version"] == 1
+    assert output["slotId"] == str(generation.output_slot_id)
+    assert output["slotOrder"] == 1
     assert output["imageUrl"] == reverse("api_result_media", args=[result.id])
     serialized = json.dumps(project)
     for secret_key in [
@@ -585,6 +587,31 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
         "color",
         "width",
     }
+
+
+def test_review_records_reject_queryset_delete(tmp_path, settings):
+    from platform_app.models import Generation, ReviewAnnotation, ReviewFeedback
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("immutable-delete-owner")
+    _, _, _, generation, _ = make_generation(owner, tmp_path, name="Immutable delete")
+    feedback = ReviewFeedback.objects.create(
+        generation=generation,
+        reviewer=owner,
+        decision=ReviewFeedback.Decision.ACCEPT,
+    )
+    annotation = ReviewAnnotation.objects.create(
+        feedback=feedback,
+        kind=ReviewAnnotation.Kind.CIRCLE,
+        rect=[0.1, 0.1, 0.2, 0.2],
+    )
+
+    with pytest.raises(ValidationError, match="immutable"):
+        ReviewAnnotation.objects.filter(id=annotation.id).delete()
+    with pytest.raises(ValidationError, match="immutable"):
+        ReviewFeedback.objects.filter(id=feedback.id).delete()
+    assert ReviewAnnotation.objects.filter(id=annotation.id).exists()
+    assert ReviewFeedback.objects.filter(id=feedback.id).exists()
 
 
 def test_review_validation_and_technical_retry_are_separate(client, tmp_path, settings):

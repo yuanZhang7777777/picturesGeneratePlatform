@@ -8,6 +8,11 @@ from django.db.models import Max
 from django.utils import timezone
 
 
+class ImmutableReviewQuerySet(models.QuerySet):
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Review records are immutable")
+
+
 class User(AbstractUser):
     class Role(models.TextChoices):
         OPERATOR = "operator", "Operator"
@@ -408,6 +413,7 @@ class ReviewFeedback(models.Model):
     issue_tags = models.JSONField(default=list, blank=True)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = ImmutableReviewQuerySet.as_manager()
 
     def save(self, *args, **kwargs):
         if not self._state.adding:
@@ -435,6 +441,7 @@ class ReviewAnnotation(models.Model):
     color = models.CharField(max_length=32, default="#ff0000")
     width = models.FloatField(default=2)
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = ImmutableReviewQuerySet.as_manager()
 
     def save(self, *args, **kwargs):
         if not self._state.adding:

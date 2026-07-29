@@ -1289,6 +1289,8 @@ def serialize_project(batch):
                 "id": str(generation.id),
                 "name": generation.output_slot.name,
                 "slot": generation.output_slot.name,
+                "slotId": str(generation.output_slot_id),
+                "slotOrder": generation.output_slot.order,
                 "attempt": generation.attempt,
                 "version": generation.attempt,
                 "status": _generation_status(generation.status),

@@ -109,3 +109,15 @@
   500 MiB，超限返回 400，不再使用 `BytesIO.getvalue()` 复制完整 ZIP。
 - 严格 TDD：新增合同首次运行 8 项失败，分别命中上述缺口；实现后 Task 2 测试
   13 项通过，全量 pytest 59 项通过，Django check 无问题，迁移无漂移。
+
+## Review fix round 3
+
+- `ReviewFeedback` 和 `ReviewAnnotation` 现在使用最小的不可变 QuerySet/Manager，
+  `objects.filter(...).delete()` 与既有 instance delete 一样会拒绝删除；两条关联均为
+  `PROTECT`，正常 ORM 路径不存在允许级联删除审核记录的缺口。该行为不影响表结构，
+  无需新增迁移。
+- `serialize_project()` 的每个 output 新增稳定的 `slotId` 与 `slotOrder`，并保留原有
+  显示名 `slot`，前端可据此分组而无需猜测槽位。
+- 严格 TDD：先确认批量删除未抛异常、snapshot 缺少 `slotId` 的红灯；最小修复后 Task 2
+  测试 14 项通过，全量 pytest 62 项通过。
+- 文档影响检查：本轮受用户文件范围限制，未修改权威项目文档；本报告保留交付记录。
