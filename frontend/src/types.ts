@@ -81,7 +81,5 @@ export interface PreflightResult {
   cluster_count: number;
   slot_count: number;
   generation_count: number;
-  org_remaining: number;
-  user_remaining: number;
   blocking_errors: string[];
 }

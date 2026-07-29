@@ -129,6 +129,12 @@ test.each(["US", "BR"])("accepts the global market code %s when creating a proje
   expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({ market });
 });
 
+test("describes an empty template as the published generic baseline", async () => {
+  renderApp("/projects/new");
+
+  expect(await screen.findByPlaceholderText("留空时使用已发布的通用基线模板")).toBeInTheDocument();
+});
+
 test("shows a product brief and output slots in the studio", async () => {
   renderApp("/projects/project-demo/studio/sku-lamp");
 
@@ -204,9 +210,11 @@ test("requires a tag or description before requesting image changes", async () =
 });
 
 test("runs preflight before enabling an explicit generation confirmation", async () => {
-  const fetchMock = vi.fn((url: string) => Promise.resolve(
+  const fetchMock = vi.fn((url: string, _init?: RequestInit) => Promise.resolve(
     url.includes("/projects/project-demo/snapshot/")
       ? response(200, project)
+      : url.includes("/csrf/")
+        ? response(200, { csrf_token: "csrf-for-test" })
       : url.includes("/preflight/")
         ? response(200, { cluster_count: 1, slot_count: 2, generation_count: 2, blocking_errors: [] })
         : response(200, project),
@@ -220,6 +228,10 @@ test("runs preflight before enabling an explicit generation confirmation", async
 
   expect(await screen.findByText("将生成 2 张输出图")).toBeInTheDocument();
   expect(confirm).toBeEnabled();
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/projects/project-demo/preflight/",
+    expect.objectContaining({ method: "POST" }),
+  );
 });
 
 test("confirms generation only after a passing preflight", async () => {
@@ -264,6 +276,8 @@ test("keeps generation confirmation disabled when preflight reports blockers", a
   const fetchMock = vi.fn((url: string) => Promise.resolve(
     url.includes("/projects/project-demo/snapshot/")
       ? response(200, project)
+      : url.includes("/csrf/")
+        ? response(200, { csrf_token: "csrf-for-test" })
       : url.includes("/preflight/")
         ? response(200, { cluster_count: 0, slot_count: 2, generation_count: 0, blocking_errors: ["batch has no image clusters"] })
         : response(200, project),
@@ -308,6 +322,34 @@ test("submits a letterbox-normalized annotation when an operator requests change
     issue_tags: ["identity"],
     annotations: [{ kind: "circle", rect: [0, 0, 0.16, 0.16] }],
   });
+});
+
+test("places a horizontal-letterbox review marker inside the rendered image box", async () => {
+  renderApp("/review");
+
+  const canvas = await screen.findByRole("button", { name: "在结果图上添加问题圈选" });
+  Object.defineProperty(canvas, "getBoundingClientRect", { configurable: true, value: () => ({ width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, x: 0, y: 0, toJSON: () => ({}) }) });
+  const image = await screen.findByAltText("待审核结果");
+  Object.defineProperty(image, "naturalWidth", { configurable: true, value: 800 });
+  Object.defineProperty(image, "naturalHeight", { configurable: true, value: 400 });
+  fireEvent.click(canvas, { clientX: 100, clientY: 150 });
+
+  const marker = screen.getByText("1");
+  expect(marker).toHaveStyle({ left: "100px", top: "150px" });
+});
+
+test("places a vertical-letterbox review marker inside the rendered image box", async () => {
+  renderApp("/review");
+
+  const canvas = await screen.findByRole("button", { name: "在结果图上添加问题圈选" });
+  Object.defineProperty(canvas, "getBoundingClientRect", { configurable: true, value: () => ({ width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, x: 0, y: 0, toJSON: () => ({}) }) });
+  const image = await screen.findByAltText("待审核结果");
+  Object.defineProperty(image, "naturalWidth", { configurable: true, value: 400 });
+  Object.defineProperty(image, "naturalHeight", { configurable: true, value: 800 });
+  fireEvent.click(canvas, { clientX: 150, clientY: 100 });
+
+  const marker = screen.getByText("1");
+  expect(marker).toHaveStyle({ left: "150px", top: "100px" });
 });
 
 test("adds a centered annotation from keyboard input", async () => {

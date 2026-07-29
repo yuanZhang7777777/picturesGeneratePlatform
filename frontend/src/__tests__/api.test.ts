@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { createProject, loadWorkspace, mergeAsset, submitReview, uploadAssets } from "../api";
+import { createProject, loadWorkspace, mergeAsset, preflightProject, submitReview, uploadAssets } from "../api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -66,18 +66,80 @@ test("treats a redirected HTML login page as an authentication error instead of 
   });
 });
 
-test("keeps the relative folder path when posting a selected upload", async () => {
+test("treats a final login URL as an authentication error even when the redirect flag is unavailable", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    redirected: false,
+    url: "https://platform.example/accounts/login/?next=/api/workspace/snapshot/",
+    headers: new Headers({ "content-type": "application/json" }),
+    json: async () => ({ projects: [] }),
+  }));
+
+  await expect(loadWorkspace()).rejects.toMatchObject({
+    status: 401,
+    message: "登录已失效或需修改密码",
+  });
+});
+
+test("keeps the original status for a non-login HTML error response", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    ok: false,
+    status: 405,
+    redirected: false,
+    url: "https://platform.example/api/workspace/snapshot/",
+    headers: new Headers({ "content-type": "text/html" }),
+    json: async () => { throw new Error("HTML is not JSON"); },
+  }));
+
+  await expect(loadWorkspace()).rejects.toMatchObject({
+    status: 405,
+    message: "请求失败（405）",
+    authRequired: false,
+  });
+});
+
+test("posts preflight with CSRF and discards quota fields returned by the server", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(200, {
+      cluster_count: 1,
+      slot_count: 2,
+      generation_count: 2,
+      blocking_errors: [],
+      org_remaining: 99,
+      user_remaining: 9,
+    }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(preflightProject("project-1")).resolves.toEqual({
+    cluster_count: 1,
+    slot_count: 2,
+    generation_count: 2,
+    blocking_errors: [],
+  });
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/projects/project-1/preflight/",
+    expect.objectContaining({ credentials: "same-origin", method: "POST" }),
+  );
+  expect(fetchMock.mock.calls[1][1].headers.get("X-CSRFToken")).toBe("csrf-for-test");
+});
+
+test("posts a parallel relative_paths entry for each selected upload", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
     .mockResolvedValueOnce(response(200, { asset_count: 1 }));
   vi.stubGlobal("fetch", fetchMock);
   const file = new File(["image"], "front.png", { type: "image/png" });
+  const secondFile = new File(["image"], "side.png", { type: "image/png" });
   Object.defineProperty(file, "webkitRelativePath", { value: "lamp/angles/front.png" });
 
-  await uploadAssets("project-1", [file]);
+  await uploadAssets("project-1", [file, secondFile]);
 
   const form = fetchMock.mock.calls[1][1].body as FormData;
   expect((form.get("files") as File).name).toBe("lamp/angles/front.png");
+  expect(form.getAll("relative_paths")).toEqual(["lamp/angles/front.png", "side.png"]);
 });
 
 test("merges an asset through the versioned Django cluster endpoint", async () => {

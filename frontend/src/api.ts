@@ -16,12 +16,23 @@ type JsonResponse = {
   ok: boolean;
   status: number;
   redirected?: boolean;
+  url?: string;
   headers?: { get(name: string): string | null };
   json: () => Promise<unknown>;
 };
 
+function isAuthenticationUrl(url: string | undefined) {
+  if (!url) return false;
+  try {
+    const path = new URL(url, window.location.origin).pathname.toLowerCase();
+    return /(?:^|\/)(?:login|password)(?:\/|$)/.test(path);
+  } catch {
+    return false;
+  }
+}
+
 function isLoginResponse(response: JsonResponse) {
-  return response.redirected || response.headers?.get("content-type")?.toLowerCase().includes("text/html");
+  return Boolean(response.redirected) || isAuthenticationUrl(response.url);
 }
 
 async function errorFor(response: JsonResponse) {
@@ -93,6 +104,7 @@ export async function uploadAssets(projectId: string, files: File[]) {
   files.forEach((file) => {
     const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
     body.append("files", file, relativePath || file.name);
+    body.append("relative_paths", relativePath || file.name);
   });
   const headers = new Headers({ "X-CSRFToken": await csrfToken() });
   const response = await fetch(`/api/projects/${projectId}/assets/`, { method: "POST", body, headers, credentials: "same-origin" });
@@ -117,8 +129,14 @@ export function confirmProject(projectId: string) {
   return jsonRequest(`/api/projects/${projectId}/confirm/`, { method: "POST", body: "{}" });
 }
 
-export function preflightProject(projectId: string) {
-  return jsonRequest<PreflightResult>(`/api/projects/${projectId}/preflight/`);
+export async function preflightProject(projectId: string): Promise<PreflightResult> {
+  const result = await jsonRequest<PreflightResult>(`/api/projects/${projectId}/preflight/`, { method: "POST", body: "{}" });
+  return {
+    cluster_count: result.cluster_count,
+    slot_count: result.slot_count,
+    generation_count: result.generation_count,
+    blocking_errors: result.blocking_errors,
+  };
 }
 
 export function retryGeneration(generationId: string) {
