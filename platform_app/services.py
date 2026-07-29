@@ -276,7 +276,7 @@ def create_project(
         site=market,
     )
     if output_template is None:
-        output_template = ensure_default_template(platform, market)
+        output_template = _global_fallback_template()
     rules = _published_configuration(
         RuleProfile,
         rule_profile,
@@ -446,27 +446,17 @@ def rollback_prompt_node_template(node_name, version):
     return publish_prompt_node_template(target)
 
 
-def ensure_default_template(platform="shopee", site="SG"):
-    template = OutputTemplate.objects.filter(
-        platform=platform,
-        site=site,
-        name="Default one image set",
-        status=OutputTemplate.Status.PUBLISHED,
-    ).first()
-    if template is None:
-        template = OutputTemplate.objects.create(
-            platform=platform,
-            site=site,
-            name="Default one image set",
-            default_size="1:1",
-            default_resolution="1k",
+def _global_fallback_template():
+    try:
+        return OutputTemplate.objects.get(
+            platform="global",
+            site="",
+            status=OutputTemplate.Status.PUBLISHED,
         )
-    OutputSlot.objects.get_or_create(
-        template=template,
-        order=1,
-        defaults={"name": "main", "purpose": "Main ecommerce product image"},
-    )
-    return template
+    except OutputTemplate.DoesNotExist as exc:
+        raise ValueError("published global baseline template is required") from exc
+    except OutputTemplate.MultipleObjectsReturned as exc:
+        raise ValueError("exactly one published global baseline template is required") from exc
 
 
 def _sanitize_style_dna(style_dna):
@@ -682,7 +672,7 @@ def reserve_generation_usage(user, count):
 
 
 def preflight_batch(batch, user, template=None):
-    template = template or batch.output_template or ensure_default_template(batch.platform, batch.site)
+    template = template or batch.output_template or _global_fallback_template()
     slot_count = template.slots.count()
     cluster_count = batch.clusters.count()
     generation_count = cluster_count * slot_count
@@ -719,7 +709,7 @@ def confirm_generation(batch, user, template=None):
     if locked_batch.confirmed_generation_key and existing:
         return existing
 
-    template = template or locked_batch.output_template or ensure_default_template(locked_batch.platform, locked_batch.site)
+    template = template or locked_batch.output_template or _global_fallback_template()
     if template.status != OutputTemplate.Status.PUBLISHED:
         raise ValueError("output template must be published before generation")
     if locked_batch.rule_profile_id and locked_batch.rule_profile.status != RuleProfile.Status.PUBLISHED:

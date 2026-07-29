@@ -24,10 +24,13 @@ def image_bytes():
 
 
 def make_batch_with_images(tmp_path, settings, count=1):
+    from platform_app.models import OutputSlot, OutputTemplate
     from platform_app.services import create_batch, register_uploaded_asset
 
     settings.MEDIA_ROOT = tmp_path
     user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Test global baseline")
+    OutputSlot.objects.create(template=template, name="main", order=1)
     batch = create_batch(user, "Batch 1")
     for index in range(count):
         register_uploaded_asset(batch, f"{index}.png", image_bytes(), "image/png")

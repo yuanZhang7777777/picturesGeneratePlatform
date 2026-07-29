@@ -188,6 +188,7 @@ class RuleProfile(models.Model):
         RETIRED = "retired", "Retired"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    seed_key = models.CharField(max_length=120, unique=True, null=True, blank=True)
     platform = models.CharField(max_length=40)
     site = models.CharField(max_length=40)
     name = models.CharField(max_length=120)
@@ -208,6 +209,7 @@ class OutputTemplate(models.Model):
         RETIRED = "retired", "Retired"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    seed_key = models.CharField(max_length=120, unique=True, null=True, blank=True)
     platform = models.CharField(max_length=40)
     site = models.CharField(max_length=40, blank=True)
     name = models.CharField(max_length=120)

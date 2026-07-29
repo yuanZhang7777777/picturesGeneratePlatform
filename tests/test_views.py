@@ -24,6 +24,13 @@ def image_file(name="product.png"):
     return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
 
 
+def make_global_baseline():
+    from platform_app.models import OutputSlot, OutputTemplate
+
+    template = OutputTemplate.objects.create(platform="global", site="", name="Test global baseline")
+    OutputSlot.objects.create(template=template, name="main", order=1)
+
+
 def test_batch_detail_page_renders_workspace(client):
     from platform_app.models import Batch
 
@@ -61,6 +68,7 @@ def test_snapshot_includes_cluster_and_generation_state(client, tmp_path, settin
 
     settings.MEDIA_ROOT = tmp_path
     user = make_user()
+    make_global_baseline()
     batch = create_batch(user, "Batch 1")
     register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
     confirm_generation(batch, user)
@@ -80,6 +88,7 @@ def test_retry_endpoint_creates_new_attempt_for_failed_generation(client, tmp_pa
 
     settings.MEDIA_ROOT = tmp_path
     user = make_user()
+    make_global_baseline()
     batch = create_batch(user, "Batch 1")
     register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
     generation = confirm_generation(batch, user)[0]

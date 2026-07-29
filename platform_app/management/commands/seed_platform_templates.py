@@ -5,6 +5,8 @@ from platform_app.models import OutputSlot, OutputTemplate, RuleProfile
 
 GLOBAL_NAME = "Global marketplace baseline"
 VERSION = "2026.07"
+GLOBAL_TEMPLATE_KEY = "global-marketplace-baseline-template"
+GLOBAL_RULE_KEY = "global-marketplace-baseline-rule"
 GLOBAL_SLOTS = (
     (1, "Main listing", "Primary marketplace listing image"),
     (2, "Benefit scene", "Product benefit in context"),
@@ -22,10 +24,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         template, _ = OutputTemplate.objects.get_or_create(
-            platform="global",
-            site="",
-            name=GLOBAL_NAME,
+            seed_key=GLOBAL_TEMPLATE_KEY,
             defaults={
+                "platform": "global",
+                "site": "",
+                "name": GLOBAL_NAME,
                 "version": VERSION,
                 "status": OutputTemplate.Status.PUBLISHED,
                 "default_size": "1:1",
@@ -40,10 +43,11 @@ class Command(BaseCommand):
             )
 
         RuleProfile.objects.get_or_create(
-            platform="global",
-            site="",
-            name=GLOBAL_NAME,
+            seed_key=GLOBAL_RULE_KEY,
             defaults={
+                "platform": "global",
+                "site": "",
+                "name": GLOBAL_NAME,
                 "version": VERSION,
                 "status": RuleProfile.Status.PUBLISHED,
                 "rules": {
@@ -58,10 +62,11 @@ class Command(BaseCommand):
             for site in sites:
                 name = f"{platform.title()} {site} official rules pending"
                 OutputTemplate.objects.get_or_create(
-                    platform=platform,
-                    site=site,
-                    name=name,
+                    seed_key=f"{platform}-{site.lower()}-template",
                     defaults={
+                        "platform": platform,
+                        "site": site,
+                        "name": name,
                         "version": VERSION,
                         "status": OutputTemplate.Status.DRAFT,
                         "default_size": "1:1",
@@ -69,10 +74,11 @@ class Command(BaseCommand):
                     },
                 )
                 RuleProfile.objects.get_or_create(
-                    platform=platform,
-                    site=site,
-                    name=name,
+                    seed_key=f"{platform}-{site.lower()}-rule",
                     defaults={
+                        "platform": platform,
+                        "site": site,
+                        "name": name,
                         "version": VERSION,
                         "status": RuleProfile.Status.DRAFT,
                     },

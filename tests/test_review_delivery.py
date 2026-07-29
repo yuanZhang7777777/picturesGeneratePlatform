@@ -7,6 +7,7 @@ import pytest
 from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
 
@@ -112,6 +113,8 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
     from platform_app.models import Batch, OutputTemplate, RuleProfile
 
     user = make_user("owner")
+    call_command("seed_platform_templates")
+    baseline = OutputTemplate.objects.get(seed_key="global-marketplace-baseline-template")
     draft_template = OutputTemplate.objects.create(
         platform="shopee", site="SG", name="Draft template", status="draft"
     )
@@ -206,7 +209,16 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
         csrf_token=token,
     )
     assert defaulted.status_code == 201
-    assert Batch.objects.get(id=defaulted.json()["id"]).output_template.status == "published"
+    assert Batch.objects.get(id=defaulted.json()["id"]).output_template == baseline
+
+    tiktok = post_json(
+        csrf_client,
+        reverse("api_project_create"),
+        {**base_payload, "name": "TikTok project", "platform": "tiktok", "market": "TH"},
+        csrf_token=token,
+    )
+    assert tiktok.status_code == 201
+    assert Batch.objects.get(id=tiktok.json()["id"]).output_template == baseline
 
 
 def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_path, settings):
