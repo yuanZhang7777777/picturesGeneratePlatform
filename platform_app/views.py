@@ -1,7 +1,7 @@
 import json
 import mimetypes
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from tempfile import TemporaryFile
 
 from django.contrib.auth import update_session_auth_hash
@@ -125,7 +125,7 @@ def health_ready(request):
 
 def _batch_for_user(user, batch_id):
     batch = get_object_or_404(
-        Batch.objects.select_related("owner", "output_template"),
+        Batch.objects.select_related("owner", "output_template", "rule_profile"),
         id=batch_id,
     )
     require_owner_or_admin(user, batch)
@@ -150,6 +150,15 @@ def _serialize_project(batch):
     for sku in payload["skus"]:
         sku["version"] = versions[sku["id"]]
     return payload
+
+
+def _relative_upload_path(value):
+    if not value or "\\" in value:
+        raise ValueError("relative_paths must be non-empty POSIX paths")
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts or not path.name:
+        raise ValueError("relative_paths must be safe relative POSIX paths")
+    return value
 
 
 @login_required
@@ -203,11 +212,20 @@ def api_project_snapshot(request, batch_id):
 @require_POST
 def api_upload_assets(request, batch_id):
     batch = _batch_for_user(request.user, batch_id)
+    uploads = request.FILES.getlist("files")
+    relative_paths = request.POST.getlist("relative_paths")
+    try:
+        filenames = [
+            _relative_upload_path(relative_paths[index]) if index < len(relative_paths) else uploaded.name
+            for index, uploaded in enumerate(uploads)
+        ]
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
     assets = []
-    for uploaded in request.FILES.getlist("files"):
+    for uploaded, filename in zip(uploads, filenames):
         try:
             assets.append(
-                register_uploaded_asset(batch, uploaded.name, uploaded.read(), uploaded.content_type)
+                register_uploaded_asset(batch, filename, uploaded.read(), uploaded.content_type)
             )
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
@@ -342,7 +360,20 @@ def api_batch_snapshot(request, batch_id):
 @require_POST
 def api_preflight(request, batch_id):
     batch = _batch_for_user(request.user, batch_id)
-    return JsonResponse(preflight_batch(batch, request.user))
+    preflight = preflight_batch(batch, request.user)
+    return JsonResponse(
+        {
+            key: preflight[key]
+            for key in (
+                "cluster_count",
+                "slot_count",
+                "generation_count",
+                "blocking_errors",
+                "template",
+                "rule_profile",
+            )
+        }
+    )
 
 
 @login_required

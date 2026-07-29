@@ -699,6 +699,20 @@ def preflight_batch(batch, user, template=None):
         "org_remaining": org_remaining,
         "user_remaining": user_remaining,
         "blocking_errors": blocking_errors,
+        "template": {
+            "id": str(template.id),
+            "name": template.name,
+            "version": template.version,
+        },
+        "rule_profile": (
+            {
+                "id": str(batch.rule_profile_id),
+                "name": batch.rule_profile.name,
+                "version": batch.rule_profile.version,
+            }
+            if batch.rule_profile_id
+            else None
+        ),
     }
 
 

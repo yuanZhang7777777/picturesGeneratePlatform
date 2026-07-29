@@ -7,9 +7,11 @@ import pytest
 from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
+from PIL import Image
 
 
 pytestmark = pytest.mark.django_db
@@ -107,6 +109,12 @@ def post_json(client, url, payload, *, csrf_token=None):
 
 def response_bytes(response):
     return b"".join(response.streaming_content) if response.streaming else response.content
+
+
+def uploaded_png(name="front.png"):
+    content = io.BytesIO()
+    Image.new("RGB", (8, 8), "white").save(content, "PNG")
+    return SimpleUploadedFile(name, content.getvalue(), content_type="image/png")
 
 
 def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(client):
@@ -276,6 +284,113 @@ def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_pa
         str(other_batch.id),
     }
     assert client.get(reverse("api_project_snapshot", args=[owner_batch.id])).status_code == 200
+
+
+def test_upload_api_preserves_browser_relative_path_without_using_it_for_storage(client, tmp_path, settings):
+    from platform_app.models import Asset
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("relative-path-owner")
+    batch, *_ = make_project(owner, "Relative path")
+    client.force_login(owner)
+
+    response = client.post(
+        reverse("api_project_upload_assets", args=[batch.id]),
+        {
+            "files": [uploaded_png("front.png"), uploaded_png("side.png")],
+            "relative_paths": ["folder/angles/front.png", "folder/angles/side.png"],
+        },
+    )
+
+    assert response.status_code == 200
+    assets = list(Asset.objects.filter(batch=batch).order_by("created_at", "id"))
+    assert [asset.original_filename for asset in assets] == [
+        "folder/angles/front.png",
+        "folder/angles/side.png",
+    ]
+    for asset in assets:
+        assert asset.storage_path.startswith(f"originals/{batch.id}/")
+        assert "folder" not in asset.storage_path
+        assert (tmp_path / asset.storage_path).is_file()
+
+
+def test_upload_api_falls_back_to_uploaded_filename_without_relative_path(client, tmp_path, settings):
+    from platform_app.models import Asset
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("relative-path-fallback-owner")
+    batch, *_ = make_project(owner, "Relative path fallback")
+    client.force_login(owner)
+
+    response = client.post(
+        reverse("api_project_upload_assets", args=[batch.id]),
+        {"files": [uploaded_png("fallback.png")]},
+    )
+
+    assert response.status_code == 200
+    assert Asset.objects.get(batch=batch).original_filename == "fallback.png"
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["", "/absolute.png", "folder/../front.png", "folder\\front.png"],
+)
+def test_upload_api_rejects_unsafe_relative_paths(client, tmp_path, settings, relative_path):
+    from platform_app.models import Asset
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user(f"unsafe-path-owner-{len(relative_path)}")
+    batch, *_ = make_project(owner, f"Unsafe path {len(relative_path)}")
+    client.force_login(owner)
+
+    response = client.post(
+        reverse("api_project_upload_assets", args=[batch.id]),
+        {
+            "files": [uploaded_png()],
+            "relative_paths": [relative_path],
+        },
+    )
+
+    assert response.status_code == 400
+    assert Asset.objects.filter(batch=batch).count() == 0
+
+
+@pytest.mark.parametrize("role", ["operator", "admin"])
+def test_preflight_api_hides_quota_and_returns_public_summary(client, role):
+    from platform_app.models import RuleProfile
+
+    owner = make_user(f"preflight-{role}", role=role)
+    batch, _, slot = make_project(owner, f"Preflight {role}")
+    rules = RuleProfile.objects.create(
+        platform="shopee",
+        site="SG",
+        name="Public rule summary",
+        version="r1",
+        rules={"background": "white"},
+    )
+    batch.rule_profile = rules
+    batch.save(update_fields=["rule_profile"])
+    client.force_login(owner)
+
+    response = client.post(reverse("api_project_preflight", args=[batch.id]))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "cluster_count": 1,
+        "slot_count": 1,
+        "generation_count": 1,
+        "blocking_errors": [],
+        "template": {
+            "id": str(slot.template_id),
+            "name": "Preflight operator template" if role == "operator" else "Preflight admin template",
+            "version": "v1",
+        },
+        "rule_profile": {
+            "id": str(rules.id),
+            "name": "Public rule summary",
+            "version": "r1",
+        },
+    }
 
 
 def test_snapshot_replaces_internal_provider_failure_with_controlled_message(
