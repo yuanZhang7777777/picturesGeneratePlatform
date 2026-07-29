@@ -22,6 +22,8 @@ Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worke
 
 `MAX_ACTIVE_GENERATIONS` 表示活跃供应商异步任务的运行配置；供应商 API 上限为 **500**，有效值必须在 `1..500`。当前代码尚未完成跨进程原子认领和该上限的实际执行，因此预览仍固定使用 `2`；任何环境不得仅修改环境变量就直接提升到 500。按 2、5、8、50、100、250、500 分级压测并记录 429/5xx、P95、归档成功率和数据库资源后，才能提高下一档。公平队列的基础配额为每人 2 个活跃任务；容量空闲时可临时借用更多，出现其他待处理用户时停止继续借用。
 
+SKU 商品资料导入的 `CATALOG_LOGIN_URL`、`CATALOG_QUERY_URL`、`CATALOG_USERNAME`、`CATALOG_PASSWORD` 与 `CATALOG_ALLOWED_IMAGE_HOSTS` 只可由服务器 Secret 注入，绝不打印或提交。`CATALOG_ALLOWED_IMAGE_HOSTS` 仅接受逗号分隔的公网 IPv4/IPv6 字面量，不能填主机名；初始链接和每次重定向都必须命中该名单。单请求默认最多 `CATALOG_MAX_SKUS_PER_REQUEST=50`；其余下载门限为超时、重定向次数、最大字节数与最大像素数。发布前用受限测试 SKU 验证成功包络、Token 字段、过期行为、图片源 IP 白名单和私有归档；不能把原始商品资料响应、图片 URL 或 Token 写进日志。
+
 APIMart 中文文档与受限账户的最小契约测试是唯一接入事实来源：测试精确模型 ID、`/v1/responses` 图片输入、结构化输出封装、错误语义、限流和账务。上游模型文档仅帮助判断能力方向，不能代替 APIMart 参数或可用性结论。
 
 在启动真实环境前检查替换标记，但不要打印 `.env` 内容：

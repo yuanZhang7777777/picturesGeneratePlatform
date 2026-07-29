@@ -26,6 +26,11 @@ urlpatterns = [
         name="api_project_upload_assets",
     ),
     path(
+        "api/projects/<uuid:batch_id>/sku-import/",
+        views.api_sku_import,
+        name="api_sku_import",
+    ),
+    path(
         "api/projects/<uuid:batch_id>/preflight/",
         views.api_preflight,
         name="api_project_preflight",

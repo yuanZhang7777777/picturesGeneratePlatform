@@ -208,6 +208,7 @@ class Cluster(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name="clusters")
     name = models.CharField(max_length=200)
+    sku = models.CharField(max_length=120, null=True, blank=True)
     product_name = models.CharField(max_length=200, blank=True)
     product_facts = models.TextField(blank=True)
     identity_lock = models.TextField(blank=True)
@@ -249,6 +250,42 @@ class Cluster(models.Model):
         if self.generations.exists():
             raise ValidationError("Records with generation history must be archived, not deleted")
         return super().delete(*args, **kwargs)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["batch", "sku"], name="unique_batch_sku"),
+        ]
+
+
+class SkuImportItem(models.Model):
+    class Status(models.TextChoices):
+        IMPORTED = "imported", "Imported"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name="sku_import_items")
+    cluster = models.ForeignKey(
+        Cluster,
+        on_delete=models.SET_NULL,
+        related_name="sku_import_items",
+        null=True,
+        blank=True,
+    )
+    sku = models.CharField(max_length=120)
+    attempt = models.PositiveIntegerField()
+    product_name = models.CharField(max_length=200, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices)
+    error_message = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["batch", "sku", "attempt"],
+                name="unique_sku_import_attempt",
+            ),
+        ]
 
 
 class ClusterAsset(models.Model):

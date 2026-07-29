@@ -4,6 +4,8 @@
 
 本项目面向公司内部运营人员，提供文件夹上传、商品图片分组、结构化 Brief、AI Prompt、异步生图、审核、失败项重做和历史版本保留。Django 负责登录、权限、任务和数据；`frontend/` 中的 React + TypeScript + Vite 工作台由 Caddy 同源提供静态文件，并由 Caddy 代理 Django API、认证、后台、健康检查和迁移期的 `/batches/` 页面。
 
+SKU 是一级后端入口：`POST /api/projects/{id}/sku-import/` 接受最多 50 条 SKU，服务端只读取商品名和产品图并归档私有副本；失败项逐条审计，不阻塞同批其他 SKU。商品资料服务凭据、图片源公网 IP 字面量白名单和图片限制见 [运行手册](docs/runbook.md)，真实目录服务的 Token 过期契约尚未在发布环境验证。
+
 核心任务模型：
 
 ```text

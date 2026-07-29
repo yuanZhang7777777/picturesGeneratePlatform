@@ -1,15 +1,17 @@
 import base64
 import copy
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import re
 import uuid
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+from urllib.parse import urljoin, urlparse
 
 from django.conf import settings
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.db.models import F, Max, Prefetch
 from django.urls import reverse
 from django.utils import timezone
@@ -33,6 +35,7 @@ from .models import (
     ReviewAnnotation,
     ReviewFeedback,
     RuleProfile,
+    SkuImportItem,
 )
 from .template_policy import apply_standard_product_hero_policy
 
@@ -63,6 +66,31 @@ class ProviderError(Exception):
 
 class RateLimited(ProviderError):
     pass
+
+
+class CatalogError(Exception):
+    pass
+
+
+def _catalog_response_data(response, expected_type):
+    try:
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise CatalogError("Catalog service is unavailable") from exc
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("success") is not True
+        or ("code" in payload and payload["code"] not in (200, "200"))
+        or (
+            status is not None
+            and status not in (True, 200, "200", "ok", "success")
+        )
+        or not isinstance(payload.get("data"), expected_type)
+    ):
+        raise CatalogError("Catalog service returned an invalid response")
+    return payload["data"]
 
 
 def _sanitize_provider_text(text):
@@ -228,6 +256,64 @@ class APIMartClient:
         return self._json(response)
 
 
+class CatalogClient:
+    """The catalog boundary; imported fields stay limited to SKU, name, and image URL."""
+
+    def __init__(self, session=None, timeout=None):
+        self.session = session or requests.Session()
+        self.timeout = timeout or settings.CATALOG_TIMEOUT_SECONDS
+        self._token = None
+
+    def _login(self):
+        if not all((settings.CATALOG_LOGIN_URL, settings.CATALOG_USERNAME, settings.CATALOG_PASSWORD)):
+            raise CatalogError("Catalog service is not configured")
+        try:
+            response = self.session.post(
+                settings.CATALOG_LOGIN_URL,
+                json={"username": settings.CATALOG_USERNAME, "password": settings.CATALOG_PASSWORD},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise CatalogError("Catalog service is unavailable") from exc
+        data = _catalog_response_data(response, dict)
+        self._token = data.get("accessToken") or data.get("token")
+        if not isinstance(self._token, str) or not self._token.strip():
+            raise CatalogError("Catalog service rejected authentication")
+        self._token = self._token.strip()
+
+    def fetch_products(self, skus):
+        if not settings.CATALOG_QUERY_URL:
+            raise CatalogError("Catalog service is not configured")
+        if self._token is None:
+            self._login()
+        try:
+            response = self.session.post(
+                settings.CATALOG_QUERY_URL,
+                json={"skuList": skus},
+                headers={"Authorization": self._token},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise CatalogError("Catalog service is unavailable") from exc
+        data = _catalog_response_data(response, list)
+        requested_skus = set(skus)
+        products = {}
+        for item in data:
+            if not isinstance(item, dict) or not isinstance(item.get("sku"), str):
+                raise CatalogError("Catalog service returned an invalid response")
+            sku = item["sku"].strip()
+            if not sku:
+                raise CatalogError("Catalog service returned an invalid response")
+            if sku not in requested_skus:
+                continue
+            products[sku] = {
+                "sku": sku,
+                "productName": str(item.get("productName") or ""),
+                "pic": str(item.get("pic") or ""),
+            }
+        return products
+
+
 def create_batch(owner, name, platform="shopee", site="SG"):
     return Batch.objects.create(owner=owner, name=name, platform=platform, site=site)
 
@@ -310,7 +396,14 @@ def _store(batch, filename, data):
     root = Path(settings.MEDIA_ROOT)
     target = root / object_name
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
+    try:
+        target.write_bytes(data)
+    except OSError:
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return object_name
 
 
@@ -377,6 +470,302 @@ def register_uploaded_asset(batch, filename, content, content_type):
         batch.status = Batch.Status.ORGANIZING
         batch.save(update_fields=["status", "updated_at"])
     return asset
+
+
+def _catalog_image_url(value):
+    parsed = urlparse(str(value or ""))
+    host = (parsed.hostname or "").lower()
+    allowed = {str(address).strip().lower() for address in settings.CATALOG_ALLOWED_IMAGE_HOSTS}
+    if parsed.scheme not in {"http", "https"} or not host or host not in allowed or parsed.username or parsed.password:
+        raise CatalogError("Catalog image is not allowed")
+    try:
+        address = ipaddress.ip_address(host)
+        if (
+            not address.is_global
+            or address.is_multicast
+            or address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_unspecified
+        ):
+            raise CatalogError("Catalog image is not allowed")
+    except ValueError as exc:
+        raise CatalogError("Catalog image is not allowed") from exc
+    return parsed.geturl()
+
+
+def download_catalog_image(url, session=None):
+    current = _catalog_image_url(url)
+    session = session or requests.Session()
+    for _ in range(settings.CATALOG_MAX_REDIRECTS + 1):
+        try:
+            response = session.get(current, timeout=settings.CATALOG_TIMEOUT_SECONDS, stream=True, allow_redirects=False)
+        except requests.RequestException as exc:
+            raise CatalogError("Catalog image could not be downloaded") from exc
+        try:
+            if response.is_redirect:
+                location = response.headers.get("Location")
+                if not location:
+                    raise CatalogError("Catalog image could not be downloaded")
+                current = _catalog_image_url(urljoin(current, location))
+                continue
+            if response.status_code != 200:
+                raise CatalogError("Catalog image could not be downloaded")
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+            if content_type not in {"image/jpeg", "image/png"}:
+                raise CatalogError("Catalog image is not supported")
+            try:
+                content_length = int(response.headers.get("Content-Length", "0"))
+            except ValueError as exc:
+                raise CatalogError("Catalog image could not be downloaded") from exc
+            if content_length > settings.CATALOG_MAX_IMAGE_BYTES:
+                raise CatalogError("Catalog image is too large")
+            chunks = []
+            total = 0
+            for chunk in response.iter_content(64 * 1024):
+                total += len(chunk)
+                if total > settings.CATALOG_MAX_IMAGE_BYTES:
+                    raise CatalogError("Catalog image is too large")
+                chunks.append(chunk)
+            return b"".join(chunks), content_type
+        finally:
+            response.close()
+    raise CatalogError("Catalog image redirects too many times")
+
+
+def _validate_catalog_image(data, content_type):
+    if len(data) > settings.CATALOG_MAX_IMAGE_BYTES:
+        raise CatalogError("Catalog image is too large")
+    content_type = str(content_type or "").split(";", 1)[0].lower()
+    if content_type not in {"image/jpeg", "image/png"}:
+        raise CatalogError("Catalog image is not supported")
+    try:
+        image_format, width, height = _inspect_image(data)
+    except (ValueError, Image.DecompressionBombError) as exc:
+        raise CatalogError("Catalog image could not be imported") from exc
+    if width * height > settings.CATALOG_MAX_IMAGE_PIXELS:
+        raise CatalogError("Catalog image dimensions are too large")
+    expected_content_type = "image/jpeg" if image_format == "JPEG" else "image/png"
+    if content_type != expected_content_type:
+        raise CatalogError("Catalog image is not supported")
+    return data, expected_content_type, width, height
+
+
+def _archive_catalog_image(batch, sku, image):
+    data, content_type, width, height = image
+    suffix = ".jpg" if content_type == "image/jpeg" else ".png"
+    storage_path = _store(batch, f"{sku}{suffix}", data)
+    try:
+        return Asset.objects.create(
+            batch=batch,
+            kind=Asset.Kind.IMAGE,
+            original_filename=f"{sku}{suffix}",
+            storage_path=storage_path,
+            sha256=hashlib.sha256(data).hexdigest(),
+            file_size=len(data),
+            content_type=content_type,
+            width=width,
+            height=height,
+        )
+    except Exception:
+        _remove_catalog_archive(storage_path)
+        raise
+
+
+def _remove_catalog_archive(storage_path):
+    try:
+        (Path(settings.MEDIA_ROOT) / storage_path).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _sku_import_error_code(item):
+    if item.status != SkuImportItem.Status.FAILED:
+        return None
+    if item.error_message == "SKU could not be imported":
+        return "sku_not_found"
+    if item.error_message == "Catalog service is unavailable":
+        return "catalog_unavailable"
+    if item.error_message == "Project is locked for generation":
+        return "project_locked"
+    if item.error_message == "Catalog image could not be archived":
+        return "archive_failed"
+    if item.error_message == "Catalog image could not be imported":
+        return "catalog_image_invalid"
+    return "import_failed"
+
+
+def _serialize_sku_import_item(item):
+    return {
+        "sku": item.sku,
+        "productName": item.product_name,
+        "status": item.status,
+        "clusterId": str(item.cluster_id) if item.cluster_id else None,
+        "errorCode": _sku_import_error_code(item),
+    }
+
+
+def _project_is_locked(batch):
+    return bool(batch.confirmed_generation_key) or batch.generations.exists()
+
+
+def _create_sku_import_item(batch, sku, product_name, status, *, cluster=None, error_message=""):
+    attempt = (
+        SkuImportItem.objects.filter(batch=batch, sku=sku)
+        .aggregate(value=Max("attempt"))["value"]
+        or 0
+    ) + 1
+    return SkuImportItem.objects.create(
+        batch=batch,
+        cluster=cluster,
+        sku=sku,
+        attempt=attempt,
+        product_name=product_name,
+        status=status,
+        error_message=error_message,
+    )
+
+
+def import_skus(batch, skus, *, catalog_client=None, image_downloader=None):
+    if not isinstance(skus, list):
+        raise ValueError("skus must be an array")
+    if len(skus) > settings.CATALOG_MAX_SKUS_PER_REQUEST:
+        raise ValueError(f"at most {settings.CATALOG_MAX_SKUS_PER_REQUEST} SKUs are allowed")
+    clean_skus = list(dict.fromkeys(str(sku).strip() for sku in skus if str(sku).strip()))
+    if not clean_skus:
+        raise ValueError("at least one SKU is required")
+    if any(len(sku) > 120 for sku in clean_skus):
+        raise ValueError("SKU is too long")
+
+    catalog_client = catalog_client or CatalogClient()
+    image_downloader = image_downloader or download_catalog_image
+
+    with transaction.atomic():
+        locked_batch = Batch.objects.select_for_update().get(id=batch.id)
+        if _project_is_locked(locked_batch):
+            items = [
+                _serialize_sku_import_item(
+                    _create_sku_import_item(
+                        locked_batch,
+                        sku,
+                        "",
+                        SkuImportItem.Status.FAILED,
+                        error_message="Project is locked for generation",
+                    )
+                )
+                for sku in clean_skus
+            ]
+            return {"imported": 0, "failed": len(items), "items": items}
+
+    try:
+        products = catalog_client.fetch_products(clean_skus)
+    except CatalogError:
+        products = None
+
+    imported = failed = 0
+    items = []
+    for sku in clean_skus:
+        product = products.get(sku) if products is not None else None
+        product_name = str((product or {}).get("productName") or "")[:200]
+        image = None
+        if products is None:
+            error = "Catalog service is unavailable"
+        elif not product:
+            error = "SKU could not be imported"
+        else:
+            error = ""
+            if not Cluster.objects.filter(batch=batch, sku=sku).exists():
+                try:
+                    image_data, content_type = image_downloader(_catalog_image_url(product.get("pic")))
+                    image = _validate_catalog_image(image_data, content_type)
+                except (CatalogError, ValueError, TypeError, Image.DecompressionBombError):
+                    error = "Catalog image could not be imported"
+
+        storage_path = None
+        try:
+            with transaction.atomic():
+                locked_batch = Batch.objects.select_for_update().get(id=batch.id)
+                if _project_is_locked(locked_batch):
+                    item = _create_sku_import_item(
+                        locked_batch,
+                        sku,
+                        product_name,
+                        SkuImportItem.Status.FAILED,
+                        error_message="Project is locked for generation",
+                    )
+                else:
+                    cluster = Cluster.objects.select_for_update().filter(batch=locked_batch, sku=sku).first()
+                    if error:
+                        item = _create_sku_import_item(
+                            locked_batch,
+                            sku,
+                            product_name,
+                            SkuImportItem.Status.FAILED,
+                            error_message=error,
+                        )
+                    elif cluster is None and image is None:
+                        item = _create_sku_import_item(
+                            locked_batch,
+                            sku,
+                            product_name,
+                            SkuImportItem.Status.FAILED,
+                            error_message="Catalog image could not be imported",
+                        )
+                    else:
+                        if cluster is None:
+                            asset = _archive_catalog_image(locked_batch, sku, image)
+                            storage_path = asset.storage_path
+                            cluster = Cluster.objects.create(
+                                batch=locked_batch,
+                                sku=sku,
+                                name=product_name or sku,
+                                product_name=product_name,
+                            )
+                            ClusterAsset.objects.create(
+                                cluster=cluster,
+                                asset=asset,
+                                role=ClusterAsset.Role.PRIMARY,
+                                order=1,
+                            )
+                            if locked_batch.status == Batch.Status.DRAFT:
+                                locked_batch.status = Batch.Status.ORGANIZING
+                                locked_batch.save(update_fields=["status", "updated_at"])
+                        elif product_name and cluster.product_name != product_name:
+                            cluster.product_name = product_name
+                            cluster.name = product_name
+                            cluster.version += 1
+                            cluster.save(update_fields=["product_name", "name", "version", "updated_at"])
+                        item = _create_sku_import_item(
+                            locked_batch,
+                            sku,
+                            product_name or cluster.product_name,
+                            SkuImportItem.Status.IMPORTED,
+                            cluster=cluster,
+                        )
+        except (OSError, DatabaseError):
+            if storage_path:
+                _remove_catalog_archive(storage_path)
+            with transaction.atomic():
+                locked_batch = Batch.objects.select_for_update().get(id=batch.id)
+                item = _create_sku_import_item(
+                    locked_batch,
+                    sku,
+                    product_name,
+                    SkuImportItem.Status.FAILED,
+                    error_message="Catalog image could not be archived",
+                )
+        except Exception:
+            if storage_path:
+                _remove_catalog_archive(storage_path)
+            raise
+
+        items.append(_serialize_sku_import_item(item))
+        if item.status == SkuImportItem.Status.IMPORTED:
+            imported += 1
+        else:
+            failed += 1
+    return {"imported": imported, "failed": failed, "items": items}
 
 
 def _promote_primary_if_needed(cluster):
@@ -448,16 +837,27 @@ def rollback_prompt_node_template(node_name, version):
 
 
 def _global_fallback_template():
-    try:
-        return OutputTemplate.objects.get(
+    for seed_key in (
+        "global-marketplace-eight-slot-template",
+        "global-marketplace-baseline-template",
+    ):
+        template = OutputTemplate.objects.filter(
             platform="global",
             site="",
             status=OutputTemplate.Status.PUBLISHED,
-        )
-    except OutputTemplate.DoesNotExist as exc:
-        raise ValueError("published global baseline template is required") from exc
-    except OutputTemplate.MultipleObjectsReturned as exc:
-        raise ValueError("exactly one published global baseline template is required") from exc
+            seed_key=seed_key,
+            slots__order=8,
+        ).first()
+        if template is not None:
+            return template
+    template = OutputTemplate.objects.filter(
+        platform="global",
+        site="",
+        status=OutputTemplate.Status.PUBLISHED,
+    ).order_by("-version", "-id").first()
+    if template is None:
+        raise ValueError("published global baseline template is required")
+    return template
 
 
 def _sanitize_style_dna(style_dna):
@@ -1370,6 +1770,18 @@ def serialize_project(batch):
         }
         for asset in assets
     }
+    template = batch.output_template or _global_fallback_template()
+    template_slots = [
+        {"order": slot.order, "name": slot.name, "purpose": slot.purpose}
+        for slot in template.slots.order_by("order", "id")
+    ]
+    latest_imports = {}
+    for item in batch.sku_import_items.order_by("sku", "-attempt"):
+        latest_imports.setdefault(item.sku, item)
+    sku_imports = [
+        _serialize_sku_import_item(latest_imports[sku])
+        for sku in sorted(latest_imports)
+    ]
     skus = []
     for cluster in batch.clusters.order_by("created_at", "id"):
         cluster_assets = list(
@@ -1406,7 +1818,12 @@ def serialize_project(batch):
         skus.append(
             {
                 "id": str(cluster.id),
+                "sku": cluster.sku or "",
                 "name": cluster.product_name or cluster.name,
+                "productName": cluster.product_name or cluster.name,
+                "importStatus": (
+                    latest_imports[cluster.sku].status if cluster.sku in latest_imports else "manual"
+                ),
                 "assetIds": [str(item.asset_id) for item in cluster_assets],
                 "assets": sku_assets,
                 "facts": cluster.product_facts,
@@ -1415,15 +1832,29 @@ def serialize_project(batch):
                 "outputs": outputs,
             }
         )
+    preflight = preflight_batch(batch, batch.owner, template)
     return {
         "id": str(batch.id),
         "name": batch.name,
         "platform": batch.platform,
         "market": batch.market or batch.site,
-        "template": batch.output_template.name if batch.output_template_id else "",
+        "template": template.name,
         "size": batch.size,
         "status": _project_status(batch.status),
         "updatedAt": batch.updated_at.isoformat(),
         "assets": list(serialized_assets.values()),
         "skus": skus,
+        "skuImports": sku_imports,
+        "templateSlots": template_slots,
+        "preflight": {
+            key: preflight[key]
+            for key in (
+                "cluster_count",
+                "slot_count",
+                "generation_count",
+                "blocking_errors",
+                "template",
+                "rule_profile",
+            )
+        },
     }

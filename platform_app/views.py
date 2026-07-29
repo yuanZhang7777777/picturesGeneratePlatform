@@ -21,6 +21,7 @@ from .services import (
     confirm_generation,
     create_project,
     generation_failure_message,
+    import_skus,
     merge_asset_into_cluster,
     move_asset_to_new_cluster,
     review_generation,
@@ -230,6 +231,20 @@ def api_upload_assets(request, batch_id):
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
     return JsonResponse({"asset_count": len(assets)})
+
+
+@login_required
+@password_change_required
+@require_POST
+def api_sku_import(request, batch_id):
+    batch = _batch_for_user(request.user, batch_id)
+    try:
+        payload = json.loads(request.body or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be an object")
+        return JsonResponse(import_skus(batch, payload.get("skus")))
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
 
 @login_required
