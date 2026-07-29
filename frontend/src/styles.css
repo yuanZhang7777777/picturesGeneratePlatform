@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@layer base {
+  body { @apply m-0 min-w-80 bg-slate-50 font-sans antialiased; }
+  input, select, textarea { @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100; }
+  textarea { @apply min-h-24 resize-y; }
+  table { @apply w-full min-w-175 border-collapse text-left text-sm; }
+  th { @apply border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500; }
+  td { @apply border-b border-slate-100 px-5 py-4 align-middle text-slate-600; }
+}
+
+@layer components {
+  .surface { @apply rounded-2xl border border-slate-200 bg-white shadow-sm shadow-slate-200/60; }
+  .primary-button { @apply inline-flex min-h-10 items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60; }
+  .secondary-button { @apply inline-flex min-h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50; }
+  .nav-link { @apply block rounded-xl px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950; }
+  .nav-link-active { @apply bg-indigo-50 text-indigo-700; }
+  .status { @apply inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold; }
+  .status-draft, .status-queued { @apply bg-slate-100 text-slate-600; }
+  .status-running { @apply bg-blue-50 text-blue-700; }
+  .status-completed { @apply bg-emerald-50 text-emerald-700; }
+  .status-failed { @apply bg-rose-50 text-rose-700; }
+  .section-label { @apply text-xs font-semibold uppercase tracking-[0.14em] text-slate-500; }
+  .slot-button { @apply flex shrink-0 flex-col rounded-xl border border-slate-200 px-3 py-2 text-left text-sm font-medium text-slate-700; }
+  .slot-button span { @apply mt-1 text-xs text-slate-400; }
+  .slot-button-active { @apply border-indigo-500 bg-indigo-50 text-indigo-700; }
+  .review-item { @apply block w-full rounded-xl px-3 py-3 text-left text-sm text-slate-700 hover:bg-slate-50; }
+  .review-item span, .review-item small { @apply block; }
+  .review-item small { @apply mt-1 text-xs text-slate-400; }
+  .review-item-active { @apply bg-indigo-50 text-indigo-700; }
+  .review-canvas { @apply relative grid min-h-96 w-full place-items-center overflow-hidden rounded-2xl bg-slate-100; }
+  .review-canvas img { @apply h-full max-h-130 w-full object-contain; }
+  .review-mark { @apply absolute grid size-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white bg-rose-600 text-xs not-italic font-bold text-white shadow-lg; }
+}
