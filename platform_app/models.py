@@ -3,7 +3,7 @@ import uuid
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
-from django.db import models, transaction
+from django.db import models
 from django.db.models import Max
 from django.utils import timezone
 
@@ -365,33 +365,10 @@ class Generation(models.Model):
             ),
         ]
 
-    @transaction.atomic
     def retry_failed(self, user):
-        if self.status != self.Status.FAILED:
-            raise ValueError("Only failed generations can be retried")
-        next_attempt = (
-            Generation.objects.filter(cluster=self.cluster, output_slot=self.output_slot)
-            .aggregate(value=Max("attempt"))["value"]
-            or 0
-        ) + 1
-        retry = Generation.objects.create(
-            batch=self.batch,
-            cluster=self.cluster,
-            output_slot=self.output_slot,
-            prompt_version=self.prompt_version,
-            created_by=user,
-            attempt=next_attempt,
-            status=self.Status.QUEUED,
-            prompt_text=self.prompt_text,
-            size=self.size,
-            resolution=self.resolution,
-            reference_snapshot=self.reference_snapshot,
-            template_snapshot=self.template_snapshot,
-            rule_snapshot=self.rule_snapshot,
-        )
-        self.batch.status = Batch.Status.QUEUED
-        self.batch.save(update_fields=["status", "updated_at"])
-        return retry
+        from .services import retry_failed_generation
+
+        return retry_failed_generation(self, user)
 
 
 class ResultAsset(models.Model):
@@ -437,6 +414,9 @@ class ReviewFeedback(models.Model):
             raise ValidationError("Review feedback is immutable")
         return super().save(*args, **kwargs)
 
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Review feedback is immutable")
+
 
 class ReviewAnnotation(models.Model):
     class Kind(models.TextChoices):
@@ -460,6 +440,47 @@ class ReviewAnnotation(models.Model):
         if not self._state.adding:
             raise ValidationError("Review annotation is immutable")
         return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Review annotation is immutable")
+
+
+class DailyGenerationUsage(models.Model):
+    class Scope(models.TextChoices):
+        ORGANIZATION = "org", "Organization"
+        USER = "user", "User"
+
+    scope = models.CharField(max_length=10, choices=Scope.choices)
+    date = models.DateField(default=timezone.localdate)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="daily_generation_usage",
+        null=True,
+        blank=True,
+    )
+    used = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(scope="org", user__isnull=True)
+                    | models.Q(scope="user", user__isnull=False)
+                ),
+                name="valid_daily_generation_usage_scope",
+            ),
+            models.UniqueConstraint(
+                fields=["date"],
+                condition=models.Q(scope="org"),
+                name="unique_daily_org_generation_usage",
+            ),
+            models.UniqueConstraint(
+                fields=["date", "user"],
+                condition=models.Q(scope="user"),
+                name="unique_daily_user_generation_usage",
+            ),
+        ]
 
 
 class AuditEvent(models.Model):

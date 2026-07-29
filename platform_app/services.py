@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Max, Prefetch
+from django.db.models import F, Max, Prefetch
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image, UnidentifiedImageError
@@ -23,6 +23,7 @@ from .models import (
     Cluster,
     ClusterAsset,
     CompetitorInsight,
+    DailyGenerationUsage,
     Generation,
     OutputSlot,
     OutputTemplate,
@@ -654,6 +655,32 @@ def _used_generations_today(user=None):
     return queryset.count()
 
 
+def _locked_daily_usage(scope, user=None):
+    today = timezone.localdate()
+    lookup = {"scope": scope, "date": today, "user": user}
+    seed = _used_generations_today(user if scope == DailyGenerationUsage.Scope.USER else None)
+    usage, _ = DailyGenerationUsage.objects.get_or_create(
+        **lookup,
+        defaults={"used": seed},
+    )
+    return DailyGenerationUsage.objects.select_for_update().get(id=usage.id)
+
+
+@transaction.atomic
+def reserve_generation_usage(user, count):
+    if count <= 0:
+        return
+    organization = _locked_daily_usage(DailyGenerationUsage.Scope.ORGANIZATION)
+    personal = _locked_daily_usage(DailyGenerationUsage.Scope.USER, user)
+    user_limit = user.daily_generation_limit or settings.USER_DAILY_GENERATION_LIMIT
+    if organization.used + count > settings.ORG_DAILY_GENERATION_LIMIT:
+        raise ValueError("organization daily quota exceeded")
+    if personal.used + count > user_limit:
+        raise ValueError("user daily quota exceeded")
+    DailyGenerationUsage.objects.filter(id=organization.id).update(used=F("used") + count)
+    DailyGenerationUsage.objects.filter(id=personal.id).update(used=F("used") + count)
+
+
 def preflight_batch(batch, user, template=None):
     template = template or batch.output_template or ensure_default_template(batch.platform, batch.site)
     slot_count = template.slots.count()
@@ -700,6 +727,7 @@ def confirm_generation(batch, user, template=None):
     preflight = preflight_batch(locked_batch, user, template)
     if preflight["blocking_errors"]:
         raise ValueError(", ".join(preflight["blocking_errors"]))
+    reserve_generation_usage(user, preflight["generation_count"])
 
     if locked_batch.output_template_id != template.id:
         locked_batch.output_template = template
@@ -913,6 +941,71 @@ def optimize_cluster_prompt(cluster, client=None):
     return {"suggested_prompt": response.get("output_text", ""), "raw": response}
 
 
+ACTIVE_GENERATION_STATUSES = {
+    Generation.Status.QUEUED,
+    Generation.Status.PREPARING,
+    Generation.Status.SUBMITTING,
+    Generation.Status.SUBMITTED,
+    Generation.Status.PROCESSING,
+    Generation.Status.ARCHIVING,
+}
+
+
+def _create_followup_attempt(source, user, **overrides):
+    siblings = Generation.objects.filter(
+        cluster_id=source.cluster_id,
+        output_slot_id=source.output_slot_id,
+    ).exclude(id=source.id)
+    if siblings.filter(attempt__gt=source.attempt).exists() or siblings.filter(
+        status__in=ACTIVE_GENERATION_STATUSES
+    ).exists():
+        raise ValueError("A newer generation attempt already exists")
+    next_attempt = (
+        Generation.objects.filter(
+            cluster_id=source.cluster_id,
+            output_slot_id=source.output_slot_id,
+        ).aggregate(value=Max("attempt"))["value"]
+        or 0
+    ) + 1
+    reserve_generation_usage(user, 1)
+    values = {
+        "batch": source.batch,
+        "cluster": source.cluster,
+        "output_slot": source.output_slot,
+        "prompt_version": source.prompt_version,
+        "created_by": user,
+        "attempt": next_attempt,
+        "status": Generation.Status.QUEUED,
+        "prompt_text": source.prompt_text,
+        "size": source.size,
+        "resolution": source.resolution,
+        "reference_snapshot": copy.deepcopy(source.reference_snapshot),
+        "template_snapshot": copy.deepcopy(source.template_snapshot),
+        "rule_snapshot": copy.deepcopy(source.rule_snapshot),
+    }
+    values.update(overrides)
+    return Generation.objects.create(**values)
+
+
+@transaction.atomic
+def retry_failed_generation(generation, user):
+    Batch.objects.select_for_update().get(id=generation.batch_id)
+    Cluster.objects.select_for_update().get(id=generation.cluster_id)
+    locked = (
+        Generation.objects.select_for_update()
+        .select_related("batch", "cluster", "output_slot", "prompt_version")
+        .get(id=generation.id)
+    )
+    if locked.status != Generation.Status.FAILED:
+        raise ValueError("Only failed generations can be retried")
+    retry = _create_followup_attempt(locked, user)
+    Batch.objects.filter(id=locked.batch_id).update(
+        status=Batch.Status.QUEUED,
+        updated_at=timezone.now(),
+    )
+    return retry
+
+
 def _coordinate(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
         raise ValueError("Annotation coordinates must be numbers from 0 to 1")
@@ -953,6 +1046,8 @@ def _normalize_annotations(annotations):
             if not isinstance(raw_rect, (list, tuple)) or len(raw_rect) != 4:
                 raise ValueError("circle annotation requires x, y, width, and height")
             rect = [_coordinate(value) for value in raw_rect]
+            if rect[2] <= 0 or rect[3] <= 0 or rect[0] + rect[2] > 1 or rect[1] + rect[3] > 1:
+                raise ValueError("circle annotation must fit within the image")
         color = annotation.get("color", "#ff0000")
         if not isinstance(color, str) or not color.strip() or len(color) > 32:
             raise ValueError("annotation color is invalid")
@@ -971,8 +1066,19 @@ def _normalize_annotations(annotations):
     return normalized
 
 
+def _prompt_version_references(prompt_version):
+    for snapshot in (prompt_version.input_snapshot, prompt_version.source_snapshot):
+        for key in ("reference_snapshot", "self_product_references", "product_references"):
+            references = snapshot.get(key)
+            if isinstance(references, list) and all(isinstance(item, str) for item in references):
+                return copy.deepcopy(references)
+    return []
+
+
 @transaction.atomic
 def review_generation(generation, reviewer, *, decision, issue_tags=None, description="", annotations=None):
+    Batch.objects.select_for_update().get(id=generation.batch_id)
+    Cluster.objects.select_for_update().get(id=generation.cluster_id)
     locked = (
         Generation.objects.select_for_update()
         .select_related("prompt_version", "cluster", "output_slot", "batch")
@@ -986,6 +1092,8 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
         raise ValueError("Generation has already been reviewed")
     if not isinstance(issue_tags, list):
         raise ValueError("issue_tags must be a list")
+    if not isinstance(description, str):
+        raise ValueError("description must be a string")
     normalized_tags = sorted(
         {
             tag.strip().lower()
@@ -998,7 +1106,13 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
     ) or any(not isinstance(tag, str) for tag in issue_tags):
         raise ValueError("issue_tags must contain strings")
     normalized_annotations = _normalize_annotations(annotations or [])
-    description = str(description or "").strip()
+    description = description.strip()
+    if (
+        decision == ReviewFeedback.Decision.CHANGES_REQUESTED
+        and not description
+        and not normalized_tags
+    ):
+        raise ValueError("changes_requested requires a description or issue tag")
 
     feedback = ReviewFeedback.objects.create(
         generation=locked,
@@ -1018,22 +1132,26 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
     else:
         locked.review_status = Generation.ReviewStatus.CHANGES_REQUESTED
         audit_action = "generation.changes_requested"
-        next_attempt = (
-            Generation.objects.filter(cluster=locked.cluster, output_slot=locked.output_slot)
-            .aggregate(value=Max("attempt"))["value"]
-            or 0
-        ) + 1
         previous = locked.prompt_version
         revision_delta = {
             "issue_tags": normalized_tags,
             "description": description,
         }
-        input_snapshot = copy.deepcopy(previous.input_snapshot if previous else {})
-        input_snapshot.setdefault("product_facts", locked.cluster.product_facts)
-        input_snapshot.setdefault("identity_lock", locked.cluster.identity_lock)
-        input_snapshot.setdefault("reference_snapshot", list(locked.reference_snapshot))
+        if previous:
+            input_snapshot = copy.deepcopy(previous.input_snapshot)
+            source_snapshot = copy.deepcopy(previous.source_snapshot)
+            references = _prompt_version_references(previous)
+            prior_prompt = previous.prompt_text
+        else:
+            references = copy.deepcopy(locked.reference_snapshot)
+            input_snapshot = {
+                "product_facts": locked.cluster.product_facts,
+                "identity_lock": locked.cluster.identity_lock,
+                "reference_snapshot": references,
+            }
+            source_snapshot = copy.deepcopy(input_snapshot)
+            prior_prompt = locked.prompt_text
         input_snapshot["revision_delta"] = revision_delta
-        source_snapshot = copy.deepcopy(previous.source_snapshot if previous else input_snapshot)
         source_snapshot["revision_delta"] = revision_delta
         structured_output = copy.deepcopy(previous.structured_output if previous else {})
         structured_output["revision_delta"] = {
@@ -1041,7 +1159,7 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
             "prior_prompt_version_id": str(previous.id) if previous else None,
         }
         delta_lines = [
-            locked.prompt_text,
+            prior_prompt,
             "Revision request:",
             f"Issue tags: {', '.join(normalized_tags) or 'not provided'}",
             f"Description: {description or 'not provided'}",
@@ -1058,23 +1176,17 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
             evaluation=copy.deepcopy(previous.evaluation if previous else {}),
             source_snapshot=source_snapshot,
         )
-        revision = Generation.objects.create(
-            batch=locked.batch,
-            cluster=locked.cluster,
-            output_slot=locked.output_slot,
+        revision = _create_followup_attempt(
+            locked,
+            reviewer,
             prompt_version=prompt_version,
-            created_by=reviewer,
-            attempt=next_attempt,
-            status=Generation.Status.QUEUED,
             prompt_text=prompt_version.prompt_text,
-            size=locked.size,
-            resolution=locked.resolution,
-            reference_snapshot=copy.deepcopy(locked.reference_snapshot),
-            template_snapshot=copy.deepcopy(locked.template_snapshot),
-            rule_snapshot=copy.deepcopy(locked.rule_snapshot),
+            reference_snapshot=references,
         )
-        locked.batch.status = Batch.Status.QUEUED
-        locked.batch.save(update_fields=["status", "updated_at"])
+        Batch.objects.filter(id=locked.batch_id).update(
+            status=Batch.Status.QUEUED,
+            updated_at=timezone.now(),
+        )
     locked.save(update_fields=["review_status", "updated_at"])
     AuditEvent.objects.create(
         actor=reviewer,
@@ -1100,8 +1212,11 @@ def safe_storage_path(storage_path, expected_prefix):
     if ".." in relative.parts or relative.parts[: len(prefix.parts)] != prefix.parts:
         raise ValueError("Invalid storage path")
     root = Path(settings.MEDIA_ROOT).resolve()
+    prefix_path = root / Path(*prefix.parts)
+    if prefix_path.resolve() != prefix_path:
+        raise ValueError("Invalid storage path")
     target = (root / Path(*relative.parts)).resolve()
-    if not target.is_relative_to(root) or not target.is_file():
+    if not target.is_relative_to(prefix_path) or not target.is_file():
         raise ValueError("Stored file is unavailable")
     return target
 
@@ -1118,6 +1233,14 @@ def _generation_status(status):
     if status == Generation.Status.QUEUED:
         return "queued"
     return "running"
+
+
+def generation_failure_message(generation):
+    if generation.status == Generation.Status.SUBMIT_UNKNOWN:
+        return "Generation status is uncertain. Contact an administrator before retrying."
+    if generation.status in {Generation.Status.FAILED, Generation.Status.CANCELED}:
+        return "Generation failed. Retry this item or contact an administrator."
+    return ""
 
 
 def _project_status(status):
@@ -1171,8 +1294,9 @@ def serialize_project(batch):
                 "status": _generation_status(generation.status),
                 "reviewStatus": review_status,
             }
-            if generation.failure_reason:
-                output["failureReason"] = generation.failure_reason
+            failure_message = generation_failure_message(generation)
+            if failure_message:
+                output["failureReason"] = failure_message
             if result is not None:
                 output["imageUrl"] = reverse("api_result_media", args=[result.id])
             outputs.append(output)

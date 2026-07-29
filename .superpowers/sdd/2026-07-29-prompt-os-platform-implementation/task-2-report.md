@@ -90,3 +90,22 @@
 - 严格 TDD：先新增 snapshot 断言并确认因 `KeyError: 'version'` 红灯，再在视图层复用
   现有 serializer 补字段；未修改模型、服务、路由或前端。
 - 验证：Task 2 测试 7 项通过；全量 pytest 53 项通过。
+
+## Review fix round 2
+
+- 新增 `DailyGenerationUsage` 及 `0005_daily_generation_usage.py`：
+  - 组织和用户每日各一条持久用量行。
+  - `select_for_update` 按 `batch → cluster → org usage → user usage` 固定顺序锁定。
+  - confirm、技术 retry、质量 revision 共用原子额度预留；超额事务整体回滚。
+- follow-up attempt 共用 cluster/slot 门禁；已有更新或运行中 attempt 时返回可理解 400，
+  不再依赖 `MAX + 1` 碰唯一约束后产生 500。
+- `changes_requested` 要求非空描述或有效 issue tag；circle 必须完整位于相对坐标画布内；
+  审核反馈/批注禁止 instance update/delete，后台继续只读。
+- revision 以不可变 `PromptVersion.prompt_text` 及其 input/source 自有商品参考快照为权威；
+  只有 legacy null PromptVersion 才回退 Generation 字段。
+- 项目和旧 batch snapshot 只返回受控失败文案，内部 `failure_reason` 仍留在受限后台。
+- 媒体守卫拒绝其他 batch/result 前缀、prefix symlink 和 resolved 越界路径。
+- 导出改为 `TemporaryFile + FileResponse` 流式响应；单结果上限 25 MiB，总量上限
+  500 MiB，超限返回 400，不再使用 `BytesIO.getvalue()` 复制完整 ZIP。
+- 严格 TDD：新增合同首次运行 8 项失败，分别命中上述缺口；实现后 Task 2 测试
+  13 项通过，全量 pytest 59 项通过，Django check 无问题，迁移无漂移。

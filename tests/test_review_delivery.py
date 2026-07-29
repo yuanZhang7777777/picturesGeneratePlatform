@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from django.contrib import admin
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import Client
 from django.urls import reverse
 
@@ -101,6 +102,10 @@ def make_generation(owner, tmp_path, *, name="Project", attempt=1, status="compl
 def post_json(client, url, payload, *, csrf_token=None):
     headers = {"HTTP_X_CSRFTOKEN": csrf_token} if csrf_token else {}
     return client.post(url, json.dumps(payload), content_type="application/json", **headers)
+
+
+def response_bytes(response):
+    return b"".join(response.streaming_content) if response.streaming else response.content
 
 
 def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(client):
@@ -259,6 +264,32 @@ def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_pa
     assert client.get(reverse("api_project_snapshot", args=[owner_batch.id])).status_code == 200
 
 
+def test_snapshot_replaces_internal_provider_failure_with_controlled_message(
+    client, tmp_path, settings
+):
+    from platform_app.models import Generation
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("failure-owner")
+    batch, _, _, generation, _ = make_generation(owner, tmp_path, name="Failed snapshot")
+    generation.status = Generation.Status.FAILED
+    generation.failure_reason = (
+        "provider task task-secret failed at https://provider.invalid/result "
+        "Bearer provider-token"
+    )
+    generation.save(update_fields=["status", "failure_reason"])
+    client.force_login(owner)
+
+    output = client.get(reverse("api_project_snapshot", args=[batch.id])).json()["skus"][0][
+        "outputs"
+    ][0]
+
+    assert output["failureReason"] == "Generation failed. Retry this item or contact an administrator."
+    assert "provider" not in json.dumps(output).lower()
+    assert "task-secret" not in json.dumps(output)
+    assert "https://" not in json.dumps(output)
+
+
 def test_asset_and_result_media_are_permission_checked_and_reject_traversal(client, tmp_path, settings):
     from platform_app.models import Asset
 
@@ -301,6 +332,39 @@ def test_asset_and_result_media_are_permission_checked_and_reject_traversal(clie
     assert client.get(reverse("api_asset_media", args=[asset.id])).status_code == 404
 
 
+def test_media_guard_rejects_other_batch_prefix_and_prefix_symlink(client, tmp_path, settings):
+    from platform_app.models import Asset
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("prefix-owner")
+    batch, *_ = make_project(owner, "Guarded")
+    other_batch, *_ = make_project(owner, "Other")
+    other_prefix = tmp_path / "originals" / str(other_batch.id)
+    other_prefix.mkdir(parents=True)
+    (other_prefix / "secret.png").write_bytes(b"secret")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind="image",
+        original_filename="secret.png",
+        storage_path=f"originals/{other_batch.id}/secret.png",
+        sha256="3" * 64,
+        file_size=6,
+        content_type="image/png",
+    )
+    client.force_login(owner)
+
+    assert client.get(reverse("api_asset_media", args=[asset.id])).status_code == 404
+
+    own_prefix = tmp_path / "originals" / str(batch.id)
+    try:
+        own_prefix.symlink_to(other_prefix, target_is_directory=True)
+    except OSError:
+        return
+    asset.storage_path = f"originals/{batch.id}/secret.png"
+    asset.save(update_fields=["storage_path"])
+    assert client.get(reverse("api_asset_media", args=[asset.id])).status_code == 404
+
+
 def test_accept_review_is_audited_and_enables_safe_export(client, tmp_path, settings):
     from platform_app.models import AuditEvent, Generation
 
@@ -325,8 +389,9 @@ def test_accept_review_is_audited_and_enables_safe_export(client, tmp_path, sett
 
     exported = client.get(reverse("api_project_export", args=[batch.id]))
     assert exported.status_code == 200
+    assert exported.streaming
     assert client.post(reverse("api_project_export", args=[batch.id])).status_code == 405
-    archive = zipfile.ZipFile(io.BytesIO(exported.content))
+    archive = zipfile.ZipFile(io.BytesIO(response_bytes(exported)))
     assert archive.namelist() == [
         f"project-{batch.id}/cluster-{cluster.id}/slot-{slot.id}/attempt-1.png"
     ]
@@ -380,11 +445,37 @@ def test_export_rejects_unaccepted_outputs_and_uses_only_latest_accepted_attempt
     )
 
     exported = client.get(reverse("api_project_export", args=[batch.id]))
-    archive = zipfile.ZipFile(io.BytesIO(exported.content))
+    archive = zipfile.ZipFile(io.BytesIO(response_bytes(exported)))
     assert archive.namelist() == [
         f"project-{batch.id}/cluster-{cluster.id}/slot-{slot.id}/attempt-2.jpg"
     ]
     assert archive.read(archive.namelist()[0]) == b"new"
+
+
+def test_export_rejects_result_or_total_size_over_hard_limit(
+    client, tmp_path, settings, monkeypatch
+):
+    from platform_app.models import Generation
+    from platform_app import views
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("large-export-owner")
+    batch, _, _, generation, _ = make_generation(owner, tmp_path, content=b"large")
+    generation.review_status = Generation.ReviewStatus.ACCEPTED
+    generation.save(update_fields=["review_status"])
+    client.force_login(owner)
+
+    monkeypatch.setattr(views, "MAX_EXPORT_RESULT_BYTES", 4, raising=False)
+    monkeypatch.setattr(views, "MAX_EXPORT_TOTAL_BYTES", 100, raising=False)
+    response = client.get(reverse("api_project_export", args=[batch.id]))
+    assert response.status_code == 400
+    assert "too large" in response.json()["error"].lower()
+
+    monkeypatch.setattr(views, "MAX_EXPORT_RESULT_BYTES", 100, raising=False)
+    monkeypatch.setattr(views, "MAX_EXPORT_TOTAL_BYTES", 4, raising=False)
+    response = client.get(reverse("api_project_export", args=[batch.id]))
+    assert response.status_code == 400
+    assert "too large" in response.json()["error"].lower()
 
 
 def test_changes_requested_preserves_original_and_creates_clean_revision_attempt(
@@ -397,7 +488,10 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
     batch, _, _, original, _ = make_generation(owner, tmp_path)
     original_prompt_id = original.prompt_version_id
     original_prompt = original.prompt_version.prompt_text
-    original_references = list(original.reference_snapshot)
+    original_references = list(original.prompt_version.input_snapshot["reference_snapshot"])
+    original.prompt_text = "TAMPERED mutable generation prompt"
+    original.reference_snapshot = ["originals/other-batch/overlay.png"]
+    original.save(update_fields=["prompt_text", "reference_snapshot"])
     client.force_login(owner)
     payload = {
         "decision": "changes_requested",
@@ -430,7 +524,7 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
     assert original.review_status == Generation.ReviewStatus.CHANGES_REQUESTED
     assert original.prompt_version_id == original_prompt_id
     assert original.prompt_version.prompt_text == original_prompt
-    assert original.reference_snapshot == original_references
+    assert original.reference_snapshot == ["originals/other-batch/overlay.png"]
     assert feedback.issue_tags == ["composition", "lighting"]
     assert annotations["stroke"].points == [[0.0, 0.25], [1.0, 0.75]]
     assert annotations["circle"].rect == [0.2, 0.3, 0.4, 0.5]
@@ -453,6 +547,8 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
             "snapshot": revision.prompt_version.input_snapshot,
         }
     )
+    assert revision.prompt_text.startswith(original_prompt)
+    assert "TAMPERED mutable generation prompt" not in revision.prompt_text
     assert payload["description"] in revision.prompt_text
     assert "stroke" not in revision_text
     assert "circle" not in revision_text
@@ -467,6 +563,10 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
     annotations["stroke"].color = "#000000"
     with pytest.raises(Exception, match="immutable"):
         annotations["stroke"].save()
+    with pytest.raises(ValidationError, match="immutable"):
+        annotations["stroke"].delete()
+    with pytest.raises(ValidationError, match="immutable"):
+        feedback.delete()
 
     feedback_admin = admin.site._registry[ReviewFeedback]
     annotation_admin = admin.site._registry[ReviewAnnotation]
@@ -529,3 +629,132 @@ def test_review_validation_and_technical_retry_are_separate(client, tmp_path, se
 
     assert client.post(reverse("api_generation_retry", args=[completed.id])).status_code == 400
     assert failed_batch.generations.count() == 2
+
+
+def test_changes_requested_requires_reason_and_rejects_rect_outside_canvas(
+    client, tmp_path, settings
+):
+    from platform_app.models import ReviewFeedback
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("validation-owner")
+    _, _, _, empty_change, _ = make_generation(owner, tmp_path, name="Empty change")
+    _, _, _, overflow_rect, _ = make_generation(owner, tmp_path, name="Overflow rect")
+    client.force_login(owner)
+
+    empty = post_json(
+        client,
+        reverse("api_generation_review", args=[empty_change.id]),
+        {
+            "decision": "changes_requested",
+            "issue_tags": [" ", ""],
+            "description": " ",
+            "annotations": [],
+        },
+    )
+    assert empty.status_code == 400
+
+    overflow = post_json(
+        client,
+        reverse("api_generation_review", args=[overflow_rect.id]),
+        {
+            "decision": "changes_requested",
+            "issue_tags": ["composition"],
+            "description": "",
+            "annotations": [{"kind": "circle", "rect": [0.8, 0.8, 0.3, 0.3]}],
+        },
+    )
+    assert overflow.status_code == 400
+    assert ReviewFeedback.objects.count() == 0
+
+
+def test_retry_and_revision_reserve_daily_quota(client, tmp_path, settings):
+    from platform_app.models import Generation
+    from platform_app.services import confirm_generation
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("quota-owner")
+    owner.daily_generation_limit = 1
+    owner.save(update_fields=["daily_generation_limit"])
+    batch, _, _ = make_project(owner, "Quota confirm")
+    generation = confirm_generation(batch, owner)[0]
+    generation.status = Generation.Status.FAILED
+    generation.save(update_fields=["status"])
+    client.force_login(owner)
+
+    retry = client.post(reverse("api_generation_retry", args=[generation.id]))
+    assert retry.status_code == 400
+    assert "quota" in retry.json()["error"].lower()
+    from platform_app.models import DailyGenerationUsage
+
+    assert DailyGenerationUsage.objects.get(scope="org").used == 1
+    assert DailyGenerationUsage.objects.get(scope="user", user=owner).used == 1
+
+    change_owner = make_user("change-quota-owner")
+    change_owner.daily_generation_limit = 1
+    change_owner.save(update_fields=["daily_generation_limit"])
+    _, _, _, completed, _ = make_generation(change_owner, tmp_path, name="Quota change")
+    change = post_json(
+        client,
+        reverse("api_generation_review", args=[completed.id]),
+        {
+            "decision": "changes_requested",
+            "issue_tags": ["composition"],
+            "description": "",
+            "annotations": [],
+        },
+    )
+    assert change.status_code == 404
+    client.force_login(change_owner)
+    change = post_json(
+        client,
+        reverse("api_generation_review", args=[completed.id]),
+        {
+            "decision": "changes_requested",
+            "issue_tags": ["composition"],
+            "description": "",
+            "annotations": [],
+        },
+    )
+    assert change.status_code == 400
+    assert "quota" in change.json()["error"].lower()
+
+
+def test_retry_and_revision_reject_when_newer_attempt_is_pending(client, tmp_path, settings):
+    from platform_app.models import Generation
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("storm-owner")
+    _, _, _, failed, _ = make_generation(
+        owner, tmp_path, name="Retry storm", status=Generation.Status.FAILED
+    )
+    client.force_login(owner)
+
+    first_retry = client.post(reverse("api_generation_retry", args=[failed.id]))
+    assert first_retry.status_code == 200
+    second_retry = client.post(reverse("api_generation_retry", args=[failed.id]))
+    assert second_retry.status_code == 400
+    assert failed.cluster.generations.count() == 2
+
+    _, cluster, slot, completed, _ = make_generation(owner, tmp_path, name="Revision storm")
+    Generation.objects.create(
+        batch=completed.batch,
+        cluster=cluster,
+        output_slot=slot,
+        prompt_version=completed.prompt_version,
+        created_by=owner,
+        attempt=2,
+        status=Generation.Status.QUEUED,
+    )
+    change = post_json(
+        client,
+        reverse("api_generation_review", args=[completed.id]),
+        {
+            "decision": "changes_requested",
+            "issue_tags": ["composition"],
+            "description": "",
+            "annotations": [],
+        },
+    )
+    assert change.status_code == 400
+    assert cluster.generations.count() == 2

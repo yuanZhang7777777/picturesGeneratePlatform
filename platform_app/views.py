@@ -1,8 +1,8 @@
 import json
 import mimetypes
 import zipfile
-from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryFile
 
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
@@ -20,6 +20,7 @@ from .models import Asset, AuditEvent, Batch, Generation, ResultAsset
 from .services import (
     confirm_generation,
     create_project,
+    generation_failure_message,
     merge_asset_into_cluster,
     move_asset_to_new_cluster,
     review_generation,
@@ -29,6 +30,9 @@ from .services import (
     safe_storage_path,
     serialize_project,
 )
+
+MAX_EXPORT_RESULT_BYTES = 25 * 1024 * 1024
+MAX_EXPORT_TOTAL_BYTES = 500 * 1024 * 1024
 
 
 def require_owner_or_admin(user, obj):
@@ -310,7 +314,7 @@ def api_batch_snapshot(request, batch_id):
                         "attempt": generation.attempt,
                         "status": generation.status,
                         "review_status": generation.review_status,
-                        "failure_reason": generation.failure_reason,
+                        "failure_reason": generation_failure_message(generation),
                         "result_count": generation.result_assets.count(),
                     }
                     for generation in cluster.generations.select_related("output_slot").order_by(
@@ -462,32 +466,38 @@ def api_project_export(request, batch_id):
     for generation in generations:
         latest.setdefault((generation.cluster_id, generation.output_slot_id), generation)
 
-    buffer = BytesIO()
-    file_count = 0
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for generation in latest.values():
-            if (
-                generation.status != Generation.Status.COMPLETED
-                or generation.review_status != Generation.ReviewStatus.ACCEPTED
-            ):
+    entries = []
+    total_size = 0
+    for generation in latest.values():
+        if (
+            generation.status != Generation.Status.COMPLETED
+            or generation.review_status != Generation.ReviewStatus.ACCEPTED
+        ):
+            continue
+        results = list(generation.result_assets.all())
+        for result in results:
+            try:
+                path = safe_storage_path(
+                    result.storage_path,
+                    (
+                        f"results/{generation.batch_id}/{generation.cluster_id}/"
+                        f"{generation.output_slot_id}/{generation.attempt}"
+                    ),
+                )
+            except ValueError:
                 continue
-            results = list(generation.result_assets.all())
-            for index, result in enumerate(results, 1):
-                try:
-                    path = safe_storage_path(
-                        result.storage_path,
-                        (
-                            f"results/{generation.batch_id}/{generation.cluster_id}/"
-                            f"{generation.output_slot_id}/{generation.attempt}"
-                        ),
-                    )
-                except ValueError:
-                    continue
-                suffix = Path(path.name).suffix.lower()
-                if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
-                    suffix = ".bin"
-                result_suffix = f"-result-{result.id}" if len(results) > 1 else ""
-                archive.write(
+            result_size = path.stat().st_size
+            if result_size > MAX_EXPORT_RESULT_BYTES:
+                return JsonResponse({"error": "An accepted result is too large to export"}, status=400)
+            total_size += result_size
+            if total_size > MAX_EXPORT_TOTAL_BYTES:
+                return JsonResponse({"error": "The requested export is too large"}, status=400)
+            suffix = Path(path.name).suffix.lower()
+            if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+                suffix = ".bin"
+            result_suffix = f"-result-{result.id}" if len(results) > 1 else ""
+            entries.append(
+                (
                     path,
                     (
                         f"project-{batch.id}/cluster-{generation.cluster_id}/"
@@ -495,17 +505,25 @@ def api_project_export(request, batch_id):
                         f"{result_suffix}{suffix}"
                     ),
                 )
-                file_count += 1
-    if not file_count:
+            )
+    if not entries:
         return JsonResponse({"error": "No accepted images are available to export"}, status=400)
 
+    temporary = TemporaryFile()
+    with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path, archive_name in entries:
+            archive.write(path, archive_name)
     AuditEvent.objects.create(
         actor=request.user,
         action="project.export",
         object_type="batch",
         object_id=str(batch.id),
-        metadata={"file_count": file_count},
+        metadata={"file_count": len(entries)},
     )
-    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
-    response["Content-Disposition"] = f'attachment; filename="project-{batch.id}.zip"'
-    return response
+    temporary.seek(0)
+    return FileResponse(
+        temporary,
+        as_attachment=True,
+        filename=f"project-{batch.id}.zip",
+        content_type="application/zip",
+    )

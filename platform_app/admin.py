@@ -8,6 +8,7 @@ from .models import (
     Cluster,
     ClusterAsset,
     CompetitorInsight,
+    DailyGenerationUsage,
     Generation,
     OutputSlot,
     OutputTemplate,
@@ -51,6 +52,18 @@ admin.site.register(RuleProfile)
 admin.site.register(Generation)
 admin.site.register(ResultAsset)
 admin.site.register(AuditEvent)
+
+
+@admin.register(DailyGenerationUsage)
+class DailyGenerationUsageAdmin(admin.ModelAdmin):
+    list_display = ("date", "scope", "user", "used")
+    readonly_fields = ("date", "scope", "user", "used")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class ReviewAnnotationInline(admin.TabularInline):
