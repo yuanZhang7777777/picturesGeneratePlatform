@@ -1,0 +1,31 @@
+import { useRef, type InputHTMLAttributes } from "react";
+import { DndContext, useDraggable, useDroppable, type DragEndEvent } from "@dnd-kit/core";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link, useParams } from "react-router-dom";
+
+import { ApiError, exportProject, mergeAsset, uploadAssets } from "../api";
+import { EmptyState, ErrorPanel, PageHeading, Shell } from "../layout";
+import { useProjectSnapshot } from "../queries";
+import type { ProductAsset, ProductSku } from "../types";
+
+const folderInputProps = { webkitdirectory: "" } as InputHTMLAttributes<HTMLInputElement>;
+
+export default function ProjectGrouping() {
+  const { projectId } = useParams();
+  const projectQuery = useProjectSnapshot(projectId);
+  const queryClient = useQueryClient();
+  const picker = useRef<HTMLInputElement>(null);
+  const upload = useMutation({ mutationFn: (files: File[]) => uploadAssets(projectId!, files), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["project", projectId] }); await queryClient.invalidateQueries({ queryKey: ["workspace"] }); } });
+  const merge = useMutation({ mutationFn: ({ sku, assetId }: { sku: ProductSku; assetId: string }) => { if (sku.version === undefined) throw new ApiError(409, "服务器项目快照缺少分组版本，无法安全合并。请刷新后重试。"); return mergeAsset(sku.id, assetId, sku.version); }, onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["project", projectId] }); await queryClient.invalidateQueries({ queryKey: ["workspace"] }); } });
+  const delivery = useMutation({ mutationFn: () => exportProject(projectId!), onSuccess: (bundle) => { const url = URL.createObjectURL(bundle); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `project-${projectId}.zip`; anchor.click(); URL.revokeObjectURL(url); } });
+  if (projectQuery.isLoading) return <Shell><PageHeading eyebrow="商品分组" title="正在读取项目…" /></Shell>;
+  if (projectQuery.isError || !projectQuery.data) return <Shell><PageHeading eyebrow="商品分组" title="项目不可用" /><ErrorPanel error={projectQuery.error ?? new Error("项目快照为空")} retry={() => void projectQuery.refetch()} /></Shell>;
+  const project = projectQuery.data;
+  const onFiles = (files: FileList | null) => { if (files?.length) upload.mutate(Array.from(files)); };
+  const onDragEnd = (event: DragEndEvent) => { if (!event.over) return; const target = project.skus.find((sku) => sku.id === String(event.over?.id)); if (target) merge.mutate({ sku: target, assetId: String(event.active.id) }); };
+  return <Shell><PageHeading eyebrow={`${project.platform} · ${project.market}`} title={project.name} action={<div className="flex flex-wrap gap-2"><button className="secondary-button" disabled={delivery.isPending} onClick={() => delivery.mutate()}>{delivery.isPending ? "正在准备…" : "导出可交付 ZIP"}</button>{project.skus[0] && <Link className="secondary-button" to={`/projects/${project.id}/studio/${project.skus[0].id}`}>进入商品创作台</Link>}</div>} /><section className="mb-7 rounded-2xl border border-indigo-100 bg-indigo-50 px-5 py-4 text-sm text-indigo-950"><strong>识别结果：</strong> {project.assets.filter((asset) => asset.kind === "image").length} 张图片，{project.skus.length} 个商品分组。拖动图片到目标商品卡，即可合并多角度参考图。</section><section className="surface mb-7 p-5"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><h2 className="font-semibold">上传商品素材</h2><p className="mt-1 text-sm text-slate-500">选择图片、TXT 或整个文件夹；上传结果先进入分组，不会自动生成。</p></div><div><input ref={picker} className="sr-only" aria-label="选择图片或文件夹" type="file" multiple {...folderInputProps} onChange={(event) => onFiles(event.target.files)} /><button className="primary-button" type="button" onClick={() => picker.current?.click()}>选择文件夹或图片</button></div></div></section>{upload.isError && <ErrorPanel error={upload.error} retry={() => picker.current?.click()} />}{merge.isError && <ErrorPanel error={merge.error} retry={() => void projectQuery.refetch()} />}{delivery.isError && <ErrorPanel error={delivery.error} retry={() => delivery.mutate()} />}<DndContext onDragEnd={onDragEnd}><section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{project.skus.map((sku) => <SkuCard key={sku.id} sku={sku} assets={project.assets.filter((asset) => sku.assetIds.includes(asset.id))} projectId={project.id} disabled={merge.isPending} />)}</section></DndContext>{!project.skus.length && <EmptyState title="还没有商品素材" description="上传图片后，每张图会自动成为一个商品分组。" />}</Shell>;
+}
+
+function SkuCard({ sku, assets, projectId, disabled }: { sku: ProductSku; assets: ProductAsset[]; projectId: string; disabled: boolean }) { const { setNodeRef, isOver } = useDroppable({ id: sku.id, disabled }); return <article ref={setNodeRef} className={`surface min-h-72 p-4 ${isOver ? "ring-2 ring-indigo-500" : ""}`}><div className="flex items-start justify-between gap-3"><div><p className="section-label">商品 / SKU</p><h2 className="mt-1 font-semibold text-slate-950">{sku.name}</h2></div><Link className="text-sm font-medium text-indigo-700" to={`/projects/${projectId}/studio/${sku.id}`}>编辑</Link></div><div className="mt-4 grid grid-cols-2 gap-3">{assets.map((asset) => <DraggableAsset key={asset.id} asset={asset} disabled={disabled} />)}</div><p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">拖入更多角度图作为参考</p></article>; }
+function DraggableAsset({ asset, disabled }: { asset: ProductAsset; disabled: boolean }) { const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: asset.id, disabled }); const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined; return <button ref={setNodeRef} style={style} {...listeners} {...attributes} className="overflow-hidden rounded-xl border border-slate-200 bg-white text-left shadow-sm"><AssetPreview asset={asset} /><span className="block truncate px-2 py-2 text-xs text-slate-600">{asset.name}</span></button>; }
+function AssetPreview({ asset }: { asset: ProductAsset }) { return asset.imageUrl ? <img className="aspect-square w-full object-cover" src={asset.imageUrl} alt={asset.name} /> : <div className="grid aspect-square place-items-center bg-slate-100 text-xs text-slate-400">{asset.kind === "txt" ? "TXT" : "待预览"}</div>; }

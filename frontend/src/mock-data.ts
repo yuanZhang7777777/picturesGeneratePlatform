@@ -6,7 +6,6 @@ const image = (name: string, color: string) =>
   )}`;
 
 export const developmentWorkspace: WorkspaceSnapshot = {
-  updatedAt: "刚刚",
   projects: [
     {
       id: "project-demo",
@@ -18,34 +17,36 @@ export const developmentWorkspace: WorkspaceSnapshot = {
       status: "running",
       updatedAt: "10 分钟前",
       assets: [
-        { id: "asset-lamp-main", name: "desk-lamp-main.png", imageUrl: image("桌面灯", "#dbeafe") },
-        { id: "asset-lamp-side", name: "desk-lamp-side.png", imageUrl: image("侧面图", "#e0f2fe") },
-        { id: "asset-chair-main", name: "chair-main.png", imageUrl: image("单椅", "#fef3c7") },
+        { id: "asset-lamp-main", name: "desk-lamp-main.png", kind: "image", imageUrl: image("桌面灯", "#dbeafe") },
+        { id: "asset-lamp-side", name: "desk-lamp-side.png", kind: "image", imageUrl: image("侧面图", "#e0f2fe") },
+        { id: "asset-chair-main", name: "chair-main.png", kind: "image", imageUrl: image("单椅", "#fef3c7") },
       ],
       skus: [
         {
           id: "sku-lamp",
           name: "桌面护眼灯",
+          version: 1,
           assetIds: ["asset-lamp-main", "asset-lamp-side"],
           facts: "可调节灯臂，暖白双色光，USB-C 供电。",
           identityLock: "保持深蓝色灯头、金属细杆和底座比例，不增加按钮或文字。",
           brief: "明亮的极简书桌场景，展示深蓝色护眼灯，柔和晨光，商品结构与颜色保持一致。",
           outputs: [
-            { id: "output-lamp-main", name: "白底主图", slot: "主图", status: "completed", reviewStatus: "pending", version: 1, imageUrl: image("主图", "#eff6ff") },
-            { id: "output-lamp-scene", name: "书桌场景", slot: "场景图", status: "running", reviewStatus: "pending", version: 1, imageUrl: image("场景", "#ede9fe") },
-            { id: "output-lamp-detail", name: "灯头细节", slot: "细节图", status: "queued", reviewStatus: "pending", version: 1 },
+            { id: "output-lamp-main", name: "白底主图", slot: "主图", attempt: 1, status: "completed", reviewStatus: "pending", version: 1, imageUrl: image("主图", "#eff6ff") },
+            { id: "output-lamp-scene", name: "书桌场景", slot: "场景图", attempt: 1, status: "running", reviewStatus: "pending", version: 1, imageUrl: image("场景", "#ede9fe") },
+            { id: "output-lamp-detail", name: "灯头细节", slot: "细节图", attempt: 1, status: "queued", reviewStatus: "pending", version: 1 },
           ],
         },
         {
           id: "sku-chair",
           name: "北欧单椅",
+          version: 1,
           assetIds: ["asset-chair-main"],
           facts: "浅橡木椅脚，米白色软包坐垫。",
           identityLock: "保持椅脚数量、米白软包颜色和靠背弧度。",
           brief: "通透客厅场景中的北欧单椅，保留材质纹理和真实比例。",
           outputs: [
-            { id: "output-chair-main", name: "白底主图", slot: "主图", status: "completed", reviewStatus: "accepted", version: 1, imageUrl: image("主图", "#fff7ed") },
-            { id: "output-chair-scene", name: "客厅场景", slot: "场景图", status: "failed", reviewStatus: "pending", version: 1, failureReason: "场景服务暂时不可用" },
+            { id: "output-chair-main", name: "白底主图", slot: "主图", attempt: 1, status: "completed", reviewStatus: "accepted", version: 1, imageUrl: image("主图", "#fff7ed") },
+            { id: "output-chair-scene", name: "客厅场景", slot: "场景图", attempt: 1, status: "failed", reviewStatus: "pending", version: 1, failureReason: "场景服务暂时不可用" },
           ],
         },
       ],
