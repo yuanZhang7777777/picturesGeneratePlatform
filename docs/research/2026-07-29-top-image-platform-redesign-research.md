@@ -44,8 +44,8 @@
   <https://help.shopify.com/en/manual/ai-powered-tools/shopify-magic/media-generation>
 - APIMart GPT-Image-2：当前生图接口支持异步任务、比例/分辨率参数和最多 16 张参考图。
   <https://docs.apimart.ai/cn/api-reference/images/gpt-image-2/generation>
-- GPT-5 Nano：固定版本 `gpt-5-nano-2025-08-07` 支持图片输入、文本输出和结构化输出；本项目经 APIMart 将其限制为 Schema 化视觉观察，不承担生成或营销推理。该固定快照计划于 2026-12-11 退役，须提前完成替换回归。
-  <https://developers.openai.com/api/docs/models/gpt-5-nano>
+- APIMart OpenAI 多模态响应接口：`POST /v1/responses` 支持 `input_image`，用于图像理解；本项目以账户可用的 `gpt-5-nano-2025-08-07` 目标模型将其限制为 Schema 化视觉观察，不承担生成或营销推理。精确模型 ID、参数与响应封装必须由 APIMart 文档和账户契约测试确认。
+  <https://docs.apimart.ai/cn/api-reference/texts/openai/responses>
 - Shopee 与 TikTok Shop 平台规则：主图比例、白底、清晰度、禁止水印/边框/无关文字、多角度图片等规则需要进入模板和审核。
   <https://seller.shopee.sg/edu/article/2449/upload-good-images>
   <https://seller.shopee.sg/edu/article/17318/product-images-3-4-ratio>
