@@ -2,7 +2,7 @@
 
 最后更新：2026-07-30
 维护者：主 Agent
-状态：原双速版本已在预览环境完成真实 APIMart/OSS、1+8、人工审核和 ZIP smoke；Prompt OS v2、可用上传入口、官网规则包与 Shopee VN 特例已在本地实现并通过聚焦回归，尚待全量验证和重新部署。当前仍不是面向 100 名员工的正式 HTTPS 发布。
+状态：Prompt OS v2 P0 已以 Git `85c61dd` 部署到预览环境；真实 APIMart/OSS、1+8、人工审核、ZIP、完整 2.1.0 系统提示词、迁移、seed 与五服务健康 smoke 已通过。当前仍不是面向 100 名员工的正式 HTTPS 发布。
 
 ## 当前目标
 
@@ -28,10 +28,10 @@
 | C0-03 | 主 Agent | 建立主 Agent 项目治理 | 产品方向 | 角色、交接和签核规则 | `CLAUDE.md`、本控制板 | 规则与软链核对 | 已完成 | 无 |
 | C0-04 | 主 Agent | 确认前端技术栈 | 交互/性能目标 | React + TypeScript + Vite、TanStack Query、dnd-kit 与同源 Django API | 前端架构文档 | 架构审阅 | 已完成 | 无 |
 | C0-05 | 主 Agent | 收口精简需求边界 | 已填写 A–N 与双速流程决定 | 唯一边界、最终设计、实施计划和 `/goal` 任务书 | 需求、设计、计划、控制板 | 编号/矛盾/范围/命令自检 | 已完成 | 无 |
-| P0-01 | 产品与 Prompt OS | Prompt OS v2 九节点、事实与身份锁 | 九节点规格、官网规则包 | N1 逐图观察、N2–N6 分析/编译、N7 确定性闸门、N8 修改导演、N9 失败简化；完整 2.1.0 核心提示词通过实际 system/视觉指令发送；推断台账和不可变快照 | `platform_app/services.py`、节点规格、测试 | 后端全量 192 passed；Django check、迁移漂移和 diff check passed | 本地完成，待部署 | 真实商品质量基准仍待执行 |
-| P0-02 | 前端体验 | 可用上传入口、推断台账和结构化 Prompt 编辑 | React 工作台与 Prompt OS v2 API | 图片/文件夹/拖拽、失败项重传、事实/推断/规则阻断展示、结构化 Prompt 保存 | `frontend/src/**` | `npm --prefix frontend test -- --run` 45 passed；`npm --prefix frontend run build` passed | 本地完成，待部署 | 浏览器真实文件夹上传 smoke 待执行 |
-| P0-03 | 后端平台 | 商品准备、9 图生成、修订与选择式导出 | Prompt OS v2 与商品资料接口 | 分文件上传结果、结构化 PromptVersion、白底门禁、Shopee VN 原图直通、人工审核后导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | 后端全量 192 passed；Shopee VN 调度与 N9 回归 passed | 本地完成，待部署 | 真实 ERP 员工账号成功登录/SKU 导入 smoke 待验收 |
-| P0-04 | 平台规则/合规 | 官网主规则包与已验证站点覆盖 | Shopee/TikTok 官方来源 | Shopee/TikTok 官网主规则 fallback；Shopee VN、TW Mall、TikTok US 覆盖；全局内部基线 | seed 命令、规则登记册、测试 | `tests/test_template_seed.py` 与规则闸门回归 | 本地完成，待部署 | TikTok US 官方禁止数字渲染，合规模式必须阻断 AI 出图 |
+| P0-01 | 产品与 Prompt OS | Prompt OS v2 九节点、事实与身份锁 | 九节点规格、官网规则包 | N1 逐图观察、N2–N6 分析/编译、N7 确定性闸门、N8 修改导演、N9 失败简化；完整 2.1.0 核心提示词通过实际 system/视觉指令发送；推断台账和不可变快照 | `platform_app/services.py`、节点规格、测试 | 后端全量 192 passed；线上 DeepSeek 完整 system smoke passed | 已部署 | 六类 54 图真实商品质量基准仍待执行 |
+| P0-02 | 前端体验 | 可用上传入口、推断台账和结构化 Prompt 编辑 | React 工作台与 Prompt OS v2 API | 图片/文件夹/拖拽、失败项重传、事实/推断/规则阻断展示、结构化 Prompt 保存 | `frontend/src/**` | 前端 45 passed、Vite build passed；线上上传控件静态读回 passed | 已部署 | 浏览器真实文件夹上传 smoke 待执行 |
+| P0-03 | 后端平台 | 商品准备、9 图生成、修订与选择式导出 | Prompt OS v2 与商品资料接口 | 分文件上传结果、结构化 PromptVersion、白底门禁、Shopee VN 原图直通、人工审核后导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | 后端 192 passed；迁移 0011、seed、五服务和 health passed | 已部署 | 真实 ERP 员工账号成功登录/SKU 导入 smoke 待验收 |
+| P0-04 | 平台规则/合规 | 官网主规则包与已验证站点覆盖 | Shopee/TikTok 官方来源 | Shopee/TikTok 官网主规则 fallback；Shopee VN、TW Mall、TikTok US 覆盖；全局内部基线 | seed 命令、规则登记册、测试 | 模板/规则回归 passed；线上 9 个 2.1.0 Prompt 模板发布 | 已部署 | TikTok US 官方禁止数字渲染，合规模式必须阻断 AI 出图 |
 | P0-05 | QA/发布 | 真实预览发布门禁与运维收口 | Compose、Caddy、现有测试 | 同源静态部署、运行手册、验证证据；APIMart smoke 命令只输出节点状态、耗时和哈希，假 key 非零且不泄漏 | `platform_app/management/commands/smoke_apimart_nodes.py`、`docs/runbook.md`、`PROGRESS.md`、`BLOCKED.md` | 远端 Compose config/build/up/seed/health passed；HTTP/DOM smoke passed；日志无密钥明文 | 已完成（预览已部署） | HTTP 临时入口仍非正式 HTTPS 发布 |
 | P0-06 | 主 Agent + 平台/QA | APIMart 真实契约与费用门禁 | APIMart 中文文档、公开测试图、精确目标模型 | 三模型的真实包络适配、结构化输出、异步任务恢复与质量基准证据 | 视觉/Prompt/图像适配器、测试、运行文档 | 服务器 DeepSeek、GPT-5 Nano、GPT Image 2 三节点 smoke passed；真实 1+8 付费 smoke 9/9 completed；ZIP 仅审核通过版本 exported | 已完成（低并发） | 动态公平并发与 500 上限仍需分级压测 |
 

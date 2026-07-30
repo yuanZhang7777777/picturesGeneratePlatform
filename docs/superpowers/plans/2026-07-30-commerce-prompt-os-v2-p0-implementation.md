@@ -8,7 +8,7 @@
 2. Prompt 生产改为可追踪的九节点 Prompt OS v2，最终指令不得覆盖身份锁、事实和平台规则。
 3. 平台规则按平台、市场、店铺类型、类目、槽位和版本保存官方证据；未核实规则不得宣称自动合规。
 
-实施状态（2026-07-30）：Tasks 1–4 已在本地代码和前端落地；后端全量 192 项、前端 45 项、Django check、迁移漂移检查、Vite build 和 diff check 已通过。浏览器真实上传、OSS/APIMart smoke 和服务器重新部署仍属于 Task 5。
+实施状态（2026-07-30）：Tasks 1–4 已落地，Git `85c61dd` 已部署到预览服务器；后端全量 192 项、前端 45 项、Django check、迁移漂移检查、Vite build 和 diff check 已通过。服务器迁移、seed、五服务、健康检查、登录页/React/上传控件静态读回及 DeepSeek 完整 system 消息 smoke 已通过。浏览器真实文件夹选择、真实 ERP 员工登录/SKU 导入和六类 54 图质量基准仍属于 Task 5。
 
 ## 已确认边界
 

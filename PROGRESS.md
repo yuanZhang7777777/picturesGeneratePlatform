@@ -67,3 +67,11 @@
 - Prompt templates: N1–N9 publish complete `2.1.0` core instructions; DeepSeek receives the complete node template as the system message. The retired `2.0.0` one-line summaries remain immutable for audit.
 - Verification: backend 192 passed, frontend 45 passed, Django check, SQLite migration drift check, Vite build, and `git diff --check` passed.
 - Remaining: browser real folder upload, remote OSS/APIMart smoke, deployment, real ERP employee login/SKU import, and the six-category 54-image quality benchmark.
+
+# Prompt OS v2 P0 preview deployment
+
+- Status: Git `85c61dd` deployed to `hermes-remote:/opt/independent-image-platform` on 2026-07-30 under `global.lock`.
+- Verification: migration 0011 applied; nine published Prompt OS `2.1.0` templates each exceed 300 characters; Web, PostgreSQL, Prompt Worker, Generation Worker and Caddy are running; health, login page, React shell and upload-control static readback passed.
+- Real prompt smoke: DeepSeek accepted the published N3 system instruction (`562` characters) and returned a non-empty response recorded only by SHA-256.
+- Backup: `/opt/independent-image-platform-backups/20260730_192014`; the deployment lock was released.
+- Remaining: browser real folder upload, real ERP employee login/SKU import, and six-category 54-image quality benchmark.
