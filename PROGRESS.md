@@ -1,4 +1,4 @@
-# SKU entry and eight-slot baseline
+# Historical SKU entry and eight-slot baseline
 
 - Status: completed backend slice on 2026-07-29; SKU import now creates private product cards, exposes an eight-slot plan and public preflight summary, and preserves historical templates and generation snapshots.
 - Contract: `POST /api/projects/<batch_id>/sku-import/` accepts `{"skus": ["..."]}` and returns per-request imported/failed counts. Catalog data is limited to SKU, product name, and picture; failures are recorded per SKU without exposing source URLs or provider data.
@@ -38,5 +38,5 @@
 
 - Status: completed frontend Task 5 on 2026-07-30. The React app now uses a unified project workspace at `/projects/:id` and project results at `/projects/:id/results`; `/review` is no longer routed.
 - Contract: upload and ERP SKU import both send explicit `mode: auto|organize`; project generation sends selected cluster IDs and slot orders 1–9; result export posts selected generation IDs; revise/regenerate use generation-scoped endpoints.
-- Remaining dependency: backend Tasks 2–4 must provide the new `/generate/`, `/regenerate/`, `/revise/`, and selected `/export/` contracts before full end-to-end smoke.
+- Remaining dependency: integration E2E/browser smoke must verify the backend `/generate/`, `/regenerate/`, `/revise/`, and selected `/export/` contracts with the new workspace.
 - Verification: `npm --prefix frontend test` passed with 41 tests; `npm --prefix frontend run build` passed on 2026-07-30.

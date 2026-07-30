@@ -116,11 +116,11 @@ curl -fsS http://127.0.0.1:18083/health/ready
 docker compose logs --tail=100 web generation-worker prompt-worker proxy
 ```
 
-`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。当前 Prompt Worker 是占位循环，因此它的存活不等同于异步 Prompt 功能已完成。
+`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认每次只领取一个待准备商品并写入 9 槽 Prompt。
 
 不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 尚未实现跨进程任务原子认领；并发 one-shot 调试可能在真实付费模式重复提交。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 
-前端工作台已切到双速项目工作区和项目结果页；后端正式生成、再生成、修订和选择式导出接口仍需 Tasks 2–4 对齐。双速手工验收路径为：登录测试账号 → 创建项目 → 上传两张 PNG → 分别验证自动模式与整理模式 → 拖拽合并 → 白底图完成后生成 8 张营销图 → 结果默认全选 → 圈选修改单张 → 下载本地 ZIP。成功结果无需 `accepted` 状态；导出必须使用员工明确选中的成功版本。
+前端工作台已切到双速项目工作区和项目结果页；后端已本地提供生成、再生成、修订和选择式导出接口。双速手工验收路径为：登录测试账号 → 创建项目 → 上传两张 PNG → 分别验证自动模式与整理模式 → 拖拽合并 → 白底图完成后生成 8 张营销图 → 结果默认全选 → 圈选修改单张 → 下载本地 ZIP。成功结果无需 `accepted` 状态；导出必须使用员工明确选中的成功版本。
 
 ## 管理员规则、模板与发布
 
