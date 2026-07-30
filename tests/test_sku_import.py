@@ -13,7 +13,17 @@ from django.urls import reverse
 from PIL import Image
 
 from platform_app.models import Asset, Batch, Cluster, Generation, OutputSlot, SkuImportItem
-from platform_app.services import CatalogClient, CatalogError, download_catalog_image, import_skus
+from platform_app.services import (
+    CatalogAuthExpired,
+    CatalogClient,
+    CatalogError,
+    ErpAuthClient,
+    ErpAuthError,
+    LocalStorage,
+    StorageError,
+    download_catalog_image,
+    import_skus,
+)
 
 
 pytestmark = pytest.mark.django_db
@@ -108,11 +118,14 @@ def test_sku_import_keeps_success_when_another_sku_fails_and_exposes_plan_snapsh
     user, batch = make_batch()
     monkeypatch.setattr(
         "platform_app.views.import_skus",
-        lambda target, skus: import_skus(
+        lambda target, skus, erp_token=None: import_skus(
             target, skus, catalog_client=FakeCatalogClient(), image_downloader=lambda url: (image_bytes(), "image/png")
         ),
     )
     client.force_login(user)
+    session = client.session
+    session["erp_access_token"] = "user-token"
+    session.save()
 
     response = client.post(
         reverse("api_sku_import", args=[batch.id]),
@@ -154,6 +167,105 @@ def test_sku_import_keeps_success_when_another_sku_fails_and_exposes_plan_snapsh
     assert snapshot["skuImports"] == [failed_item, imported_item]
     assert len(snapshot["templateSlots"]) == 8
     assert snapshot["preflight"]["generation_count"] == 8
+
+
+def test_sku_import_requires_erp_session_token(client):
+    user, batch = make_batch()
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_sku_import", args=[batch.id]),
+        data='{"skus": ["OK-1"]}',
+        content_type="application/json",
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "ERP login expired"
+    assert not SkuImportItem.objects.filter(batch=batch).exists()
+
+
+def test_sku_import_passes_session_token_to_catalog(client, monkeypatch):
+    user, batch = make_batch()
+    client.force_login(user)
+    session = client.session
+    session["erp_access_token"] = "user-token"
+    session.save()
+    captured = {}
+
+    def fake_import_skus(target, skus, *, erp_token=None):
+        captured["batch"] = target
+        captured["skus"] = skus
+        captured["token"] = erp_token
+        return {"imported": 0, "failed": 0, "items": []}
+
+    monkeypatch.setattr("platform_app.views.import_skus", fake_import_skus)
+
+    response = client.post(
+        reverse("api_sku_import", args=[batch.id]),
+        data='{"skus": ["OK-1"]}',
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert captured == {"batch": batch, "skus": ["OK-1"], "token": "user-token"}
+
+
+def test_sku_import_propagates_expired_erp_token_without_audit_rows(client, monkeypatch):
+    user, batch = make_batch()
+    client.force_login(user)
+    session = client.session
+    session["erp_access_token"] = "expired-token"
+    session.save()
+
+    def fake_import_skus(target, skus, *, erp_token=None):
+        raise CatalogAuthExpired("ERP login expired")
+
+    monkeypatch.setattr("platform_app.views.import_skus", fake_import_skus)
+
+    response = client.post(
+        reverse("api_sku_import", args=[batch.id]),
+        data='{"skus": ["OK-1"]}',
+        content_type="application/json",
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "ERP login expired"
+    assert not SkuImportItem.objects.filter(batch=batch).exists()
+
+
+def test_catalog_client_uses_supplied_erp_token_for_query(settings):
+    settings.CATALOG_QUERY_URL = "https://catalog.test/query"
+    session = FakeCatalogSession(
+        [
+            FakeCatalogResponse(
+                {
+                    "success": True,
+                    "data": [{"sku": "OK-1", "productName": "Travel mug", "pic": "https://8.8.8.8/mug.png"}],
+                }
+            )
+        ]
+    )
+    seen = {}
+    original_post = session.post
+
+    def recording_post(*args, **kwargs):
+        seen.update(kwargs)
+        return original_post(*args, **kwargs)
+
+    session.post = recording_post
+
+    products = CatalogClient(token="user-token", session=session).fetch_products(["OK-1"])
+
+    assert products["OK-1"]["productName"] == "Travel mug"
+    assert seen["headers"] == {"Authorization": "user-token"}
+
+
+def test_catalog_client_raises_auth_expired_for_unauthorized_query(settings):
+    settings.CATALOG_QUERY_URL = "https://catalog.test/query"
+    session = FakeCatalogSession([FakeCatalogResponse({}, status_code=401)])
+
+    with pytest.raises(CatalogAuthExpired):
+        CatalogClient(token="expired-token", session=session).fetch_products(["OK-1"])
 
 
 def test_sku_reimport_does_not_duplicate_cluster_or_image(tmp_path, settings):
@@ -261,6 +373,30 @@ def test_bad_image_does_not_stop_later_valid_sku(tmp_path, settings):
     assert SkuImportItem.objects.get(batch=batch, sku="BAD").status == SkuImportItem.Status.FAILED
 
 
+def test_storage_error_marks_current_sku_failed_without_asset(tmp_path, settings, monkeypatch):
+    settings.MEDIA_ROOT = tmp_path
+    settings.CATALOG_ALLOWED_IMAGE_HOSTS = ("8.8.8.8",)
+    _, batch = make_batch()
+
+    def fail_save(self, storage_path, data):
+        raise StorageError("boom")
+
+    monkeypatch.setattr(LocalStorage, "save", fail_save)
+
+    result = import_skus(
+        batch,
+        ["OK-1"],
+        catalog_client=FakeCatalogClient(),
+        image_downloader=lambda url: (image_bytes(), "image/png"),
+    )
+
+    assert {key: result[key] for key in ("imported", "failed")} == {"imported": 0, "failed": 1}
+    item = SkuImportItem.objects.get(batch=batch, sku="OK-1")
+    assert item.error_message == "Catalog image could not be archived"
+    assert result["items"][0]["errorCode"] == "archive_failed"
+    assert not Asset.objects.filter(batch=batch).exists()
+
+
 @pytest.mark.parametrize(
     "response, expected",
     [
@@ -301,6 +437,9 @@ def test_sku_import_requires_csrf_and_owner_permission(tmp_path, settings):
 
     assert client.post(reverse("api_sku_import", args=[batch.id]), data="{}", content_type="application/json").status_code == 403
     token = client.get(reverse("api_csrf")).json()["csrf_token"]
+    session = client.session
+    session["erp_access_token"] = "user-token"
+    session.save()
     assert client.post(
         reverse("api_sku_import", args=[batch.id]),
         data='{"skus": ["MISSING"]}',
@@ -527,15 +666,12 @@ def test_catalog_failure_is_audited_as_unavailable_without_leaking_details(
         {"success": True, "data": {"token": {"value": "secret"}}},
     ],
 )
-def test_catalog_client_rejects_invalid_login_envelopes(settings, payload):
-    settings.CATALOG_LOGIN_URL = "https://catalog.test/login"
-    settings.CATALOG_QUERY_URL = "https://catalog.test/query"
-    settings.CATALOG_USERNAME = "operator"
-    settings.CATALOG_PASSWORD = "secret"
-    catalog = CatalogClient(session=FakeCatalogSession([FakeCatalogResponse(payload)]))
+def test_erp_auth_client_rejects_invalid_login_envelopes(settings, payload):
+    settings.ERP_LOGIN_URL = "https://catalog.test/login"
+    auth = ErpAuthClient(session=FakeCatalogSession([FakeCatalogResponse(payload)]))
 
-    with pytest.raises(CatalogError):
-        catalog.fetch_products(["SKU-1"])
+    with pytest.raises(ErpAuthError):
+        auth.login("operator", "secret")
 
 
 @pytest.mark.parametrize(
@@ -549,16 +685,11 @@ def test_catalog_client_rejects_invalid_login_envelopes(settings, payload):
     ],
 )
 def test_catalog_client_rejects_invalid_query_envelopes(settings, payload):
-    settings.CATALOG_LOGIN_URL = "https://catalog.test/login"
     settings.CATALOG_QUERY_URL = "https://catalog.test/query"
-    settings.CATALOG_USERNAME = "operator"
-    settings.CATALOG_PASSWORD = "secret"
     catalog = CatalogClient(
+        token="runtime-token",
         session=FakeCatalogSession(
             [
-                FakeCatalogResponse(
-                    {"success": True, "data": {"accessToken": "runtime-token"}}
-                ),
                 FakeCatalogResponse(payload),
             ]
         )
@@ -572,17 +703,12 @@ def test_catalog_client_http_error_is_catalog_unavailable_for_import(
     tmp_path, settings
 ):
     settings.MEDIA_ROOT = tmp_path
-    settings.CATALOG_LOGIN_URL = "https://catalog.test/login"
     settings.CATALOG_QUERY_URL = "https://catalog.test/query"
-    settings.CATALOG_USERNAME = "operator"
-    settings.CATALOG_PASSWORD = "secret"
     _, batch = make_batch()
     catalog = CatalogClient(
+        token="runtime-token",
         session=FakeCatalogSession(
             [
-                FakeCatalogResponse(
-                    {"success": True, "data": {"accessToken": "runtime-token"}}
-                ),
                 FakeCatalogResponse({}, status_code=503),
             ]
         )
@@ -597,17 +723,12 @@ def test_catalog_client_explicit_success_with_empty_data_is_sku_not_found(
     tmp_path, settings
 ):
     settings.MEDIA_ROOT = tmp_path
-    settings.CATALOG_LOGIN_URL = "https://catalog.test/login"
     settings.CATALOG_QUERY_URL = "https://catalog.test/query"
-    settings.CATALOG_USERNAME = "operator"
-    settings.CATALOG_PASSWORD = "secret"
     _, batch = make_batch()
     catalog = CatalogClient(
+        token="runtime-token",
         session=FakeCatalogSession(
             [
-                FakeCatalogResponse(
-                    {"success": True, "data": {"accessToken": "runtime-token"}}
-                ),
                 FakeCatalogResponse({"success": True, "data": []}),
             ]
         )
@@ -623,17 +744,12 @@ def test_catalog_client_malformed_product_data_is_catalog_unavailable(
     tmp_path, settings, payload
 ):
     settings.MEDIA_ROOT = tmp_path
-    settings.CATALOG_LOGIN_URL = "https://catalog.test/login"
     settings.CATALOG_QUERY_URL = "https://catalog.test/query"
-    settings.CATALOG_USERNAME = "operator"
-    settings.CATALOG_PASSWORD = "secret"
     _, batch = make_batch()
     catalog = CatalogClient(
+        token="runtime-token",
         session=FakeCatalogSession(
             [
-                FakeCatalogResponse(
-                    {"success": True, "data": {"accessToken": "runtime-token"}}
-                ),
                 FakeCatalogResponse({"success": True, "data": payload}),
             ]
         )

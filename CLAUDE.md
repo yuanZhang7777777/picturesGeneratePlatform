@@ -19,6 +19,8 @@
 - Django 5.2 继续负责登录、权限、后台、API、数据库事务与任务引擎；运营工作台采用 React + TypeScript + Vite，详见 `docs/superpowers/specs/2026-07-29-react-frontend-architecture-design.md`。
 - 前端服务端状态使用 TanStack Query；拖拽分组使用 dnd-kit；局部 UI 状态优先 React 原生 state/context。首版不引入 Redux、Zustand、Next.js、Redis、消息队列或微服务。
 - 生产由 Caddy 同源托管前端静态资源并转发 Django API；保留 Django 的 session Cookie 和 CSRF 边界，不在浏览器存储认证 token。
+- 平台登录使用 ERP 校验并创建本地影子用户；SKU 导入必须使用当前登录用户服务端 session 中的 ERP Token，不得回退为平台固定商品资料账号。
+- 正式素材、SKU 拉取图、生成结果和导出 ZIP 写入私有 OSS 前缀；本地 `MEDIA_ROOT` 只用于开发和假模式回退。
 - 生成前必须走预检与人工确认；失败只重做失败项，旧版本不可覆盖。
 - 不论目标平台、市场或营销模板，套图第 1 槽始终是标准白底产品主图：完整、真实、无促销文字、无水印，且受商品身份锁约束；平台差异仅作用于后续槽位。同一批次、商品集群和模板的第 2–8 槽，只有第 1 槽技术完成后才能提交；主图失败或取消时后续槽位保持排队、不得调用供应商，直到白底图重做完成。
 - 平台规则、套图模板、Prompt 与参考图在生成时必须可追溯到快照；未验证的规则不得宣称合规。

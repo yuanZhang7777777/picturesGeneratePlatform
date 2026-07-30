@@ -4,7 +4,7 @@
 
 本项目面向公司内部运营人员，提供文件夹上传、商品图片分组、结构化 Brief、AI Prompt、异步生图、审核、失败项重做和历史版本保留。Django 负责登录、权限、任务和数据；`frontend/` 中的 React + TypeScript + Vite 工作台由 Caddy 同源提供静态文件，并由 Caddy 代理 Django API、认证、后台、健康检查和迁移期的 `/batches/` 页面。
 
-SKU 是一级后端入口：`POST /api/projects/{id}/sku-import/` 接受最多 50 条 SKU，服务端只读取商品名和产品图并归档私有副本；失败项逐条审计，不阻塞同批其他 SKU。商品资料服务凭据、图片源公网 IP 字面量白名单和图片限制见 [运行手册](docs/runbook.md)，真实目录服务的 Token 过期契约尚未在发布环境验证。
+SKU 是一级后端入口：`POST /api/projects/{id}/sku-import/` 接受最多 50 条 SKU，服务端使用当前登录用户的 ERP Token 查询商品名和产品图，并把图片归档到私有存储；失败项逐条审计，不阻塞同批其他 SKU。商品资料查询地址、图片源公网 IP 字面量白名单、ERP 登录和 OSS 配置见 [运行手册](docs/runbook.md)，真实目录服务的 Token 过期契约仍需在发布环境验证。
 
 核心任务模型：
 
@@ -29,9 +29,9 @@ SKU 是一级后端入口：`POST /api/projects/{id}/sku-import/` 接受最多 5
 - Compose 项目名：`independent-image-platform`。
 - 当前为 `APIMART_FAKE_MODE=1`，不会产生真实 APIMart 费用。
 - 已生成临时 `admin` 账号；密码保存在服务器 root-only 文件 `/opt/independent-image-platform/.admin_password`。
-- 聊天中出现过的 APIMart/OSS 密钥一律视为已暴露：即使曾获一次性测试授权，也不写入仓库、文档或生产环境；部署前必须轮换并写入服务器 `.env`。
+- APIMart、OSS 与 ERP 凭据只写入服务器 root-only `.env` 或 Secret；不进入仓库、文档、前端、数据库、日志、Prompt 或导出包。
 - 模型名称、端点、参数、响应和限流以 [APIMart 中文文档](https://docs.apimart.ai/cn) 与受限账户契约测试为准；不以模型原厂文档直接推断可接入性。
-- `APIMART_FAKE_MODE=1` 是唯一允许的默认预览模式。切换到真实付费调用、真实 OSS 或员工真实素材前，必须完成密钥轮换、供应商契约测试、HTTPS 和主 Agent 发布签核。
+- `APIMART_FAKE_MODE=1` 是唯一允许的默认预览模式。切换到真实付费调用、真实 OSS 或员工真实素材前，必须完成服务器 Secret 配置、供应商契约测试、HTTPS 和主 Agent 发布签核。
 - HTTP 的 IP:端口入口只允许测试账号与非敏感素材；正式入口不做来源 IP 白名单，但在域名 HTTPS 与账号安全就绪前，不得面向 100 名员工开放。
 
 ## 本地运行与静态验证

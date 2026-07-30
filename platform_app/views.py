@@ -1,12 +1,13 @@
 import json
 import mimetypes
+import uuid
 import zipfile
+from io import BytesIO
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryFile
 
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.views import LoginView
 from django.middleware.csrf import get_token
 from django.db import connection
@@ -15,12 +16,14 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.http import require_POST
 
-from .forms import BatchForm, FirstPasswordChangeForm
+from .forms import BatchForm, ERPAuthenticationForm, FirstPasswordChangeForm
 from .models import Asset, AuditEvent, Batch, Generation, ResultAsset
 from .services import (
+    CatalogAuthExpired,
     confirm_generation,
     create_project,
     generation_failure_message,
+    LocalStorage,
     import_skus,
     merge_asset_into_cluster,
     move_asset_to_new_cluster,
@@ -56,7 +59,11 @@ def password_change_required(view_func):
 
 class PlatformLoginView(LoginView):
     template_name = "platform_app/login.html"
-    authentication_form = AuthenticationForm
+    authentication_form = ERPAuthenticationForm
+
+    def form_valid(self, form):
+        self.request.session["erp_access_token"] = form.erp_token
+        return super().form_valid(form)
 
 
 @login_required
@@ -242,7 +249,11 @@ def api_sku_import(request, batch_id):
         payload = json.loads(request.body or "{}")
         if not isinstance(payload, dict):
             raise ValueError("request body must be an object")
-        return JsonResponse(import_skus(batch, payload.get("skus")))
+        erp_token = request.session.get("erp_access_token")
+        return JsonResponse(import_skus(batch, payload.get("skus"), erp_token=erp_token))
+    except CatalogAuthExpired as exc:
+        request.session.pop("erp_access_token", None)
+        return JsonResponse({"error": str(exc)}, status=401)
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
@@ -422,10 +433,11 @@ def api_asset_media(request, asset_id):
     asset = get_object_or_404(Asset.objects.select_related("batch"), id=asset_id)
     require_owner_or_admin(request.user, asset.batch)
     try:
-        path = safe_storage_path(asset.storage_path, f"originals/{asset.batch_id}")
-    except ValueError:
+        storage_path = safe_storage_path(asset.storage_path, f"originals/{asset.batch_id}")
+        data = LocalStorage().read(storage_path)
+    except (ValueError, FileNotFoundError):
         raise Http404()
-    return FileResponse(path.open("rb"), content_type=asset.content_type)
+    return FileResponse(BytesIO(data), content_type=asset.content_type)
 
 
 @login_required
@@ -443,17 +455,18 @@ def api_result_media(request, result_id):
     generation = result.generation
     require_owner_or_admin(request.user, generation.batch)
     try:
-        path = safe_storage_path(
+        storage_path = safe_storage_path(
             result.storage_path,
             (
                 f"results/{generation.batch_id}/{generation.cluster_id}/"
                 f"{generation.output_slot_id}/{generation.attempt}"
             ),
         )
-    except ValueError:
+        data = LocalStorage().read(storage_path)
+    except (ValueError, FileNotFoundError):
         raise Http404()
-    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return FileResponse(path.open("rb"), content_type=content_type)
+    content_type = mimetypes.guess_type(storage_path)[0] or "application/octet-stream"
+    return FileResponse(BytesIO(data), content_type=content_type)
 
 
 @login_required
@@ -512,6 +525,7 @@ def api_project_export(request, batch_id):
     for generation in generations:
         latest.setdefault((generation.cluster_id, generation.output_slot_id), generation)
 
+    storage = LocalStorage()
     entries = []
     total_size = 0
     for generation in latest.values():
@@ -523,28 +537,28 @@ def api_project_export(request, batch_id):
         results = list(generation.result_assets.all())
         for result in results:
             try:
-                path = safe_storage_path(
+                storage_path = safe_storage_path(
                     result.storage_path,
                     (
                         f"results/{generation.batch_id}/{generation.cluster_id}/"
                         f"{generation.output_slot_id}/{generation.attempt}"
                     ),
                 )
-            except ValueError:
+            except (ValueError, FileNotFoundError):
                 continue
-            result_size = path.stat().st_size
+            result_size = storage.size(storage_path)
             if result_size > MAX_EXPORT_RESULT_BYTES:
                 return JsonResponse({"error": "An accepted result is too large to export"}, status=400)
             total_size += result_size
             if total_size > MAX_EXPORT_TOTAL_BYTES:
                 return JsonResponse({"error": "The requested export is too large"}, status=400)
-            suffix = Path(path.name).suffix.lower()
+            suffix = Path(storage_path).suffix.lower()
             if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
                 suffix = ".bin"
             result_suffix = f"-result-{result.id}" if len(results) > 1 else ""
             entries.append(
                 (
-                    path,
+                    storage.read(storage_path),
                     (
                         f"project-{batch.id}/cluster-{generation.cluster_id}/"
                         f"slot-{generation.output_slot_id}/attempt-{generation.attempt}"
@@ -557,8 +571,12 @@ def api_project_export(request, batch_id):
 
     temporary = TemporaryFile()
     with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path, archive_name in entries:
-            archive.write(path, archive_name)
+        for data, archive_name in entries:
+            archive.writestr(archive_name, data)
+    temporary.seek(0)
+    export_data = temporary.read()
+    export_path = f"exports/{batch.id}/{uuid.uuid4().hex}.zip"
+    storage.save(export_path, export_data)
     AuditEvent.objects.create(
         actor=request.user,
         action="project.export",
@@ -566,9 +584,8 @@ def api_project_export(request, batch_id):
         object_id=str(batch.id),
         metadata={"file_count": len(entries)},
     )
-    temporary.seek(0)
     return FileResponse(
-        temporary,
+        BytesIO(export_data),
         as_attachment=True,
         filename=f"project-{batch.id}.zip",
         content_type="application/zip",

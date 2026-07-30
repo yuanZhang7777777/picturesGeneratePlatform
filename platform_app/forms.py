@@ -2,6 +2,32 @@ from django import forms
 from django.contrib.auth.forms import PasswordChangeForm
 
 from .models import Batch
+from .services import ErpAuthError, authenticate_erp_user
+
+
+class ERPAuthenticationForm(forms.Form):
+    username = forms.CharField(label="用户名")
+    password = forms.CharField(label="密码", strip=False, widget=forms.PasswordInput)
+
+    def __init__(self, request=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.request = request
+        self.user_cache = None
+        self.erp_token = ""
+
+    def clean(self):
+        cleaned = super().clean()
+        username = cleaned.get("username")
+        password = cleaned.get("password")
+        if username and password:
+            try:
+                self.user_cache, self.erp_token = authenticate_erp_user(username, password)
+            except ErpAuthError as exc:
+                raise forms.ValidationError("ERP username or password is incorrect") from exc
+        return cleaned
+
+    def get_user(self):
+        return self.user_cache
 
 
 class FirstPasswordChangeForm(PasswordChangeForm):

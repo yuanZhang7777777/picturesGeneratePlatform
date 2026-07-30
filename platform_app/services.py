@@ -6,11 +6,13 @@ import json
 import mimetypes
 import re
 import uuid
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from urllib.parse import urljoin, urlparse
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import DatabaseError, transaction
 from django.db.models import F, Max, Prefetch
 from django.urls import reverse
@@ -37,6 +39,7 @@ from .models import (
     RuleProfile,
     SkuImportItem,
 )
+from .storage import StorageError, get_object_storage, validate_storage_path
 from .template_policy import apply_standard_product_hero_policy
 
 
@@ -72,6 +75,14 @@ class CatalogError(Exception):
     pass
 
 
+class CatalogAuthExpired(CatalogError):
+    pass
+
+
+class ErpAuthError(Exception):
+    pass
+
+
 def _catalog_response_data(response, expected_type):
     try:
         response.raise_for_status()
@@ -91,6 +102,57 @@ def _catalog_response_data(response, expected_type):
     ):
         raise CatalogError("Catalog service returned an invalid response")
     return payload["data"]
+
+
+def _extract_token(data):
+    token = data.get("accessToken") or data.get("token")
+    if not isinstance(token, str) or not token.strip():
+        raise ValueError("missing token")
+    return token.strip()
+
+
+class ErpAuthClient:
+    def __init__(self, session=None, timeout=None):
+        self.session = session or requests.Session()
+        self.timeout = timeout or settings.CATALOG_TIMEOUT_SECONDS
+
+    def login(self, username, password):
+        if not settings.ERP_LOGIN_URL:
+            raise ErpAuthError("ERP login is not configured")
+        try:
+            response = self.session.post(
+                settings.ERP_LOGIN_URL,
+                json={"username": username, "password": password},
+                timeout=self.timeout,
+            )
+            data = _catalog_response_data(response, dict)
+            return _extract_token(data)
+        except (CatalogError, ValueError, requests.RequestException) as exc:
+            raise ErpAuthError("ERP login failed") from exc
+
+
+def authenticate_erp_user(username, password, *, client=None):
+    username = str(username or "").strip()
+    password = str(password or "")
+    if not username or not password:
+        raise ErpAuthError("ERP login failed")
+    token = (client or ErpAuthClient()).login(username, password)
+    admin_names = {name.strip().lower() for name in settings.PLATFORM_ADMIN_ERP_USERS if name.strip()}
+    role = get_user_model().Role.ADMIN if username.lower() in admin_names else get_user_model().Role.OPERATOR
+    user, _ = get_user_model().objects.get_or_create(username=username, defaults={"role": role})
+    changed = []
+    if user.role != role:
+        user.role = role
+        changed.append("role")
+    if user.must_change_password:
+        user.must_change_password = False
+        changed.append("must_change_password")
+    if user.has_usable_password():
+        user.set_unusable_password()
+        changed.append("password")
+    if changed:
+        user.save(update_fields=changed)
+    return user, token
 
 
 def _sanitize_provider_text(text):
@@ -118,10 +180,34 @@ def _raise_provider_error(response):
 
 class LocalStorage:
     def __init__(self, root=None):
-        self.root = Path(root or settings.MEDIA_ROOT)
+        self.backend = get_object_storage(root)
 
-    def path(self, storage_path):
-        return self.root / storage_path
+    @contextmanager
+    def reference_paths(self, storage_paths):
+        contexts = []
+        paths = []
+        try:
+            for storage_path in storage_paths:
+                context = self.backend.local_path(storage_path)
+                path = context.__enter__()
+                contexts.append(context)
+                paths.append(str(path))
+            yield paths
+        finally:
+            for context in reversed(contexts):
+                context.__exit__(None, None, None)
+
+    def read(self, storage_path):
+        return self.backend.read(storage_path)
+
+    def size(self, storage_path):
+        return self.backend.size(storage_path)
+
+    def save(self, storage_path, data):
+        self.backend.save(storage_path, data)
+
+    def delete(self, storage_path):
+        self.backend.delete(storage_path)
 
     def archive_result(self, generation, source_url, data):
         image_format, width, height = _inspect_image(data)
@@ -130,9 +216,7 @@ class LocalStorage:
             f"results/{generation.batch_id}/{generation.cluster_id}/"
             f"{generation.output_slot_id}/{generation.attempt}/{uuid.uuid4().hex}{suffix}"
         )
-        target = self.path(storage_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+        self.save(storage_path, data)
         return ResultAsset.objects.create(
             generation=generation,
             storage_path=storage_path,
@@ -259,33 +343,16 @@ class APIMartClient:
 class CatalogClient:
     """The catalog boundary; imported fields stay limited to SKU, name, and image URL."""
 
-    def __init__(self, session=None, timeout=None):
+    def __init__(self, token=None, session=None, timeout=None):
         self.session = session or requests.Session()
         self.timeout = timeout or settings.CATALOG_TIMEOUT_SECONDS
-        self._token = None
-
-    def _login(self):
-        if not all((settings.CATALOG_LOGIN_URL, settings.CATALOG_USERNAME, settings.CATALOG_PASSWORD)):
-            raise CatalogError("Catalog service is not configured")
-        try:
-            response = self.session.post(
-                settings.CATALOG_LOGIN_URL,
-                json={"username": settings.CATALOG_USERNAME, "password": settings.CATALOG_PASSWORD},
-                timeout=self.timeout,
-            )
-        except requests.RequestException as exc:
-            raise CatalogError("Catalog service is unavailable") from exc
-        data = _catalog_response_data(response, dict)
-        self._token = data.get("accessToken") or data.get("token")
-        if not isinstance(self._token, str) or not self._token.strip():
-            raise CatalogError("Catalog service rejected authentication")
-        self._token = self._token.strip()
+        self._token = str(token or "").strip()
 
     def fetch_products(self, skus):
+        if not self._token:
+            raise CatalogAuthExpired("ERP login expired")
         if not settings.CATALOG_QUERY_URL:
             raise CatalogError("Catalog service is not configured")
-        if self._token is None:
-            self._login()
         try:
             response = self.session.post(
                 settings.CATALOG_QUERY_URL,
@@ -295,6 +362,8 @@ class CatalogClient:
             )
         except requests.RequestException as exc:
             raise CatalogError("Catalog service is unavailable") from exc
+        if response.status_code in {401, 403}:
+            raise CatalogAuthExpired("ERP login expired")
         data = _catalog_response_data(response, list)
         requested_skus = set(skus)
         products = {}
@@ -393,16 +462,10 @@ def _bytes(content):
 def _store(batch, filename, data):
     suffix = Path(filename).suffix.lower()
     object_name = f"originals/{batch.id}/{uuid.uuid4().hex}{suffix}"
-    root = Path(settings.MEDIA_ROOT)
-    target = root / object_name
-    target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        target.write_bytes(data)
-    except OSError:
-        try:
-            target.unlink(missing_ok=True)
-        except OSError:
-            pass
+        LocalStorage().save(object_name, data)
+    except (OSError, StorageError):
+        LocalStorage().delete(object_name)
         raise
     return object_name
 
@@ -575,8 +638,8 @@ def _archive_catalog_image(batch, sku, image):
 
 def _remove_catalog_archive(storage_path):
     try:
-        (Path(settings.MEDIA_ROOT) / storage_path).unlink(missing_ok=True)
-    except OSError:
+        LocalStorage().delete(storage_path)
+    except (OSError, StorageError):
         pass
 
 
@@ -627,7 +690,7 @@ def _create_sku_import_item(batch, sku, product_name, status, *, cluster=None, e
     )
 
 
-def import_skus(batch, skus, *, catalog_client=None, image_downloader=None):
+def import_skus(batch, skus, *, erp_token=None, catalog_client=None, image_downloader=None):
     if not isinstance(skus, list):
         raise ValueError("skus must be an array")
     if len(skus) > settings.CATALOG_MAX_SKUS_PER_REQUEST:
@@ -638,7 +701,7 @@ def import_skus(batch, skus, *, catalog_client=None, image_downloader=None):
     if any(len(sku) > 120 for sku in clean_skus):
         raise ValueError("SKU is too long")
 
-    catalog_client = catalog_client or CatalogClient()
+    catalog_client = catalog_client or CatalogClient(token=erp_token)
     image_downloader = image_downloader or download_catalog_image
 
     with transaction.atomic():
@@ -660,6 +723,8 @@ def import_skus(batch, skus, *, catalog_client=None, image_downloader=None):
 
     try:
         products = catalog_client.fetch_products(clean_skus)
+    except CatalogAuthExpired:
+        raise
     except CatalogError:
         products = None
 
@@ -743,7 +808,7 @@ def import_skus(batch, skus, *, catalog_client=None, image_downloader=None):
                             SkuImportItem.Status.IMPORTED,
                             cluster=cluster,
                         )
-        except (OSError, DatabaseError):
+        except (OSError, DatabaseError, StorageError):
             if storage_path:
                 _remove_catalog_archive(storage_path)
             with transaction.atomic():
@@ -1277,14 +1342,14 @@ def process_generation_once(client=None, storage=None):
                 queued._replace_prompt_version_for_policy(prompt_version, prompt_text)
         queued.status = Generation.Status.SUBMITTING
         queued.save(update_fields=["status", "updated_at"])
-        image_paths = [str(storage.path(path)) for path in queued.reference_snapshot]
         try:
-            task_id = client.submit_generation(
-                queued.prompt_text,
-                image_paths,
-                queued.size,
-                queued.resolution,
-            )
+            with storage.reference_paths(queued.reference_snapshot) as image_paths:
+                task_id = client.submit_generation(
+                    queued.prompt_text,
+                    image_paths,
+                    queued.size,
+                    queued.resolution,
+                )
         except SubmitUnknown as exc:
             queued.status = Generation.Status.SUBMIT_UNKNOWN
             queued.failure_reason = str(exc)
@@ -1699,26 +1764,18 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
 
 
 def safe_storage_path(storage_path, expected_prefix):
-    if (
-        not isinstance(storage_path, str)
-        or not storage_path
-        or "\\" in storage_path
-        or "\x00" in storage_path
-        or Path(storage_path).is_absolute()
-    ):
-        raise ValueError("Invalid storage path")
-    relative = PurePosixPath(storage_path)
-    prefix = PurePosixPath(expected_prefix)
-    if ".." in relative.parts or relative.parts[: len(prefix.parts)] != prefix.parts:
-        raise ValueError("Invalid storage path")
-    root = Path(settings.MEDIA_ROOT).resolve()
-    prefix_path = root / Path(*prefix.parts)
-    if prefix_path.resolve() != prefix_path:
-        raise ValueError("Invalid storage path")
-    target = (root / Path(*relative.parts)).resolve()
-    if not target.is_relative_to(prefix_path) or not target.is_file():
-        raise ValueError("Stored file is unavailable")
-    return target
+    storage_path = validate_storage_path(storage_path, expected_prefix)
+    if str(settings.STORAGE_BACKEND).lower() != "oss":
+        root = Path(settings.MEDIA_ROOT).resolve()
+        prefix = PurePosixPath(expected_prefix)
+        prefix_path = root / Path(*prefix.parts)
+        if prefix_path.exists() and prefix_path.resolve() != prefix_path:
+            raise ValueError("Invalid storage path")
+        target = (root / Path(*PurePosixPath(storage_path).parts)).resolve()
+        if not target.is_relative_to(prefix_path) or not target.is_file():
+            raise ValueError("Stored file is unavailable")
+    LocalStorage().size(storage_path)
+    return storage_path
 
 
 def _generation_status(status):
