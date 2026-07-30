@@ -496,6 +496,92 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
     assert [prompt.prompt_text for prompt in prompts] == [f"Prompt for slot {order}" for order in range(1, 10)]
 
 
+def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settings):
+    import json
+
+    from platform_app.management.commands.seed_platform_templates import GLOBAL_SLOTS
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Prompt repair", output_template=None)
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="c" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    template = OutputTemplate.objects.create(
+        seed_key="global-marketplace-nine-slot-template",
+        platform="global",
+        site="",
+        name="Nine slot",
+        version="2026.07.9",
+    )
+    for order, name, purpose in GLOBAL_SLOTS:
+        template.slots.create(order=order, name=name, purpose=purpose)
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class PromptClient:
+        def __init__(self):
+            self.repairs = []
+
+        def observe_images(self, instruction, image_paths):
+            return {
+                "output_text": json.dumps(
+                    {
+                        "product_name": "Storage box",
+                        "confidence": 0.9,
+                        "product_facts": ["blue box"],
+                        "identity_lock": "Keep blue box",
+                        "target_consumer": "adult",
+                    }
+                ),
+                "raw": {},
+            }
+
+        def optimize_prompt(self, payload):
+            if "Previous response:" in payload["text"]:
+                self.repairs.append(payload["text"])
+                return {
+                    "output_text": json.dumps(
+                        {
+                            "slots": [
+                                {"order": order, "prompt": f"Repaired prompt {order}"}
+                                for order in range(1, 10)
+                            ]
+                        }
+                    ),
+                    "raw": {},
+                }
+            return {
+                "output_text": json.dumps(
+                    [{"order": order, "prompt": f"Wrong top-level {order}"} for order in range(1, 10)]
+                ),
+                "raw": {},
+            }
+
+    client = PromptClient()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == "ready"
+    assert client.repairs
+    assert '"slots"' in client.repairs[0]
+    prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
+    assert [prompt.prompt_text for prompt in prompts] == [f"Repaired prompt {order}" for order in range(1, 10)]
+
+
 def test_prompt_worker_marks_only_current_cluster_failed_after_json_repair_fails(tmp_path, settings):
     from platform_app.models import Asset, Batch, Cluster, OutputSlot, OutputTemplate
     from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation

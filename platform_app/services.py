@@ -1265,6 +1265,47 @@ def _provider_json(response, repair):
         return _json_object(fixed.get("output_text", ""))
 
 
+def _json_repair_prompt(text, schema):
+    return "\n".join(
+        [
+            "Rewrite the previous model response as exactly one valid JSON object.",
+            "Return no markdown, no prose, no comments, and no code fences.",
+            schema,
+            "Previous response:",
+            str(text)[:6000],
+        ]
+    )
+
+
+def _repair_observation_json(client, text):
+    return client.optimize_prompt(
+        {
+            "text": _json_repair_prompt(
+                text,
+                (
+                    'Required schema: {"product_name":"string","confidence":0.0,'
+                    '"product_facts":["string"],"identity_lock":"string","target_consumer":"string"}.'
+                ),
+            )
+        }
+    )
+
+
+def _repair_slot_prompt_json(client, text, slots):
+    orders = ", ".join(str(slot.order) for slot in slots)
+    return client.optimize_prompt(
+        {
+            "text": _json_repair_prompt(
+                text,
+                (
+                    'Required schema: {"slots":[{"order":1,"prompt":"string"}]}. '
+                    f"Include exactly these slot orders once each: {orders}."
+                ),
+            )
+        }
+    )
+
+
 def _string_list(value):
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
@@ -1312,7 +1353,7 @@ def process_prompt_once(client=None, storage=None):
         with storage.reference_paths(references) as image_paths:
             observation = _provider_json(
                 client.observe_images("Return strict JSON describing this product.", image_paths),
-                lambda text: client.optimize_prompt({"text": text}),
+                lambda text: _repair_observation_json(client, text),
             )
         confidence = float(observation.get("confidence", 1))
         product_name = str(observation.get("product_name") or observation.get("name") or "").strip()
@@ -1348,12 +1389,17 @@ def process_prompt_once(client=None, storage=None):
                             f"Product name: {cluster.product_name}",
                             f"Facts: {cluster.product_facts}",
                             f"Identity lock: {cluster.identity_lock}",
-                            "Return JSON with slots: [{order, prompt}] for 1..9.",
+                            (
+                                'Return exactly one JSON object with schema '
+                                '{"slots":[{"order":1,"prompt":"string"}]}. '
+                                "Include one non-empty prompt for every slot order 1 through 9. "
+                                "Return no markdown or prose."
+                            ),
                         ]
                     )
                 }
             ),
-            lambda text: client.optimize_prompt({"text": text}),
+            lambda text: _repair_slot_prompt_json(client, text, slots),
         )
         prompts = _slot_prompt_map(prompt_payload)
         if any(slot.order not in prompts for slot in slots):
