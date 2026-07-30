@@ -2033,11 +2033,7 @@ def _create_followup_attempt(source, user, **overrides):
 def retry_failed_generation(generation, user):
     Batch.objects.select_for_update().get(id=generation.batch_id)
     Cluster.objects.select_for_update().get(id=generation.cluster_id)
-    locked = (
-        Generation.objects.select_for_update()
-        .select_related("batch", "cluster", "output_slot", "prompt_version")
-        .get(id=generation.id)
-    )
+    locked = Generation.objects.select_for_update().get(id=generation.id)
     if locked.status not in {Generation.Status.FAILED, Generation.Status.CANCELED}:
         raise ValueError("Only failed or canceled generations can be retried")
     retry = _create_followup_attempt(locked, user)
@@ -2121,11 +2117,7 @@ def _prompt_version_references(prompt_version):
 def review_generation(generation, reviewer, *, decision, issue_tags=None, description="", annotations=None):
     Batch.objects.select_for_update().get(id=generation.batch_id)
     Cluster.objects.select_for_update().get(id=generation.cluster_id)
-    locked = (
-        Generation.objects.select_for_update()
-        .select_related("prompt_version", "cluster", "output_slot", "batch")
-        .get(id=generation.id)
-    )
+    locked = Generation.objects.select_for_update().get(id=generation.id)
     if locked.status != Generation.Status.COMPLETED:
         raise ValueError("Only completed generations can be reviewed")
     if decision not in ReviewFeedback.Decision.values:
