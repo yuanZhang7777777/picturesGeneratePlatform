@@ -1557,8 +1557,8 @@ def _prompt_for_slot(cluster, slot):
 
 @transaction.atomic
 def ensure_cluster_generations(cluster, user, *, slot_orders=None, force_new=False):
-    locked = Cluster.objects.select_for_update().select_related("batch", "batch__output_template", "batch__rule_profile").get(id=cluster.id)
-    batch = locked.batch
+    locked = Cluster.objects.select_for_update().get(id=cluster.id)
+    batch = Batch.objects.select_for_update().get(id=locked.batch_id)
     template = batch.output_template or _global_fallback_template()
     if template.status != OutputTemplate.Status.PUBLISHED:
         raise ValueError("output template must be published before generation")
@@ -1664,7 +1664,7 @@ def regenerate_generation(source, user, prompt_version=None):
 
 @transaction.atomic
 def confirm_generation(batch, user, template=None):
-    locked_batch = Batch.objects.select_for_update().select_related("output_template", "rule_profile").get(id=batch.id)
+    locked_batch = Batch.objects.select_for_update().get(id=batch.id)
     existing = list(locked_batch.generations.order_by("created_at", "id"))
     if locked_batch.confirmed_generation_key and existing:
         return existing
