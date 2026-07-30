@@ -494,7 +494,7 @@ def test_media_guard_rejects_other_batch_prefix_and_prefix_symlink(client, tmp_p
     assert client.get(reverse("api_asset_media", args=[asset.id])).status_code == 404
 
 
-def test_completed_result_exports_without_review_gate_and_without_persisting_zip(client, tmp_path, settings, monkeypatch):
+def test_only_accepted_result_exports_without_persisting_zip(client, tmp_path, settings, monkeypatch):
     from platform_app.models import AuditEvent, Generation
     from platform_app import views
 
@@ -503,6 +503,13 @@ def test_completed_result_exports_without_review_gate_and_without_persisting_zip
     other = make_user("other")
     batch, cluster, slot, generation, _ = make_generation(owner, tmp_path)
     client.force_login(owner)
+
+    pending = post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []})
+    assert pending.status_code == 400
+    assert "approved" in pending.json()["error"].lower()
+
+    generation.review_status = Generation.ReviewStatus.ACCEPTED
+    generation.save(update_fields=["review_status"])
 
     def fail_save(*args, **kwargs):
         raise AssertionError("export ZIP must not be stored")
@@ -536,6 +543,8 @@ def test_export_defaults_to_latest_success_and_explicit_ids_can_select_old_succe
     owner = make_user("owner")
     batch, cluster, slot, first, _ = make_generation(owner, tmp_path, content=b"old")
     client.force_login(owner)
+    first.review_status = Generation.ReviewStatus.ACCEPTED
+    first.save(update_fields=["review_status"])
     second_prompt = PromptVersion.objects.create(
         cluster=cluster,
         created_by=owner,

@@ -592,9 +592,18 @@ def _selected_export_generations(batch, generation_ids):
     queryset = batch.generations.select_related("cluster", "output_slot").prefetch_related("result_assets")
     if generation_ids:
         requested = [uuid.UUID(str(value)) for value in generation_ids]
-        return list(queryset.filter(id__in=requested, status=Generation.Status.COMPLETED).order_by("cluster__name", "output_slot__order", "-attempt"))
+        return list(
+            queryset.filter(
+                id__in=requested,
+                status=Generation.Status.COMPLETED,
+                review_status=Generation.ReviewStatus.ACCEPTED,
+            ).order_by("cluster__name", "output_slot__order", "-attempt")
+        )
     latest = {}
-    for generation in queryset.filter(status=Generation.Status.COMPLETED).order_by(
+    for generation in queryset.filter(
+        status=Generation.Status.COMPLETED,
+        review_status=Generation.ReviewStatus.ACCEPTED,
+    ).order_by(
         "cluster_id", "output_slot_id", "-attempt", "-id"
     ):
         latest.setdefault((generation.cluster_id, generation.output_slot_id), generation)
@@ -666,7 +675,7 @@ def api_project_export(request, batch_id):
                 ]
             )
     if not entries:
-        return JsonResponse({"error": "No completed images are available to export"}, status=400)
+        return JsonResponse({"error": "No approved images are available to export"}, status=400)
 
     export_data = BytesIO()
     with zipfile.ZipFile(export_data, "w", zipfile.ZIP_DEFLATED) as archive:
