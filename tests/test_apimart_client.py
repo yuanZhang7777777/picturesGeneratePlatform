@@ -50,6 +50,20 @@ def test_submit_generation_posts_official_payload(tmp_path):
     assert kwargs["json"]["image_urls"][0].startswith("data:image/png;base64,")
 
 
+@override_settings(APIMART_API_KEY="secret-key", APIMART_BASE_URL="https://api.apimart.ai/v1")
+def test_submit_generation_accepts_versioned_base_url(tmp_path):
+    from platform_app.services import APIMartClient
+
+    image = tmp_path / "ref.png"
+    image.write_bytes(b"image-bytes")
+    session = Session([Response(200, {"code": 200, "data": [{"task_id": "task_1"}]})])
+    client = APIMartClient(session=session)
+
+    client.submit_generation("prompt", [str(image)], "1:1", "1k")
+
+    assert session.calls[0][1] == "https://api.apimart.ai/v1/images/generations"
+
+
 @override_settings(APIMART_API_KEY="secret-key", APIMART_BASE_URL="https://api.apimart.ai")
 def test_get_task_returns_data_object():
     from platform_app.services import APIMartClient

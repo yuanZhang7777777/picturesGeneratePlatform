@@ -269,6 +269,12 @@ class APIMartClient:
         except ValueError as exc:
             raise ProviderError("provider returned invalid JSON") from exc
 
+    def _url(self, path):
+        base = settings.APIMART_BASE_URL.rstrip("/")
+        if base.endswith("/v1") and path.startswith("/v1/"):
+            path = path[3:]
+        return f"{base}{path}"
+
     def submit_generation(self, prompt, image_paths, size, resolution):
         payload = {
             "model": "gpt-image-2",
@@ -283,7 +289,7 @@ class APIMartClient:
 
         try:
             response = self.session.post(
-                f"{settings.APIMART_BASE_URL}/v1/images/generations",
+                self._url("/v1/images/generations"),
                 json=payload,
                 headers=self.headers,
                 timeout=self.timeout,
@@ -302,7 +308,7 @@ class APIMartClient:
 
     def get_task(self, task_id):
         response = self.session.get(
-            f"{settings.APIMART_BASE_URL}/v1/tasks/{task_id}",
+            self._url(f"/v1/tasks/{task_id}"),
             headers=self.headers,
             params={"language": "zh"},
             timeout=self.timeout,
@@ -319,7 +325,7 @@ class APIMartClient:
     def optimize_prompt(self, payload):
         text = payload.get("text", "")
         response = self.session.post(
-            f"{settings.APIMART_BASE_URL}/v1/responses",
+            self._url("/v1/responses"),
             json={
                 "model": settings.APIMART_PROMPT_MODEL,
                 "input": [
