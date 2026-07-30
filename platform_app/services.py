@@ -1807,8 +1807,11 @@ def process_prompt_once(client=None, storage=None):
             for item in observations
             for fact in _string_list(item.get("product_facts") or item.get("facts"))
         ]
+        confirmed_product_name = cluster.product_name.strip()
+        if confirmed_product_name == "名称待确认":
+            confirmed_product_name = ""
         identity_input = {
-            "product_name": cluster.product_name or observed_name,
+            "product_name": confirmed_product_name or observed_name,
             "confirmed_points": _string_list(cluster.product_facts) or observed_facts,
             "relation_type": cluster.relation_type,
             "observations": observations,
@@ -1823,9 +1826,11 @@ def process_prompt_once(client=None, storage=None):
         node_snapshots.append(
             _node_snapshot("N2", settings.APIMART_PROMPT_MODEL, identity_input, identity)
         )
-        product_name = str(identity.get("product_name") or cluster.product_name or "").strip()
+        product_name = str(confirmed_product_name or identity.get("product_name") or "").strip()
         confidence = float(identity.get("confidence", 0)) / (100 if float(identity.get("confidence", 0)) > 1 else 1)
-        if identity.get("decision") != "continue" or confidence < 0.5 or not product_name:
+        if not confirmed_product_name and (
+            identity.get("decision") != "continue" or confidence < 0.5 or not product_name
+        ):
             analysis = {"observations": observations, "identity": identity, "prompt_os": node_snapshots}
             Cluster.objects.filter(id=cluster.id).update(
                 product_name=product_name or "名称待确认",

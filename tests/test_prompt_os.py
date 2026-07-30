@@ -456,7 +456,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
 
     class PromptClient(FakeAPIMartClient):
         def observe_images(self, instruction, image_paths):
-            assert image_paths and image_paths[0].endswith("source.png")
+            assert image_paths
             return {
                 "output_text": json.dumps(
                     {
@@ -486,6 +486,46 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
     assert [prompt.output_slot.order for prompt in prompts] == list(range(1, 10))
     assert all("Silicone cup" in prompt.prompt_text for prompt in prompts)
     assert all(prompt.evaluation["rule_gate"]["decision"] == "pass" for prompt in prompts)
+
+    confirmed_path = f"originals/{batch.id}/confirmed.png"
+    (tmp_path / confirmed_path).write_bytes(b"confirmed-bytes")
+    confirmed_asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="confirmed.png",
+        storage_path=confirmed_path,
+        sha256="d" * 64,
+        file_size=15,
+        content_type="image/png",
+    )
+    confirmed_cluster = Cluster.create_for_asset(batch, confirmed_asset)
+    confirmed_cluster.product_name = "Confirmed ceramic mug"
+    confirmed_cluster.save(update_fields=["product_name"])
+    request_cluster_preparation(confirmed_cluster, auto_generate=False)
+
+    class LowConfidenceClient(PromptClient):
+        def optimize_prompt(self, payload):
+            if "NODE N2" in payload["text"]:
+                return {
+                    "output_text": json.dumps(
+                        {
+                            "decision": "needs_confirmation",
+                            "confidence": 0.1,
+                            "product_name": "Uncertain object",
+                            "product_profile": {},
+                            "identity_lock": {},
+                            "primary_asset_id": str(confirmed_asset.id),
+                            "supporting_asset_ids": [],
+                        }
+                    ),
+                    "raw": {},
+                }
+            return super().optimize_prompt(payload)
+
+    assert process_prompt_once(LowConfidenceClient(), LocalStorage(tmp_path)) == 1
+    confirmed_cluster.refresh_from_db()
+    assert confirmed_cluster.preparation_status == "ready", confirmed_cluster.preparation_error
+    assert confirmed_cluster.product_name == "Confirmed ceramic mug"
 
 
 def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settings):
