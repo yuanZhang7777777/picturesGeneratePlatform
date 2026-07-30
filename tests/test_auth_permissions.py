@@ -31,6 +31,16 @@ def test_anonymous_user_is_redirected_to_login(client):
     assert response["Location"].startswith(reverse("login"))
 
 
+def test_login_page_explains_erp_shadow_account(client):
+    response = client.get(reverse("login"))
+
+    content = response.content.decode()
+    assert response.status_code == 200
+    assert "ERP 账号登录" in content
+    assert "首次 ERP 登录成功会自动创建平台账号" in content
+    assert "登录 ERP 并进入平台" in content
+
+
 def test_first_login_user_must_change_password_before_batch_list(client):
     user = make_user("first-login", must_change_password=True)
     client.force_login(user)

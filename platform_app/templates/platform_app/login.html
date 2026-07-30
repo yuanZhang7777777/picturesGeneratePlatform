@@ -1,12 +1,180 @@
 {% extends "platform_app/base.html" %}
-{% block title %}登录{% endblock %}
+{% block title %}ERP 登录 - 批量出图平台{% endblock %}
+{% block head %}
+<style>
+  main { max-width: none; padding: 0; }
+  .login-page {
+    min-height: calc(100vh - 52px);
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(420px, .95fr);
+    background:
+      radial-gradient(circle at 18% 20%, rgba(79, 70, 229, .20), transparent 28%),
+      radial-gradient(circle at 82% 10%, rgba(14, 165, 233, .16), transparent 26%),
+      linear-gradient(135deg, #f8fafc 0%, #eef2ff 52%, #f8fafc 100%);
+  }
+  .login-hero {
+    padding: 72px clamp(32px, 6vw, 96px);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .login-eyebrow {
+    width: max-content;
+    padding: 8px 12px;
+    border: 1px solid rgba(79, 70, 229, .16);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .72);
+    color: #4338ca;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .login-hero h1 {
+    margin: 22px 0 0;
+    max-width: 640px;
+    color: #0f172a;
+    font-size: clamp(44px, 6vw, 72px);
+    line-height: .98;
+    letter-spacing: -0.06em;
+  }
+  .login-hero p {
+    margin: 22px 0 0;
+    max-width: 560px;
+    color: #475569;
+    font-size: 18px;
+    line-height: 1.8;
+  }
+  .login-points {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 34px;
+    max-width: 680px;
+  }
+  .login-point {
+    padding: 16px;
+    border: 1px solid rgba(148, 163, 184, .28);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, .68);
+    box-shadow: 0 20px 45px rgba(15, 23, 42, .06);
+  }
+  .login-point strong { display: block; color: #0f172a; font-size: 15px; }
+  .login-point span { display: block; margin-top: 6px; color: #64748b; font-size: 13px; line-height: 1.5; }
+  .login-side {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+  }
+  .login-card {
+    width: min(100%, 460px);
+    border: 1px solid rgba(148, 163, 184, .25);
+    border-radius: 30px;
+    background: rgba(255, 255, 255, .88);
+    box-shadow: 0 28px 80px rgba(15, 23, 42, .14);
+    backdrop-filter: blur(16px);
+    padding: 34px;
+  }
+  .login-card h2 { margin: 0; color: #0f172a; font-size: 30px; letter-spacing: -.04em; }
+  .login-card .muted { margin: 10px 0 28px; line-height: 1.7; }
+  .form-field { margin-top: 18px; }
+  .form-field label { display: block; margin-bottom: 8px; color: #334155; font-size: 14px; font-weight: 700; }
+  .login-card input {
+    min-height: 48px;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+    background: white;
+    padding: 0 14px;
+    font-size: 15px;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .login-card input:focus {
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 4px rgba(79, 70, 229, .14);
+    outline: none;
+  }
+  .login-submit {
+    width: 100%;
+    min-height: 50px;
+    justify-content: center;
+    margin-top: 24px;
+    border: 0;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #111827, #4338ca);
+    font-size: 16px;
+    font-weight: 800;
+  }
+  .login-note {
+    margin: 18px 0 0;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .errorlist {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: #dc2626;
+    font-size: 13px;
+  }
+  .login-errors {
+    margin-bottom: 18px;
+    padding: 12px 14px;
+    border: 1px solid #fecaca;
+    border-radius: 14px;
+    background: #fef2f2;
+  }
+  @media (max-width: 900px) {
+    .login-page { grid-template-columns: 1fr; }
+    .login-hero { padding: 40px 24px 0; }
+    .login-points { grid-template-columns: 1fr; }
+    .login-side { padding: 24px; }
+  }
+</style>
+{% endblock %}
 {% block content %}
-<section class="panel" style="max-width: 420px;">
-  <h1>登录</h1>
-  <form method="post">
-    {% csrf_token %}
-    {{ form.as_p }}
-    <button type="submit">登录</button>
-  </form>
+<section class="login-page">
+  <div class="login-hero">
+    <div class="login-eyebrow">内部 AI 商品图生产系统</div>
+    <h1>批量出图，从 ERP 账号开始。</h1>
+    <p>使用员工自己的 ERP 账号登录。首次 ERP 登录成功会自动创建平台账号，后续 SKU 查询也会沿用当前登录人的 ERP 权限。</p>
+    <div class="login-points" aria-label="平台能力">
+      <div class="login-point">
+        <strong>ERP 直登</strong>
+        <span>不单独分发平台密码</span>
+      </div>
+      <div class="login-point">
+        <strong>自动建号</strong>
+        <span>首次通过后建立本地权限归属</span>
+      </div>
+      <div class="login-point">
+        <strong>1+8 出图</strong>
+        <span>白底图先行，审核通过后导出</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="login-side">
+    <section class="login-card" aria-labelledby="login-title">
+      <h2 id="login-title">ERP 账号登录</h2>
+      <p class="muted">输入 ERP 用户名和密码。平台不保存 ERP 密码，只保存本次服务端会话。</p>
+      <form method="post">
+        {% csrf_token %}
+        {% if form.non_field_errors %}
+          <div class="login-errors" role="alert">{{ form.non_field_errors }}</div>
+        {% endif %}
+        <div class="form-field">
+          {{ form.username.label_tag }}
+          {{ form.username }}
+          {{ form.username.errors }}
+        </div>
+        <div class="form-field">
+          {{ form.password.label_tag }}
+          {{ form.password }}
+          {{ form.password.errors }}
+        </div>
+        <button class="login-submit" type="submit">登录 ERP 并进入平台</button>
+      </form>
+      <p class="login-note">首次 ERP 登录成功会自动创建平台账号；管理员权限由服务器白名单控制。</p>
+    </section>
+  </div>
 </section>
 {% endblock %}
