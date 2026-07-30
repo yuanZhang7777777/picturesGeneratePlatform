@@ -2780,9 +2780,33 @@ def update_cluster_content(cluster, user, payload):
             raise ValueError(", ".join(gate["hard_blocks"]))
         prepared_prompts.append((slot, prompt, input_snapshot, gate))
 
-    for field in ("product_name", "product_facts", "identity_lock", "prompt_override"):
+    content_changed = False
+    if "name" in payload or "product_name" in payload:
+        product_name = str(payload.get("product_name", payload.get("name")) or "").strip()
+        if len(product_name) > 200:
+            raise ValueError("product name cannot exceed 200 characters")
+        if locked.product_name != product_name or (product_name and locked.name != product_name):
+            locked.product_name = product_name
+            if product_name:
+                locked.name = product_name
+            content_changed = True
+    if "relation_type" in payload:
+        relation_type = str(payload["relation_type"] or "")
+        if relation_type not in Cluster.RelationType.values:
+            raise ValueError("invalid relation_type")
+        if locked.relation_type != relation_type:
+            locked.relation_type = relation_type
+            content_changed = True
+    for field in ("product_facts", "identity_lock", "prompt_override"):
         if field in payload:
-            setattr(locked, field, str(payload[field] or ""))
+            value = str(payload[field] or "")
+            if getattr(locked, field) != value:
+                setattr(locked, field, value)
+                content_changed = True
+    if content_changed and not prepared_prompts:
+        locked.preparation_status = Cluster.PreparationStatus.PENDING
+        locked.preparation_error = ""
+        locked.analysis_snapshot = {}
     for slot, prompt, input_snapshot, gate in prepared_prompts:
         PromptVersion.objects.create(
             cluster=locked,
@@ -2805,10 +2829,15 @@ def update_cluster_content(cluster, user, payload):
     locked.version += 1
     locked.save(
         update_fields=[
+            "name",
             "product_name",
             "product_facts",
             "identity_lock",
             "prompt_override",
+            "relation_type",
+            "preparation_status",
+            "preparation_error",
+            "analysis_snapshot",
             "version",
             "updated_at",
         ]

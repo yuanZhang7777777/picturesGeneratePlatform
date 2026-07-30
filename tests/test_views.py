@@ -318,6 +318,45 @@ def test_update_cluster_prompt_requires_current_version(client, tmp_path, settin
     assert all(item.structured_output["manual_edit"] is True for item in prompts)
 
 
+def test_update_cluster_accepts_editor_fields_and_requeues_blocked_preparation(client, tmp_path, settings):
+    from platform_app.models import Cluster, OutputSlot, OutputTemplate
+    from platform_app.services import create_batch, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Editor template")
+    OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = create_batch(user, "Batch 1")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    cluster = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png").clusters.get()
+    cluster.preparation_status = Cluster.PreparationStatus.BLOCKED
+    cluster.preparation_error = "product identity needs confirmation"
+    cluster.save(update_fields=["preparation_status", "preparation_error"])
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_update_cluster", args=[cluster.id]),
+        {
+            "expected_version": cluster.version,
+            "name": "绿色陶瓷马克杯",
+            "relation_type": "same_product",
+            "prompt_override": "自然日光家居风",
+            "prompts": [],
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    cluster.refresh_from_db()
+    assert cluster.name == "绿色陶瓷马克杯"
+    assert cluster.product_name == "绿色陶瓷马克杯"
+    assert cluster.relation_type == "same_product"
+    assert cluster.prompt_override == "自然日光家居风"
+    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.preparation_error == ""
+
+
 def test_update_cluster_rejects_stringified_or_invalid_slot_prompts(client, tmp_path, settings):
     from platform_app.models import OutputSlot, OutputTemplate, PromptVersion
     from platform_app.services import create_batch, register_uploaded_asset
@@ -348,9 +387,19 @@ def test_update_cluster_rejects_stringified_or_invalid_slot_prompts(client, tmp_
         },
         content_type="application/json",
     )
+    invalid_relation = client.post(
+        reverse("api_update_cluster", args=[cluster.id]),
+        {
+            "expected_version": cluster.version,
+            "relation_type": "different_products",
+            "prompts": [],
+        },
+        content_type="application/json",
+    )
 
     assert stringified.status_code == 400
     assert unknown_slot.status_code == 400
+    assert invalid_relation.status_code == 400
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
 
 

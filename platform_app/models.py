@@ -226,6 +226,7 @@ class Asset(models.Model):
 class Cluster(models.Model):
     class RelationType(models.TextChoices):
         SINGLE_PRODUCT = "single_product", "Single product"
+        SAME_PRODUCT = "same_product", "Same product references"
         VARIANT_GROUP = "variant_group", "Variant group"
 
     class PreparationStatus(models.TextChoices):
