@@ -61,6 +61,7 @@ def test_dual_speed_domain_defaults_are_business_safe():
     )
 
     assert batch.last_import_mode == "organize"
+    assert batch.seller_tier == "general"
     assert cluster.relation_type == "single_product"
     assert cluster.preparation_status == "pending"
     assert cluster.preparation_error == ""

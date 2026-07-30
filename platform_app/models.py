@@ -108,6 +108,10 @@ class Batch(models.Model):
         AUTO = "auto", "Auto"
         ORGANIZE = "organize", "Organize"
 
+    class SellerTier(models.TextChoices):
+        GENERAL = "general", "General"
+        MALL = "mall", "Mall"
+
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
         UPLOADING = "uploading", "Uploading"
@@ -127,6 +131,11 @@ class Batch(models.Model):
     platform = models.CharField(max_length=40, default="shopee")
     site = models.CharField(max_length=40, default="SG")
     market = models.CharField(max_length=40, blank=True)
+    seller_tier = models.CharField(
+        max_length=20,
+        choices=SellerTier.choices,
+        default=SellerTier.GENERAL,
+    )
     output_template = models.ForeignKey(
         "OutputTemplate",
         on_delete=models.PROTECT,

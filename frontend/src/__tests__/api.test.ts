@@ -138,21 +138,51 @@ test("posts preflight with CSRF and discards quota fields returned by the server
   expect(fetchMock.mock.calls[1][1].headers.get("X-CSRFToken")).toBe("csrf-for-test");
 });
 
-test("posts a parallel relative_paths entry and explicit import mode for each selected upload", async () => {
+test("chunks uploads at 50 files and combines per-file results", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
-    .mockResolvedValueOnce(response(200, { asset_count: 1 }));
+    .mockResolvedValueOnce(response(200, {
+      asset_count: 49,
+      imported: Array.from({ length: 49 }, (_, index) => ({
+        filename: `image-${index}.png`,
+        asset_id: `asset-${index}`,
+        cluster_id: `cluster-${index}`,
+      })),
+      rejected: [{ filename: "image-49.png", code: "unsupported_format", message: "不支持" }],
+    }))
+    .mockResolvedValueOnce(response(200, {
+      asset_count: 1,
+      imported: [{ filename: "image-50.png", asset_id: "asset-50", cluster_id: "cluster-50" }],
+      rejected: [],
+    }));
   vi.stubGlobal("fetch", fetchMock);
-  const file = new File(["image"], "front.png", { type: "image/png" });
-  const secondFile = new File(["image"], "side.png", { type: "image/png" });
-  Object.defineProperty(file, "webkitRelativePath", { value: "lamp/angles/front.png" });
+  const files = Array.from({ length: 51 }, (_, index) => new File(["image"], `image-${index}.png`, { type: "image/png" }));
 
-  await uploadAssets("project-1", [file, secondFile], "organize");
+  const result = await uploadAssets("project-1", files, "organize");
+
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect((fetchMock.mock.calls[1][1].body as FormData).getAll("files")).toHaveLength(50);
+  expect((fetchMock.mock.calls[2][1].body as FormData).getAll("files")).toHaveLength(1);
+  expect(result.asset_count).toBe(50);
+  expect(result.imported).toHaveLength(50);
+  expect(result.rejected).toEqual([{ filename: "image-49.png", code: "unsupported_format", message: "不支持" }]);
+});
+
+test("posts browser relative paths and TXT files before images", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(200, { asset_count: 2, imported: [], rejected: [] }));
+  vi.stubGlobal("fetch", fetchMock);
+  const image = new File(["image"], "front.png", { type: "image/png" });
+  const txt = new File(["style"], "style.txt", { type: "text/plain" });
+  Object.defineProperty(image, "webkitRelativePath", { value: "lamp/angles/front.png" });
+  Object.defineProperty(txt, "webkitRelativePath", { value: "lamp/style.txt" });
+
+  await uploadAssets("project-1", [image, txt], "organize");
 
   const form = fetchMock.mock.calls[1][1].body as FormData;
   expect(form.get("mode")).toBe("organize");
-  expect((form.get("files") as File).name).toBe("lamp/angles/front.png");
-  expect(form.getAll("relative_paths")).toEqual(["lamp/angles/front.png", "side.png"]);
+  expect(form.getAll("relative_paths")).toEqual(["lamp/style.txt", "lamp/angles/front.png"]);
 });
 
 test("imports ERP SKUs with the chosen dual-speed mode", async () => {

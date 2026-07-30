@@ -2,7 +2,7 @@
 
 状态：MVP 已部署到 2 号云服务器预览环境，入口为该服务器 IP 的 `18083` 端口；2026-07-30 已完成真实 APIMart/OSS、1+8 付费出图、人工审核和本地 ZIP 导出 smoke。当前入口仍是测试预览，不是面向 100 名员工的正式 HTTPS 发布。
 
-本项目面向公司内部运营人员，提供“上传图片/文件夹”和“ERP SKU”两个并列入口。每次导入可选择“导入并自动出图”或“导入后整理”；两种模式共用图片识别、商品卡、AI Prompt、1 张白底图 + 8 张营销图、单张修改、历史版本和本地批量导出。Django 负责登录、权限、任务和数据；`frontend/` 中的 React + TypeScript + Vite 工作台由 Caddy 同源提供静态文件，并由 Caddy 代理 Django API、认证、后台、健康检查和旧 `/batches/` 链接重定向。
+本项目面向公司内部运营人员，提供“上传图片/文件夹”和“ERP SKU”两个并列入口。每次导入可选择“导入并自动出图”或“导入后整理”；两种模式共用逐图观察、身份归并、推断台账、营销策划、规则闸门、9 图生产、人工审核、单张修改、历史版本和本地批量导出。默认套图为 1 张白底图 + 8 张营销图；Shopee VN 普通店为真实原图 + 白底图 + 7 张营销图。Django 负责登录、权限、任务和数据；`frontend/` 中的 React + TypeScript + Vite 工作台由 Caddy 同源提供静态文件，并由 Caddy 代理 Django API、认证、后台、健康检查和旧 `/batches/` 链接重定向。
 
 ERP SKU 是两个一级入口之一：`POST /api/projects/{id}/sku-import/` 接受最多 50 条 SKU，服务端使用当前登录用户的 ERP Token 查询商品名和产品图，并把图片归档到私有存储；失败项逐条记录，不阻塞同批其他 SKU。商品资料查询地址、图片源公网 IP 字面量白名单、ERP 登录和 OSS 配置见 [运行手册](docs/runbook.md)，真实目录服务的 Token 过期契约仍需在发布环境验证。
 
@@ -55,8 +55,9 @@ React 开发模式与 Docker 预览是两条路径：前者运行 Django 与 `np
 ## 规则、模板与结果
 
 - 平台规则和套图模板只能由管理员在同源 `/admin/` 路径维护和发布，并记录官方来源、核对日期、适用平台/站点和版本。
-- 正式种子由独立 `template-seed` 任务处理：仅全局通用模板可作为 `published` 基线；Shopee/TikTok 规则和模板在官方规则完成核对、来源和版本写入前必须保持 `draft`，不能宣称自动合规。
-- 未发布或未核对的规则不能被宣称为自动合规。竞品图只能经批准的 `gpt-5-nano-2025-08-07` 视觉观察器形成抽象策略，不能作为生成参考图、商品事实、生产 Prompt、导出内容或上传至 `gpt-image-2`。
+- N1–N9 当前发布完整的 Prompt OS `2.1.0` 核心提示词；DeepSeek 节点通过真正的 `system` 消息接收，不使用一句职责摘要。`3500` 字符限制只作用于最终单图生成/修改 Prompt。
+- 正式种子包含全局 9 图模板、Shopee/TikTok 官网主规则包，以及已验证的 Shopee VN、Shopee TW Mall、TikTok US 覆盖规则。未配置国家复用对应平台官网主规则包并标记 fallback；未验证项不能被宣称为自动合规。
+- 竞品图只能经批准的 `gpt-5-nano-2025-08-07` 视觉观察器形成抽象策略，不能作为生成参考图、商品事实、生产 Prompt、导出内容或上传至 `gpt-image-2`。
 - 生成成功的最新版本默认进入待审核；只有人工审核通过的版本可导出。员工可以取消选择、选择历史已通过版本、圈选修改或主动再生成。失败重做和人工修改均保留旧版本。
 
 ## Worker 边界
@@ -69,7 +70,8 @@ React 开发模式与 Docker 预览是两条路径：前者运行 Django 与 `np
 
 - [精简需求边界确认表](docs/project/REQUIREMENTS-BOUNDARY-CONFIRMATION.md)
 - [双速 AI 商品出图平台最终设计](docs/superpowers/specs/2026-07-30-dual-speed-product-platform-design.md)
-- [双速平台实施计划](docs/superpowers/plans/2026-07-30-dual-speed-platform-implementation.md)
+- [Prompt OS v2 P0 实施计划](docs/superpowers/plans/2026-07-30-commerce-prompt-os-v2-p0-implementation.md)
+- [Prompt OS v2 九节点契约](docs/superpowers/specs/节点prompt设定初稿.md)
 - [主 Agent `/goal` 任务书](docs/project/LEADER-GOAL-DUAL-SPEED-PLATFORM.md)
 - [后端、安全与部署历史基线](docs/specs/2026-07-28-independent-image-platform-design.md)
 - [顶级 AI 商品出图平台调研与产品重设](docs/research/2026-07-29-top-image-platform-redesign-research.md)

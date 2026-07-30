@@ -57,7 +57,7 @@ def test_invalid_upload_is_rejected(tmp_path, settings):
     settings.MEDIA_ROOT = tmp_path
     batch = create_batch(make_user(), "Batch 1")
 
-    with pytest.raises(ValueError, match="JPEG, PNG, or UTF-8 TXT"):
+    with pytest.raises(ValueError, match="JPEG、PNG、WebP"):
         register_uploaded_asset(batch, "bad.exe", b"not an image", "application/octet-stream")
 
 

@@ -23,15 +23,16 @@
 - 平台登录使用 ERP 校验并创建本地影子用户；SKU 导入必须使用当前登录用户服务端 session 中的 ERP Token，不得回退为平台固定商品资料账号。
 - 正式素材、SKU 拉取图、生成结果和历史版本写入私有 OSS 前缀；导出 ZIP 临时生成并由浏览器下载到员工本地，不在服务器或 OSS 长期保留。
 - 自动模式在识别和 Prompt 成功后直接提交；整理模式由员工点击生成选中商品。失败只重做失败项，旧版本不可覆盖。
-- 不论目标平台、市场或营销模板，套图第 1 槽始终是标准白底产品主图：完整、真实、无促销文字、无水印，且受商品身份锁约束；平台差异仅作用于后续槽位。同一项目、商品分组和模板的第 2–9 槽，只有第 1 槽技术完成并归档后才能提交，并把白底结果加入我方商品参考图；主图失败或取消时后续槽位保持排队、不得调用供应商，直到白底图重做完成。
+- 默认模板第 1 槽是标准白底产品主图，完成归档后才提交第 2–9 槽。Shopee VN 普通店例外为“第 1 槽真实来源图直通、第 2 槽白底、第 3–9 槽营销图”；调度必须按白底槽位语义而非固定顺序识别门禁，并把白底结果加入后续生成参考。
 - 平台规则、套图模板、Prompt 与参考图在生成时必须可追溯到快照；未验证的规则不得宣称合规。
 
 ## Prompt OS 与结果边界
 
-- 生成指令只使用已确认的商品事实、身份锁、已发布模板和当前项目参考图；缺失信息必须显式提示，不能臆造。
+- 生成指令使用已确认事实、直接观察和显式披露的合理推断；每条推断必须保存置信度、风险、证据和允许用途。价格、认证、疗效、减重、美容前后对比、站外导流等高风险内容不得仅靠推断进入图片。
 - 竞品图只能通过已批准的 `gpt-5-nano-2025-08-07` 视觉观察器提炼为抽象的构图、节奏或风格策略；绝不进入生成参考图数组、`gpt-image-2`、`deepseek-v4-pro`、生产 Prompt、导出包或商品事实来源。
 - APIMart 中文文档与账户契约测试是模型 ID、端点、参数、响应、限流和计费的唯一接入依据；上游模型文档只作能力参考，发生冲突时以 APIMart 为准。
 - APIMart 当前契约：`deepseek-v4-pro` 文本节点走非流式 Chat Completions；`gpt-5-nano-2025-08-07` 视觉观察走 Responses，文本从 `output[].content[].text` 提取；`gpt-image-2` 生成前先 `/v1/uploads/images` 上传我方参考图，`image_urls` 使用 URL 字符串数组，不使用 base64 或 `{url: ...}` 对象数组。
+- N1–N9 的生产模板必须保留完整角色、输入边界、营销/事实规则和严格 JSON 约束；DeepSeek 节点通过实际 `system` 消息接收完整模板。不得用一句职责摘要替代；`3500` 字符上限只约束最终单图 Prompt。
 - Prompt Worker 负责商品视觉理解、结构化 Brief/Prompt 和 9 槽 PromptVersion；Generation Worker 负责异步生图、白底图先行、轮询和归档。
 - 输出图生成成功后必须人工审核通过才可导出；未审核或要求修改的图不得进入 ZIP。取消选择、技术失败重做、主动再生成和圈选修改都创建或选择明确版本，不覆盖历史。
 
@@ -41,13 +42,14 @@
 - 真实付费调用、真实 OSS、生产部署、账号策略或网络入口变更属于发布门禁，需主 Agent 明确签核。
 - Hermes 操作只使用 `ssh hermes-remote`；部署属于全局写操作，先声明操作并获取 `.codex_locks/global.lock`。
 - React 生产构建由 Caddy 同源提供静态资源，Caddy 只代理 Django 的 API、认证、后台、健康检查、迁移期 `/batches/` 和 Django 静态资源；浏览器不保存认证 token。
-- 正式规则/模板种子只能由独立 `template-seed` 任务提交：仅 global generic 可处于 `published` 基线，Shopee/TikTok 在官方规则、来源和版本获批前一律 `draft`，不得宣称自动合规。
+- 规则运行时装载平台官网主规则包，再叠加已验证的市场/店铺覆盖；没有站点覆盖时复用平台官网主规则包并标记 fallback。只有记录来源、版本和核对日期的规则可作为官方硬规则，未验证项不得宣称自动合规。
 
 ## 权威文档
 
 - 业务边界确认：`docs/project/REQUIREMENTS-BOUNDARY-CONFIRMATION.md`（A–N 已确认，是唯一产品边界）；`SYSTEM-BOUNDARY-CONFIRMATION.md` 只保留原始答题记录
 - 当前产品设计：`docs/superpowers/specs/2026-07-30-dual-speed-product-platform-design.md`
-- 当前实施计划：`docs/superpowers/plans/2026-07-30-dual-speed-platform-implementation.md`
+- 当前 P0 实施计划：`docs/superpowers/plans/2026-07-30-commerce-prompt-os-v2-p0-implementation.md`
+- Prompt OS v2 九节点契约：`docs/superpowers/specs/节点prompt设定初稿.md`
 - 主 Agent 任务书：`docs/project/LEADER-GOAL-DUAL-SPEED-PLATFORM.md`
 - 产品方向与调研：`docs/research/2026-07-29-top-image-platform-redesign-research.md`
 - Agent 协作与交付设计：`docs/superpowers/specs/2026-07-29-agent-orchestrated-delivery-design.md`

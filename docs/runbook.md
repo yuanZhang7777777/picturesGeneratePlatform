@@ -116,19 +116,19 @@ curl -fsS http://127.0.0.1:18083/health/ready
 docker compose logs --tail=100 web generation-worker prompt-worker proxy
 ```
 
-`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认每次只领取一个待准备商品并写入 9 槽 Prompt。
+`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认每次只领取一个待准备商品，保存 N1–N7 节点快照、推断台账和 9 槽 PromptVersion。
 
 不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 尚未实现跨进程任务原子认领；并发 one-shot 调试可能在真实付费模式重复提交。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 
-前端工作台已切到双速项目工作区和项目结果页；后端已提供生成、再生成、修订和选择式导出接口。双速手工验收路径为：登录测试账号 → 创建项目 → 上传两张 PNG → 分别验证自动模式与整理模式 → 拖拽合并 → 白底图完成后生成 8 张营销图 → 结果进入待审核 → 人工通过需要导出的版本 → 圈选修改单张或重做失败项 → 下载本地 ZIP。未审核通过的结果不得导出。
+前端工作台已切到双速项目工作区和项目结果页；后端已提供生成、再生成、修订和选择式导出接口。双速手工验收路径为：登录测试账号 → 创建项目 → 上传图片/文件夹或输入 ERP SKU → 分别验证自动模式与整理模式 → 拖拽合并 → 查看推断台账和 9 槽 Prompt → 白底图完成后生成营销图 → 结果进入待审核 → 人工通过需要导出的版本 → 圈选修改单张或重做失败项 → 下载本地 ZIP。Shopee VN 普通店还须验证槽位 1 为真实来源图直通、槽位 2 白底完成后才提交槽位 3–9。未审核通过的结果不得导出。
 
 ## 管理员规则、模板与发布
 
-管理员通过同源 `/admin/` 登录后维护平台规则、输出模板及槽位。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。正式种子不由本运维任务写入，而由独立 `template-seed` 任务提交：仅 global generic 模板可作为 `published` 基线；Shopee/TikTok 必须在官方规则发布前保持 `draft`。草稿或未核对规则不得被描述为自动合规。
+管理员通过同源 `/admin/` 登录后维护平台规则、输出模板、槽位和 N1–N9 Prompt 节点模板。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。`seed_platform_templates` 发布全局 9 图模板、Prompt OS v2 节点、Shopee/TikTok 官网主规则包，以及已有官方证据的站点覆盖；没有覆盖的国家复用对应平台官网主规则包并标记 fallback。草稿、未核对项或 fallback 不得被描述成该国家的完整自动合规。
 
-ERP 登录名在 `PLATFORM_ADMIN_ERP_USERS` 中的用户会成为平台管理员并可进入 Django admin；普通员工不应进入模型节点、队列/用量或模板规则配置页。非 global 的市场规则若要在 admin 发布，必须填写官方来源 URL、站点、核对日期和版本；Shopee/TikTok 未逐站核实前继续使用 global 1+8 九槽模板作为普通生成基线，不宣称自动合规。
+ERP 登录名在 `PLATFORM_ADMIN_ERP_USERS` 中的用户会成为平台管理员并可进入 Django admin；普通员工不应进入模型节点、队列/用量或模板规则配置页。非 global 的市场覆盖规则若要在 admin 发布，必须填写官方来源 URL、站点、核对日期和版本；未逐站核实的 Shopee/TikTok 国家继续使用对应平台官网主规则包和全局 1+8 模板，不宣称该国家完整自动合规。
 
-竞品图可经批准的 `gpt-5-nano-2025-08-07` 视觉观察器提炼为抽象构图或风格策略；不得作为商品参考图、事实来源、生产 Prompt、导出内容或传给 `gpt-image-2`。Prompt OS 只能把确认过的商品事实、身份锁、模板、我方参考图与受限 Style DNA 编译为生成指令。
+竞品图可经批准的 `gpt-5-nano-2025-08-07` 视觉观察器提炼为抽象构图或风格策略；不得作为商品参考图、事实来源、生产 Prompt、导出内容或传给 `gpt-image-2`。Prompt OS 可使用确认事实、直接观察和显式披露的合理推断；审核页必须显示推断的置信度、风险、证据和用途，高风险声明仍由规则闸门阻断。
 
 ## Hermes 预览与真实发布
 

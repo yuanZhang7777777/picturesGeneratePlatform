@@ -1,5 +1,5 @@
 import { developmentWorkspace } from "./mock-data";
-import type { ImportMode, PreflightResult, Project, ProjectInput, ReviewInput, RevisionInput, WorkspaceSnapshot } from "./types";
+import type { ClusterUpdateInput, ImportMode, PreflightResult, Project, ProjectInput, ReviewInput, RevisionInput, WorkspaceSnapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public authRequired = false) {
@@ -82,6 +82,16 @@ export function loadProject(projectId: string) {
   return jsonRequest<Project>(`/api/projects/${projectId}/snapshot/`);
 }
 
+export interface UploadResult {
+  asset_count: number;
+  imported: { filename: string; asset_id: string; cluster_id: string | null }[];
+  rejected: { filename: string; code: string; message: string }[];
+}
+
+export function uploadPath(file: File) {
+  return (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+}
+
 export async function createProject(input: ProjectInput): Promise<Project> {
   const payload = { ...input, market: input.market.trim().toUpperCase() };
   try {
@@ -100,16 +110,39 @@ export async function createProject(input: ProjectInput): Promise<Project> {
 }
 
 export async function uploadAssets(projectId: string, files: File[], mode: ImportMode = "organize") {
-  const body = new FormData();
-  body.append("mode", mode);
-  files.forEach((file) => {
-    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-    body.append("files", file, relativePath || file.name);
-    body.append("relative_paths", relativePath || file.name);
+  const sorted = [...files].sort((left, right) => {
+    const leftTxt = uploadPath(left).toLowerCase().endsWith(".txt");
+    const rightTxt = uploadPath(right).toLowerCase().endsWith(".txt");
+    return Number(rightTxt) - Number(leftTxt) || uploadPath(left).localeCompare(uploadPath(right));
   });
-  const headers = new Headers({ "X-CSRFToken": await csrfToken() });
-  const response = await fetch(`/api/projects/${projectId}/assets/`, { method: "POST", body, headers, credentials: "same-origin" });
-  return jsonFor<{ asset_count: number }>(response);
+  const txtCount = sorted.filter((file) => uploadPath(file).toLowerCase().endsWith(".txt")).length;
+  if (txtCount > 20 || sorted.length - txtCount > 100) {
+    throw new ApiError(400, "单次最多上传 100 张图片和 20 个 TXT");
+  }
+
+  const token = await csrfToken();
+  const result: UploadResult = { asset_count: 0, imported: [], rejected: [] };
+  for (let index = 0; index < sorted.length; index += 50) {
+    const body = new FormData();
+    body.append("mode", mode);
+    sorted.slice(index, index + 50).forEach((file) => {
+      const relativePath = uploadPath(file);
+      body.append("files", file, relativePath);
+      body.append("relative_paths", relativePath);
+    });
+    const headers = new Headers({ "X-CSRFToken": token });
+    const response = await fetch(`/api/projects/${projectId}/assets/`, {
+      method: "POST",
+      body,
+      headers,
+      credentials: "same-origin",
+    });
+    const chunk = await jsonFor<Partial<UploadResult>>(response);
+    result.asset_count += chunk.asset_count ?? 0;
+    result.imported.push(...(chunk.imported ?? []));
+    result.rejected.push(...(chunk.rejected ?? []));
+  }
+  return result;
 }
 
 export function importSkus(projectId: string, skus: string[], mode: ImportMode) {
@@ -119,7 +152,7 @@ export function importSkus(projectId: string, skus: string[], mode: ImportMode) 
   });
 }
 
-export function updateCluster(clusterId: string, expectedVersion: number, payload: Record<string, string>) {
+export function updateCluster(clusterId: string, expectedVersion: number, payload: ClusterUpdateInput) {
   return jsonRequest(`/api/clusters/${clusterId}/`, {
     method: "POST",
     body: JSON.stringify({ expected_version: expectedVersion, ...payload }),

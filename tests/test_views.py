@@ -24,6 +24,12 @@ def image_file(name="product.png"):
     return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
 
 
+def webp_file(name="product.webp"):
+    buffer = BytesIO()
+    Image.new("RGBA", (8, 8), (255, 255, 255, 255)).save(buffer, "WEBP")
+    return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/webp")
+
+
 def make_global_baseline():
     from platform_app.models import OutputSlot, OutputTemplate
 
@@ -94,6 +100,93 @@ def test_upload_api_records_import_mode_and_preparation_request(client, tmp_path
     assert batch.last_import_mode == "auto"
     assert cluster.auto_generate is True
     assert cluster.preparation_status == "pending"
+
+
+def test_upload_api_keeps_successes_and_reports_each_rejected_file(client, tmp_path, settings):
+    from platform_app.models import Asset, Batch
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Partial upload")
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_upload_assets", args=[batch.id]),
+        {
+            "files": [
+                image_file("front.png"),
+                SimpleUploadedFile("raw.heic", b"not-heic", content_type="image/heic"),
+            ],
+            "relative_paths": ["lamp/front.png", "lamp/raw.heic"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "asset_count": 1,
+        "imported": [
+            {
+                "filename": "lamp/front.png",
+                "asset_id": str(Asset.objects.get(batch=batch).id),
+                "cluster_id": str(batch.clusters.get().id),
+            }
+        ],
+        "rejected": [
+            {
+                "filename": "lamp/raw.heic",
+                "code": "unsupported_format",
+                "message": "仅支持 JPEG、PNG、WebP 图片和 UTF-8 TXT",
+            }
+        ],
+    }
+
+
+def test_upload_api_normalizes_webp_to_png(client, tmp_path, settings):
+    from platform_app.models import Asset, Batch
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="WebP upload")
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_upload_assets", args=[batch.id]),
+        {"files": [webp_file()], "relative_paths": ["catalog/product.webp"]},
+    )
+
+    assert response.status_code == 200
+    asset = Asset.objects.get(batch=batch)
+    assert asset.original_filename == "catalog/product.webp"
+    assert asset.content_type == "image/png"
+    assert asset.storage_path.endswith(".png")
+    with Image.open(tmp_path / asset.storage_path) as stored:
+        assert stored.format == "PNG"
+
+
+def test_upload_api_merges_txt_by_relative_path_before_image_preparation(client, tmp_path, settings):
+    from platform_app.models import Batch
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="TXT seed")
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_upload_assets", args=[batch.id]),
+        {
+            "files": [
+                image_file("front.png"),
+                SimpleUploadedFile("z.txt", "暖色木质".encode(), content_type="text/plain"),
+                SimpleUploadedFile("a.txt", "自然日光".encode(), content_type="text/plain"),
+            ],
+            "relative_paths": ["store/front.png", "store/z.txt", "store/a.txt"],
+        },
+    )
+
+    assert response.status_code == 200
+    batch.refresh_from_db()
+    assert batch.global_prompt == "自然日光\n\n暖色木质"
+    assert batch.clusters.get().preparation_status == "pending"
 
 
 def test_snapshot_includes_cluster_and_generation_state(client, tmp_path, settings):
@@ -179,11 +272,17 @@ def test_project_generate_api_is_cluster_scoped_and_idempotent(client, tmp_path,
 
 
 def test_update_cluster_prompt_requires_current_version(client, tmp_path, settings):
+    from platform_app.models import OutputSlot, OutputTemplate, PromptVersion
     from platform_app.services import create_batch, register_uploaded_asset
 
     settings.MEDIA_ROOT = tmp_path
     user = make_user()
     batch = create_batch(user, "Batch 1")
+    template = OutputTemplate.objects.create(platform="global", site="", name="Editable template")
+    first_slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    second_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
     asset = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
     cluster = asset.clusters.get()
     client.force_login(user)
@@ -197,7 +296,14 @@ def test_update_cluster_prompt_requires_current_version(client, tmp_path, settin
 
     response = client.post(
         reverse("api_update_cluster", args=[cluster.id]),
-        {"expected_version": cluster.version, "prompt_override": "new prompt"},
+        {
+            "expected_version": cluster.version,
+            "prompt_override": "new prompt",
+            "prompts": [
+                {"slot_order": 1, "prompt": "Accurate white background product hero"},
+                {"slot_order": 2, "prompt": "Close product detail in soft daylight"},
+            ],
+        },
         content_type="application/json",
     )
 
@@ -205,6 +311,47 @@ def test_update_cluster_prompt_requires_current_version(client, tmp_path, settin
     cluster.refresh_from_db()
     assert cluster.prompt_override == "new prompt"
     assert cluster.version == 2
+    prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
+    assert [item.output_slot_id for item in prompts] == [first_slot.id, second_slot.id]
+    assert "Standard product hero:" in prompts[0].prompt_text
+    assert prompts[1].prompt_text == "Close product detail in soft daylight"
+    assert all(item.structured_output["manual_edit"] is True for item in prompts)
+
+
+def test_update_cluster_rejects_stringified_or_invalid_slot_prompts(client, tmp_path, settings):
+    from platform_app.models import OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.services import create_batch, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Editable template")
+    OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = create_batch(user, "Batch 1")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    cluster = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png").clusters.get()
+    client.force_login(user)
+
+    stringified = client.post(
+        reverse("api_update_cluster", args=[cluster.id]),
+        {
+            "expected_version": cluster.version,
+            "prompts": '[{"slot_order":1,"prompt":"not an array"}]',
+        },
+        content_type="application/json",
+    )
+    unknown_slot = client.post(
+        reverse("api_update_cluster", args=[cluster.id]),
+        {
+            "expected_version": cluster.version,
+            "prompts": [{"slot_order": 99, "prompt": "unknown"}],
+        },
+        content_type="application/json",
+    )
+
+    assert stringified.status_code == 400
+    assert unknown_slot.status_code == 400
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0
 
 
 def test_optimize_prompt_returns_draft_without_saving(client, tmp_path, settings):

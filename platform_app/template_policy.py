@@ -10,10 +10,24 @@ STANDARD_PRODUCT_HERO_PROMPT_LINES = (
     "Hero restrictions: no promotional text, text overlay, watermark, border, price, discount, badge, or lifestyle scene.",
     "Preserve any logo or mark that is visibly part of the supplied product; do not add new branding.",
 )
+SOURCE_PRODUCT_PHOTO_NAME = "Seller original product photo"
 
 
 def is_standard_product_hero_slot(slot):
-    return slot.order == 1
+    return slot.name == STANDARD_PRODUCT_HERO_NAME or (
+        slot.order == 1 and slot.name != SOURCE_PRODUCT_PHOTO_NAME
+    )
+
+
+def is_source_product_photo_slot(slot):
+    return slot.name == SOURCE_PRODUCT_PHOTO_NAME
+
+
+def standard_product_hero_slot(template):
+    return (
+        template.slots.filter(name=STANDARD_PRODUCT_HERO_NAME).order_by("order", "id").first()
+        or template.slots.filter(order=1).first()
+    )
 
 
 def apply_standard_product_hero_policy(slot, prompt, input_snapshot=None):

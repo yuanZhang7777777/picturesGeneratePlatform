@@ -150,7 +150,12 @@ def test_optimize_prompt_posts_deepseek_chat_completions_payload():
     )
     client = APIMartClient(session=session)
 
-    data = client.optimize_prompt({"text": "make prompt"})
+    data = client.optimize_prompt(
+        {
+            "system": "You are the complete production node instruction.",
+            "text": "make prompt",
+        }
+    )
 
     assert data["output_text"] == "{\"suggested_prompt\":\"ok\"}"
     method, url, kwargs = session.calls[0]
@@ -159,7 +164,10 @@ def test_optimize_prompt_posts_deepseek_chat_completions_payload():
     assert kwargs["json"]["model"] == "deepseek-v4-pro"
     assert kwargs["json"]["stream"] is False
     assert kwargs["json"]["temperature"] == 1.2
-    assert kwargs["json"]["messages"][0]["role"] == "system"
+    assert kwargs["json"]["messages"][0] == {
+        "role": "system",
+        "content": "You are the complete production node instruction.",
+    }
 
 
 @pytest.mark.parametrize("temperature", [-0.1, 2.1])

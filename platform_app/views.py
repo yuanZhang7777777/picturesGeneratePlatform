@@ -39,6 +39,9 @@ from .services import (
     request_generation_revision,
     safe_storage_path,
     serialize_project,
+    StorageError,
+    UploadError,
+    update_cluster_content,
 )
 
 MAX_EXPORT_RESULT_BYTES = 25 * 1024 * 1024
@@ -179,6 +182,7 @@ def api_project_create(request):
             name=payload.get("name"),
             platform=payload.get("platform", "shopee"),
             market=payload.get("market", "SG"),
+            seller_tier=payload.get("seller_tier", "general"),
             template=payload.get("template"),
             rule_profile=payload.get("rule_profile"),
             size=payload.get("size", ""),
@@ -215,22 +219,63 @@ def api_upload_assets(request, batch_id):
     uploads = request.FILES.getlist("files")
     relative_paths = request.POST.getlist("relative_paths")
     mode = request.POST.get("mode") or batch.last_import_mode
-    try:
-        filenames = [
-            _relative_upload_path(relative_paths[index]) if index < len(relative_paths) else uploaded.name
-            for index, uploaded in enumerate(uploads)
-        ]
-    except ValueError as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
-    assets = []
-    for uploaded, filename in zip(uploads, filenames):
+    entries = []
+    rejected = []
+    for index, uploaded in enumerate(uploads):
+        raw_filename = relative_paths[index] if index < len(relative_paths) else uploaded.name
         try:
-            assets.append(
-                register_uploaded_asset(batch, filename, uploaded.read(), uploaded.content_type, mode=mode)
-            )
+            filename = _relative_upload_path(raw_filename)
         except ValueError as exc:
-            return JsonResponse({"error": str(exc)}, status=400)
-    return JsonResponse({"asset_count": len(assets)})
+            rejected.append(
+                {
+                    "filename": raw_filename or uploaded.name,
+                    "code": "unsafe_path",
+                    "message": str(exc),
+                }
+            )
+            continue
+        entries.append((uploaded, filename))
+
+    entries.sort(key=lambda item: (Path(item[1]).suffix.lower() != ".txt", item[1].casefold()))
+    image_count = 0
+    txt_count = 0
+    imported = []
+    for uploaded, filename in entries:
+        is_txt = Path(filename).suffix.lower() == ".txt"
+        image_count += not is_txt
+        txt_count += is_txt
+        if image_count > 100 or txt_count > 20:
+            rejected.append(
+                {
+                    "filename": filename,
+                    "code": "too_many_files",
+                    "message": "单次最多上传 100 张图片和 20 个 TXT",
+                }
+            )
+            continue
+        try:
+            asset = register_uploaded_asset(batch, filename, uploaded.read(), uploaded.content_type, mode=mode)
+        except UploadError as exc:
+            rejected.append({"filename": filename, "code": exc.code, "message": str(exc)})
+            continue
+        except (OSError, StorageError):
+            rejected.append(
+                {
+                    "filename": filename,
+                    "code": "storage_unavailable",
+                    "message": "素材存储暂时不可用，请稍后重试该文件",
+                }
+            )
+            continue
+        cluster = asset.clusters.first()
+        imported.append(
+            {
+                "filename": filename,
+                "asset_id": str(asset.id),
+                "cluster_id": str(cluster.id) if cluster else None,
+            }
+        )
+    return JsonResponse({"asset_count": len(imported), "imported": imported, "rejected": rejected})
 
 
 @login_required
@@ -259,23 +304,18 @@ def api_update_cluster(request, cluster_id):
 
     cluster = get_object_or_404(Cluster, id=cluster_id)
     require_owner_or_admin(request.user, cluster.batch)
-    payload = json.loads(request.body or "{}")
-    if payload.get("expected_version") != cluster.version:
-        return JsonResponse({"error": "Cluster changed; refresh before saving"}, status=409)
-    for field in ["product_name", "product_facts", "identity_lock", "prompt_override"]:
-        if field in payload:
-            setattr(cluster, field, payload[field])
-    cluster.version += 1
-    cluster.save(
-        update_fields=[
-            "product_name",
-            "product_facts",
-            "identity_lock",
-            "prompt_override",
-            "version",
-            "updated_at",
-        ]
-    )
+    try:
+        payload = json.loads(request.body or "{}")
+        if not isinstance(payload, dict):
+            raise TypeError("request body must be an object")
+        cluster = update_cluster_content(cluster, request.user, payload)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "request body must be valid JSON"}, status=400)
+    except TypeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except ValueError as exc:
+        status = 409 if "changed; refresh" in str(exc) else 400
+        return JsonResponse({"error": str(exc)}, status=status)
     return JsonResponse({"id": str(cluster.id), "version": cluster.version})
 
 

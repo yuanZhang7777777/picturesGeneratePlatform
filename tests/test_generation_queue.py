@@ -155,7 +155,13 @@ def test_worker_archives_result_and_marks_completed(tmp_path, settings):
 
 
 def test_worker_enqueues_detail_slots_after_hero_completion(tmp_path, settings):
-    from platform_app.models import Generation, OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.models import (
+        Generation,
+        OutputSlot,
+        OutputTemplate,
+        PromptNodeTemplate,
+        PromptVersion,
+    )
     from platform_app.services import FakeAPIMartClient, LocalStorage, ensure_cluster_generations, process_generation_once
 
     user, batch = make_batch_with_images(tmp_path, settings, count=1)
@@ -186,6 +192,61 @@ def test_worker_enqueues_detail_slots_after_hero_completion(tmp_path, settings):
     assert statuses == [Generation.Status.COMPLETED, *[Generation.Status.QUEUED] * 8]
 
 
+def test_shopee_vn_preserves_source_then_generates_white_hero_and_seven_marketing_images(
+    tmp_path, settings
+):
+    from django.core.management import call_command
+
+    from platform_app.models import Generation
+    from platform_app.services import (
+        FakeAPIMartClient,
+        LocalStorage,
+        create_project,
+        ensure_cluster_generations,
+        preflight_batch,
+        process_generation_once,
+        register_uploaded_asset,
+    )
+
+    settings.MEDIA_ROOT = tmp_path
+    call_command("seed_platform_templates")
+    user = make_user("vn-operator")
+    batch = create_project(
+        owner=user,
+        name="Shopee VN",
+        platform="shopee",
+        market="VN",
+        seller_tier="general",
+    )
+    source_bytes = image_bytes()
+    asset = register_uploaded_asset(batch, "seller-photo.png", source_bytes, "image/png")
+    cluster = asset.clusters.get()
+
+    assert preflight_batch(batch, user)["slot_count"] == 9
+    assert preflight_batch(batch, user)["generation_count"] == 8
+
+    initial = ensure_cluster_generations(cluster, user)
+
+    assert [item.output_slot.order for item in initial] == [1, 2]
+    source, hero = initial
+    assert source.status == Generation.Status.COMPLETED
+    assert source.prompt_version.provider_model == "none"
+    source_result = source.result_assets.get()
+    assert source_result.storage_path.startswith(f"results/{batch.id}/{cluster.id}/{source.output_slot_id}/1/")
+    assert LocalStorage(tmp_path).read(source_result.storage_path) == source_bytes
+    assert hero.status == Generation.Status.QUEUED
+
+    assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
+    assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
+
+    generations = list(cluster.generations.order_by("output_slot__order"))
+    assert [item.output_slot.order for item in generations] == list(range(1, 10))
+    assert generations[1].status == Generation.Status.COMPLETED
+    assert all(item.status == Generation.Status.QUEUED for item in generations[2:])
+    white_result_path = generations[1].result_assets.get().storage_path
+    assert all(white_result_path in item.reference_snapshot for item in generations[2:])
+
+
 def test_submit_unknown_is_not_reposted_automatically(tmp_path, settings):
     from platform_app.models import Generation
     from platform_app.services import LocalStorage, SubmitUnknown, confirm_generation, process_generation_once
@@ -203,6 +264,80 @@ def test_submit_unknown_is_not_reposted_automatically(tmp_path, settings):
 
     assert process_generation_once(UnknownClient(), LocalStorage(tmp_path)) == 0
     assert Generation.objects.count() == 1
+
+
+def test_prompt_complexity_failure_creates_one_shorter_n9_retry(tmp_path, settings):
+    import json
+
+    from platform_app.models import (
+        Generation,
+        OutputSlot,
+        OutputTemplate,
+        PromptNodeTemplate,
+        PromptVersion,
+    )
+    from platform_app.services import LocalStorage, process_generation_once
+
+    class ComplexityClient:
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            return "complex-task"
+
+        def get_task(self, task_id):
+            return {"status": "failed", "error_code": "prompt_complexity", "error": "prompt too complex"}
+
+        def optimize_prompt(self, payload):
+            assert "NODE N9" in payload["text"]
+            return {
+                "output_text": json.dumps(
+                    {
+                        "decision": "retry_with_simplified_prompt",
+                        "simplified_prompt": "Keep the product unchanged in one clean scene.",
+                        "visible_text_lines": [],
+                    }
+                ),
+                "raw": {},
+            }
+
+    settings.MEDIA_ROOT = tmp_path
+    PromptNodeTemplate.objects.create(
+        node_name="N9",
+        version="2.1.0",
+        status=PromptNodeTemplate.Status.PUBLISHED,
+        instruction="Complete failure simplifier instruction.",
+    )
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    detail = OutputSlot.objects.create(template=template, name="Detail", order=2)
+    long_prompt = "Keep the exact product identity. " + ("Use a clean studio detail. " * 20)
+    prompt = PromptVersion.objects.create(
+        cluster=cluster,
+        output_slot=detail,
+        created_by=user,
+        prompt_text=long_prompt,
+        input_snapshot={"reference_snapshot": [batch.assets.first().storage_path]},
+    )
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=detail,
+        prompt_version=prompt,
+        created_by=user,
+        status=Generation.Status.SUBMITTED,
+        provider_task_id="complex-task",
+        prompt_text=long_prompt,
+        reference_snapshot=[batch.assets.first().storage_path],
+    )
+
+    assert process_generation_once(ComplexityClient(), LocalStorage(tmp_path)) == 1
+
+    generation.refresh_from_db()
+    retry = Generation.objects.exclude(id=generation.id).get()
+    assert generation.status == Generation.Status.FAILED
+    assert retry.status == Generation.Status.QUEUED
+    assert retry.prompt_version.node_name == "N9"
+    assert retry.prompt_version.template_version == "2.1.0"
+    assert len(retry.prompt_text) < len(generation.prompt_text)
 
 
 def test_worker_rewrites_a_legacy_first_slot_prompt_before_paid_submission(tmp_path, settings):

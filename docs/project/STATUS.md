@@ -2,7 +2,7 @@
 
 最后更新：2026-07-30
 维护者：主 Agent
-状态：双速产品设计已落地到预览环境；服务器已完成真实 APIMart/OSS、1+8 付费生图、人工审核通过和本地 ZIP 导出 smoke。当前仍是测试预览，不是面向 100 名员工的正式 HTTPS 发布；真实 ERP 员工账号成功登录与 SKU 导入 smoke 待人工或专用 smoke 账号验证。
+状态：原双速版本已在预览环境完成真实 APIMart/OSS、1+8、人工审核和 ZIP smoke；Prompt OS v2、可用上传入口、官网规则包与 Shopee VN 特例已在本地实现并通过聚焦回归，尚待全量验证和重新部署。当前仍不是面向 100 名员工的正式 HTTPS 发布。
 
 ## 当前目标
 
@@ -28,10 +28,10 @@
 | C0-03 | 主 Agent | 建立主 Agent 项目治理 | 产品方向 | 角色、交接和签核规则 | `CLAUDE.md`、本控制板 | 规则与软链核对 | 已完成 | 无 |
 | C0-04 | 主 Agent | 确认前端技术栈 | 交互/性能目标 | React + TypeScript + Vite、TanStack Query、dnd-kit 与同源 Django API | 前端架构文档 | 架构审阅 | 已完成 | 无 |
 | C0-05 | 主 Agent | 收口精简需求边界 | 已填写 A–N 与双速流程决定 | 唯一边界、最终设计、实施计划和 `/goal` 任务书 | 需求、设计、计划、控制板 | 编号/矛盾/范围/命令自检 | 已完成 | 无 |
-| P0-01 | 产品与 Prompt OS | 结构化 Prompt、事实与身份锁 | 产品方案、已发布模板 | 模型/编译器契约；竞品只形成 Style DNA，不作生成参考 | 模型、服务、迁移、测试 | Prompt OS 与全量后端回归 | 已完成 | 规则和模板按站点持续发布 |
-| P0-02 | 前端体验 | 双速商品生产工作台 | 现有 React、最终设计和 Tasks 2–4 API | 自动/整理双入口、商品卡、9 槽 Prompt、项目结果页、圈选修改与选择式本地 ZIP | `frontend/src/**` | `npm --prefix frontend test` 41 passed；`npm --prefix frontend run build` passed；远端同源入口 HTTP/DOM smoke passed | 已完成 | 浏览器插件不可用，已用 SSH 隧道与 HTTP/DOM smoke 替代 |
-| P0-03 | 后端平台 | 商品准备、1+8 生成、修订与选择式导出 | Prompt OS 契约与商品资料接口 | ERP Token 查询、私有 OSS、白底结果作为槽 2–9 参考、人工审核通过后导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | `pytest -q` 179 passed；`manage.py check` 0 issues；远端容器 `makemigrations --check --dry-run` no changes；真实 1+8 付费 smoke、审核和导出 passed | 已完成（预览已部署） | 真实 ERP 员工账号成功登录/SKU 导入 smoke 待验收 |
-| P0-04 | 平台规则/合规 | 9 槽模板与官方规则种子 | 官方来源、站点范围和管理员发布标准 | global 1+8、1:1、1k 默认套图；Shopee/TikTok 来源登记；无来源规则保持 draft；admin 发布非 global 规则必须有来源 URL、站点、核对日期和版本 | `platform_app/admin.py`、seed 命令、规则文档、测试 | `tests/test_auth_permissions.py tests/test_template_seed.py` | 本地完成 | 逐站官方规则仍需人工复核；发布仅限管理员刘学城 |
+| P0-01 | 产品与 Prompt OS | Prompt OS v2 九节点、事实与身份锁 | 九节点规格、官网规则包 | N1 逐图观察、N2–N6 分析/编译、N7 确定性闸门、N8 修改导演、N9 失败简化；完整 2.1.0 核心提示词通过实际 system/视觉指令发送；推断台账和不可变快照 | `platform_app/services.py`、节点规格、测试 | 后端全量 192 passed；Django check、迁移漂移和 diff check passed | 本地完成，待部署 | 真实商品质量基准仍待执行 |
+| P0-02 | 前端体验 | 可用上传入口、推断台账和结构化 Prompt 编辑 | React 工作台与 Prompt OS v2 API | 图片/文件夹/拖拽、失败项重传、事实/推断/规则阻断展示、结构化 Prompt 保存 | `frontend/src/**` | `npm --prefix frontend test -- --run` 45 passed；`npm --prefix frontend run build` passed | 本地完成，待部署 | 浏览器真实文件夹上传 smoke 待执行 |
+| P0-03 | 后端平台 | 商品准备、9 图生成、修订与选择式导出 | Prompt OS v2 与商品资料接口 | 分文件上传结果、结构化 PromptVersion、白底门禁、Shopee VN 原图直通、人工审核后导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | 后端全量 192 passed；Shopee VN 调度与 N9 回归 passed | 本地完成，待部署 | 真实 ERP 员工账号成功登录/SKU 导入 smoke 待验收 |
+| P0-04 | 平台规则/合规 | 官网主规则包与已验证站点覆盖 | Shopee/TikTok 官方来源 | Shopee/TikTok 官网主规则 fallback；Shopee VN、TW Mall、TikTok US 覆盖；全局内部基线 | seed 命令、规则登记册、测试 | `tests/test_template_seed.py` 与规则闸门回归 | 本地完成，待部署 | TikTok US 官方禁止数字渲染，合规模式必须阻断 AI 出图 |
 | P0-05 | QA/发布 | 真实预览发布门禁与运维收口 | Compose、Caddy、现有测试 | 同源静态部署、运行手册、验证证据；APIMart smoke 命令只输出节点状态、耗时和哈希，假 key 非零且不泄漏 | `platform_app/management/commands/smoke_apimart_nodes.py`、`docs/runbook.md`、`PROGRESS.md`、`BLOCKED.md` | 远端 Compose config/build/up/seed/health passed；HTTP/DOM smoke passed；日志无密钥明文 | 已完成（预览已部署） | HTTP 临时入口仍非正式 HTTPS 发布 |
 | P0-06 | 主 Agent + 平台/QA | APIMart 真实契约与费用门禁 | APIMart 中文文档、公开测试图、精确目标模型 | 三模型的真实包络适配、结构化输出、异步任务恢复与质量基准证据 | 视觉/Prompt/图像适配器、测试、运行文档 | 服务器 DeepSeek、GPT-5 Nano、GPT Image 2 三节点 smoke passed；真实 1+8 付费 smoke 9/9 completed；ZIP 仅审核通过版本 exported | 已完成（低并发） | 动态公平并发与 500 上限仍需分级压测 |
 
@@ -48,7 +48,10 @@
 | 2026-07-30 | 正式入口使用公网 IP + 端口，不使用来源 IP 白名单 | 内部员工直接登录 | 真实 ERP 密码登录前必须启用员工设备信任的 HTTPS；HTTP 只可做测试预览 |
 | 2026-07-30 | ERP 登录成功的全部用户可进入平台，刘学城是唯一初始管理员 | 运营希望沿用 ERP 权限校验和个人账号查询 | 平台创建本地影子用户；管理员身份由 `PLATFORM_ADMIN_ERP_USERS` 中的 ERP 登录名决定 |
 | 2026-07-30 | 默认 1+8 共 9 张、1:1、1k | 白底标准图同时作为后续营销图的一致性参考 | 第 1 槽无营销文字；槽 2–9 只在白底图完成并归档后提交 |
-| 2026-07-30 | 所有平台套图第 1 张固定为标准白底产品图 | 保证商品身份和跨平台一致性 | 白底结果与原始我方图片共同作为后续 8 图参考；主图失败/取消时槽 2–9 零供应商提交 |
+| 2026-07-30 | 默认套图第 1 张为标准白底产品图 | 保证商品身份和跨平台一致性 | 白底结果与原始我方图片共同作为后续营销图参考；Shopee VN 普通店使用下一行例外 |
+| 2026-07-30 | Shopee VN 普通店采用“真实原图 + 白底 + 7 营销图” | 官方规则要求保留卖家真实产品图 | 槽位 1 原图复制到结果前缀且不调用生图；槽位 2 是白底门禁；槽位 3–9 等待白底 |
+| 2026-07-30 | 合理推断进入显式推断台账 | 仅靠商品名和图片也要形成可用营销方案，同时不能把推断伪装成事实 | 保存 confirmed/observed/inferred、置信度、风险、证据和用途；高风险声明硬阻断 |
+| 2026-07-30 | 规则按“平台官网主规则 + 已验证站点覆盖”装载 | 无需为每个国家重复维护整套规则 | 未配置站点复用平台官网主规则并标记 fallback；TikTok US 禁止数字渲染时阻断 AI 合规出图 |
 | 2026-07-30 | 文字按站点默认语言生成并允许员工修改 | 同时满足本地化和简化操作 | 主图无营销文字；其他图文字只能来自已证实商品事实 |
 | 2026-07-29 | 闲时允许用户临时借用并发 | 在全局上限内提高资源利用率 | 基础每人 2 个活跃任务；有其他用户排队时恢复公平轮转 |
 | 2026-07-29 | 竞品版式结构可作为 Style DNA 借鉴 | 满足同等商业视觉策略需求 | 可复用画面层级、版式、色彩、光线和场景密度；竞品原图仅发送给 `gpt-5-nano-2025-08-07` 观察器，不得传给生成、文本、Prompt 或导出链路，也不得复制商标、包装、人物、原文案及逐像素页面 |
@@ -64,13 +67,15 @@
 | 2026-07-29 | APIMart 视觉观察器首次真实契约成功，不等于质量通过 | 区分“接口可调用”与“商品视觉事实可靠” | 使用公开测试图的两次最小付费调用确认 `gpt-5-nano-2025-08-07`、`input_image` 和严格 JSON 路径可用；下一步须以带人工标注的商品基准集衡量事实准确率，未通过前不得作为自动审核结论 |
 | 2026-07-30 | APIMart 基础节点已在服务器真实打通 | 本地与服务器三节点均已完成最小真实 smoke，且真实 1+8 项目 9/9 完成 | `deepseek-v4-pro` 走非流式 Chat Completions；`gpt-5-nano-2025-08-07` 走 Responses，文本从 `output[].content[].text` 提取；`gpt-image-2` 先上传参考图，再用 URL 字符串数组 `image_urls` 提交生成；下一步只做质量基准与分级并发压测 |
 | 2026-07-30 | 当前改造按 Tasks 1–7 顺序执行 | 核心 Django 服务文件存在共享写入点，盲目并行会冲突 | 后端 Tasks 1–4 串行；API 冻结后前端 Task 5 可并行；规则和 QA 不改共享实现 |
+| 2026-07-30 | Prompt OS 核心提示词发布为 2.1.0 完整版 | 2.0.0 种子错误地只保存一句职责摘要，且 DeepSeek system 角色仍使用通用句 | N1–N9 发布完整节点角色、事实边界、营销方法、硬规则和 JSON 输出约束；旧版本保留但退役；3500 字符限制仅用于最终单图 Prompt |
 | 2026-07-29 | APIMart 的真实账号包络优先于文档示例 | 同一供应商不同模型端点的外层 JSON 已出现不一致，不能依赖单一伪造包络 | `deepseek-v4-pro` 账户实测为顶层 OpenAI Chat Completions 包络，非文档示例的 `code/data`；适配器必须按端点/模型显式解析并以真实 fixture 回归。GPT Image 2 已实测 `submitted → processing → completed`、结果 URL 与费用字段，完成后必须立即受限下载归档；`cancelled` 视为终态 |
 
 ## 阻塞与风险
 
 | 项目 | 影响 | Owner | 处理条件 |
 | --- | --- | --- | --- |
-| Shopee/TikTok 各站最终规则仍在逐站核对 | 不能发布超出已核对范围的自动合规承诺 | 平台规则/合规 | 官方来源登记、版本与管理员刘学城发布完成 |
+| Shopee/TikTok 并非所有国家都有独立覆盖 | 只能声明平台官网主规则 fallback，不能宣称该国家完整自动合规 | 平台规则/合规 | 有新官方证据时增加站点覆盖；无资料时继续复用平台官网主规则 |
+| TikTok Shop US 官方禁止数字渲染 | AI 生成结果不能作为其官方合规商品图 | 平台规则/合规 + 产品 | 保持规则闸门硬阻断，改用真实摄影或由管理员切换非官方实验项目且不得宣称合规 |
 | ERP 成功登录与 SKU 导入真实员工链路未自动验证 | 当前只证明登录接口网络可达；还不能宣称所有 ERP 账号/SKU 导入已验收 | 后端平台 + QA/发布 | 用浏览器人工登录一个真实 ERP 员工账号并导入 1 个真实 SKU，或在服务器写入专用 smoke 账号变量后运行脱敏 smoke |
 | 动态公平并发与 500 上限执行尚未启用 | 不能把供应商上限当成当前服务器能力 | 后端平台 + QA/发布 | 原子认领/限流、真实契约测试与分级压测 |
 | HTTP 临时入口 | 不能承载真实 ERP 密码和 100 名员工素材 | QA/发布 | 公网 IP + 端口启用员工设备信任的 HTTPS 与账号安全；不使用来源 IP 白名单 |

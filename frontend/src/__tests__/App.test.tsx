@@ -120,12 +120,22 @@ test("opens a unified project workspace from the dashboard", async () => {
   expect(screen.getByRole("link", { name: "生产与结果" })).toHaveAttribute("href", "/projects/project-demo/results");
 });
 
+test("shows Shopee shop type and hides it for TikTok Shop", async () => {
+  renderApp("/projects/new");
+
+  expect(await screen.findByLabelText("店铺类型")).toHaveValue("general");
+  fireEvent.change(screen.getByLabelText("平台"), { target: { value: "tiktok" } });
+  expect(screen.queryByLabelText("店铺类型")).not.toBeInTheDocument();
+});
+
 test("shows two explicit import choices for both upload and ERP SKU entry", async () => {
   renderApp("/projects/project-demo");
 
   expect(await screen.findAllByRole("button", { name: "导入并自动出图" })).toHaveLength(2);
   expect(screen.getAllByRole("button", { name: "导入后整理" })).toHaveLength(2);
-  expect(screen.getByLabelText("选择图片或文件夹")).toHaveAttribute("webkitdirectory");
+  expect(screen.getByLabelText("选择图片")).not.toHaveAttribute("webkitdirectory");
+  expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("webkitdirectory");
+  expect(screen.getByText("拖入图片或文件夹")).toBeInTheDocument();
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
 });
 
@@ -133,7 +143,7 @@ test("posts uploaded files in automatic mode and immediately requests generation
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  const input = await screen.findByLabelText("选择图片或文件夹");
+  const input = await screen.findByLabelText("选择图片");
   const file = new File(["image"], "front.png", { type: "image/png" });
   fireEvent.change(input, { target: { files: [file] } });
   fireEvent.click(screen.getAllByRole("button", { name: "导入并自动出图" })[0]);
@@ -148,7 +158,7 @@ test("posts uploaded files in organize mode without starting generation", async 
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.change(await screen.findByLabelText("选择图片或文件夹"), {
+  fireEvent.change(await screen.findByLabelText("选择图片"), {
     target: { files: [new File(["image"], "front.png", { type: "image/png" })] },
   });
   fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);

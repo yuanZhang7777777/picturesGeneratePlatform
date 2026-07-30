@@ -95,7 +95,7 @@ def test_confirm_generation_snapshots_selected_market_template_rule_and_prompt_a
     assert generation.prompt_version.template_version == "builtin-v1"
     assert generation.prompt_version.provider_model == "gpt-image-2"
     assert generation.prompt_version.input_snapshot["market"] == "US"
-    assert generation.prompt_version.evaluation["fact_policy"] == "user-provided-only"
+    assert generation.prompt_version.evaluation["fact_policy"] == "traceable-inference"
 
     template.version = "mutated-template"
     template.save(update_fields=["version"])
@@ -112,10 +112,11 @@ def test_confirm_generation_snapshots_selected_market_template_rule_and_prompt_a
         "id": str(rule.id),
         "name": "US rules",
         "version": "2026-07",
-        "platform": "shopee",
-        "site": "US",
-        "rules": {"no_text_overlay": True},
-    }
+            "platform": "shopee",
+            "site": "US",
+            "rules": {"no_text_overlay": True},
+            "resolved_rules": [],
+        }
 
 
 def test_compile_slot_prompt_uses_only_product_references_and_sanitized_style_dna():
@@ -286,7 +287,7 @@ def test_confirm_generation_rejects_a_template_without_the_required_first_output
     batch = Batch.objects.create(owner=user, name="missing hero", output_template=template)
     make_cluster(batch)
 
-    with pytest.raises(ValueError, match="order 1"):
+    with pytest.raises(ValueError, match="standard product hero"):
         confirm_generation(batch, user)
 
 
@@ -420,7 +421,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
     import json
 
     from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
-    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
     from platform_app.management.commands.seed_platform_templates import GLOBAL_SLOTS
 
     settings.MEDIA_ROOT = tmp_path
@@ -453,7 +454,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
     batch.save(update_fields=["output_template"])
     request_cluster_preparation(cluster, auto_generate=False)
 
-    class PromptClient:
+    class PromptClient(FakeAPIMartClient):
         def observe_images(self, instruction, image_paths):
             assert image_paths and image_paths[0].endswith("source.png")
             return {
@@ -470,18 +471,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
             }
 
         def optimize_prompt(self, payload):
-            assert "Silicone cup" in payload["text"]
-            return {
-                "output_text": json.dumps(
-                    {
-                        "slots": [
-                            {"order": order, "prompt": f"Prompt for slot {order}"}
-                            for order in range(1, 10)
-                        ]
-                    }
-                ),
-                "raw": {"node": "prompt"},
-            }
+            return super().optimize_prompt(payload)
 
     assert process_prompt_once(PromptClient(), LocalStorage(tmp_path)) == 1
     cluster.refresh_from_db()
@@ -490,10 +480,12 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
     assert cluster.product_name == "Silicone cup"
     assert cluster.product_facts == "green silicone cup; two handles"
     assert cluster.identity_lock == "Keep green cup and two handles"
-    assert cluster.analysis_snapshot["confidence"] == 0.91
+    assert cluster.analysis_snapshot["observations"][0]["confidence"] == 0.91
+    assert cluster.analysis_snapshot["fact_ledger"]["review_summary"]["confirmed_count"] == 1
     prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
     assert [prompt.output_slot.order for prompt in prompts] == list(range(1, 10))
-    assert [prompt.prompt_text for prompt in prompts] == [f"Prompt for slot {order}" for order in range(1, 10)]
+    assert all("Silicone cup" in prompt.prompt_text for prompt in prompts)
+    assert all(prompt.evaluation["rule_gate"]["decision"] == "pass" for prompt in prompts)
 
 
 def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settings):
@@ -501,7 +493,7 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
 
     from platform_app.management.commands.seed_platform_templates import GLOBAL_SLOTS
     from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
-    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
 
     settings.MEDIA_ROOT = tmp_path
     user = make_user()
@@ -532,9 +524,10 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
     batch.save(update_fields=["output_template"])
     request_cluster_preparation(cluster, auto_generate=False)
 
-    class PromptClient:
+    class PromptClient(FakeAPIMartClient):
         def __init__(self):
             self.repairs = []
+            self.broke_identity = False
 
         def observe_images(self, instruction, image_paths):
             return {
@@ -556,20 +549,21 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
                 return {
                     "output_text": json.dumps(
                         {
-                            "slots": [
-                                {"order": order, "prompt": f"Repaired prompt {order}"}
-                                for order in range(1, 10)
-                            ]
+                            "decision": "continue",
+                            "confidence": 90,
+                            "product_name": "Storage box",
+                            "product_profile": {"category": "storage box", "primary_appearance": "blue"},
+                            "identity_lock": {"must_not_change": ["blue box"]},
+                            "primary_asset_id": str(asset.id),
+                            "supporting_asset_ids": [],
                         }
                     ),
                     "raw": {},
                 }
-            return {
-                "output_text": json.dumps(
-                    [{"order": order, "prompt": f"Wrong top-level {order}"} for order in range(1, 10)]
-                ),
-                "raw": {},
-            }
+            if "NODE N2" in payload["text"] and not self.broke_identity:
+                self.broke_identity = True
+                return {"output_text": json.dumps([{"wrong": "top-level"}]), "raw": {}}
+            return super().optimize_prompt(payload)
 
     client = PromptClient()
     assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
@@ -577,9 +571,9 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
 
     assert cluster.preparation_status == "ready"
     assert client.repairs
-    assert '"slots"' in client.repairs[0]
     prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
-    assert [prompt.prompt_text for prompt in prompts] == [f"Repaired prompt {order}" for order in range(1, 10)]
+    assert len(prompts) == 9
+    assert all("Storage box" in prompt.prompt_text for prompt in prompts)
 
 
 def test_prompt_worker_marks_only_current_cluster_failed_after_json_repair_fails(tmp_path, settings):
@@ -617,3 +611,206 @@ def test_prompt_worker_marks_only_current_cluster_failed_after_json_repair_fails
     assert process_prompt_once(BadClient(), LocalStorage(tmp_path)) == 1
     statuses = list(batch.clusters.order_by("created_at").values_list("preparation_status", flat=True))
     assert statuses == ["failed", "pending"]
+
+
+def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts(tmp_path, settings):
+    import json
+
+    from platform_app.management.commands.seed_platform_templates import GLOBAL_SLOTS
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(
+        seed_key="prompt-os-v2-test-template",
+        platform="global",
+        site="",
+        name="Prompt OS v2",
+        version="2026.07.30",
+    )
+    for order, name, purpose in GLOBAL_SLOTS:
+        template.slots.create(order=order, name=name, purpose=purpose)
+    batch = Batch.objects.create(owner=user, name="Prompt OS v2", output_template=template)
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="d" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class PromptOSClient:
+        def observe_images(self, instruction, image_paths):
+            assert "NODE N1" in instruction
+            return {
+                "output_text": json.dumps(
+                    {
+                        "asset_id": str(asset.id),
+                        "image_role": "clean_product",
+                        "contains_target_product": True,
+                        "target_complete": True,
+                        "reference_quality": 95,
+                        "observed_identity": {
+                            "category_candidates": ["storage container"],
+                            "dominant_colors": ["sage green"],
+                            "distinctive_parts": ["two handles"],
+                        },
+                        "recommended_use": "reuse",
+                    }
+                ),
+                "raw": {},
+            }
+
+        def optimize_prompt(self, payload):
+            text = payload["text"]
+            if "NODE N2" in text:
+                output = {
+                    "decision": "continue",
+                    "confidence": 93,
+                    "product_name": "Sage storage container",
+                    "product_profile": {"category": "storage container", "primary_appearance": "sage green"},
+                    "identity_lock": {
+                        "family_invariants": ["storage container"],
+                        "primary_variant_attributes": ["sage green"],
+                        "must_not_change": ["two handles"],
+                    },
+                    "primary_asset_id": str(asset.id),
+                    "supporting_asset_ids": [],
+                }
+            elif "NODE N3" in text:
+                output = {
+                    "ledger_version": "2.0.0",
+                    "facts": [
+                        {
+                            "fact_id": "fact.name.001",
+                            "statement": "Sage storage container",
+                            "fact_class": "confirmed",
+                            "confidence": 1.0,
+                            "evidence_refs": ["product_name"],
+                            "risk_level": "low",
+                            "allowed_uses": ["identity", "visual_prompt", "consumer_copy"],
+                            "review_note": "",
+                        },
+                        {
+                            "fact_id": "fact.color.001",
+                            "statement": "sage green",
+                            "fact_class": "observed",
+                            "confidence": 0.95,
+                            "evidence_refs": [f"asset:{asset.id}"],
+                            "risk_level": "low",
+                            "allowed_uses": ["identity", "visual_prompt"],
+                            "review_note": "",
+                        },
+                    ],
+                    "blocked_claim_topics": ["price", "certification", "medical_efficacy"],
+                    "unresolved_questions": [],
+                    "review_summary": {
+                        "confirmed_count": 1,
+                        "observed_count": 1,
+                        "inferred_count": 0,
+                        "high_risk_count": 0,
+                    },
+                }
+            elif "NODE N4" in text:
+                output = {
+                    "main_scene": "pure white commercial studio",
+                    "main_action": "none",
+                    "visible_text_lines": [],
+                    "prompt": "Front-facing complete product on pure white.",
+                }
+            elif "NODE N5" in text:
+                output = {
+                    "plans": [
+                        {
+                            "slot_order": order,
+                            "scene_family": f"family-{order}",
+                            "conversion_goal": f"goal-{order}",
+                            "main_scene": f"scene-{order}",
+                            "main_action": "none",
+                            "visible_text_lines": [],
+                        }
+                        for order in range(2, 10)
+                    ]
+                }
+            elif "NODE N6" in text:
+                order = int(text.split("SLOT_ORDER=", 1)[1].splitlines()[0])
+                output = {
+                    "slot_order": order,
+                    "main_scene": f"scene-{order}",
+                    "main_action": "none",
+                    "visible_text_lines": [],
+                    "prompt": f"Show purchase decision scene {order}.",
+                }
+            else:
+                raise AssertionError(text)
+            return {"output_text": json.dumps(output), "raw": {}}
+
+    assert process_prompt_once(PromptOSClient(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY
+    assert cluster.product_name == "Sage storage container"
+    assert cluster.analysis_snapshot["fact_ledger"]["review_summary"]["observed_count"] == 1
+    assert [snapshot["node_id"] for snapshot in cluster.analysis_snapshot["prompt_os"]] == [
+        "N1",
+        "N2",
+        "N3",
+        "N4",
+        "N5",
+        *["N6"] * 8,
+        *["N7"] * 9,
+    ]
+    prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
+    assert len(prompts) == 9
+    assert all("Sage storage container" in prompt.prompt_text for prompt in prompts)
+    assert all("two handles" in prompt.prompt_text for prompt in prompts)
+    assert all(len(prompt.prompt_text) <= 3500 for prompt in prompts)
+    assert all(prompt.evaluation["rule_gate"]["decision"] == "pass" for prompt in prompts)
+
+
+def test_tiktok_us_official_no_digital_rendering_rule_blocks_paid_generation():
+    from platform_app.models import Batch, OutputSlot, OutputTemplate, RuleProfile
+    from platform_app.services import confirm_generation
+
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="tiktok", site="US", name="US template")
+    OutputSlot.objects.create(template=template, name="Hero", order=1)
+    rule = RuleProfile.objects.create(
+        platform="tiktok",
+        site="US",
+        name="TikTok US",
+        status=RuleProfile.Status.PUBLISHED,
+        rules=[
+            {
+                "rule_id": "tiktok.us.gallery.no_digital_rendering",
+                "market": "US",
+                "seller_tier": "general",
+                "category_scope": ["all"],
+                "slot_scope": ["cover", "gallery"],
+                "severity": "HARD_PLATFORM",
+                "requirement": "Digital renderings are not permitted.",
+                "prompt_directive": "Use real product photography; do not generate a digital rendering.",
+                "verification_status": "verified",
+            }
+        ],
+    )
+    batch = Batch.objects.create(
+        owner=user,
+        name="TikTok US",
+        platform="tiktok",
+        market="US",
+        output_template=template,
+        rule_profile=rule,
+    )
+    make_cluster(batch)
+
+    with pytest.raises(ValueError, match="no_digital_rendering"):
+        confirm_generation(batch, user)

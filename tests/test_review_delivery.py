@@ -150,6 +150,7 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
         "name": "New project",
         "platform": "shopee",
         "market": "SG",
+        "seller_tier": "mall",
         "size": "1:1",
         "resolution": "1k",
         "global_prompt": "White background",
@@ -200,6 +201,7 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
     assert batch.owner == user
     assert batch.output_template == published_template
     assert batch.rule_profile == published_rule
+    assert batch.seller_tier == "mall"
 
     named = post_json(
         csrf_client,
@@ -226,7 +228,9 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
         csrf_token=token,
     )
     assert tiktok.status_code == 201
-    assert Batch.objects.get(id=tiktok.json()["id"]).output_template == baseline
+    tiktok_batch = Batch.objects.get(id=tiktok.json()["id"])
+    assert tiktok_batch.output_template == baseline
+    assert tiktok_batch.seller_tier == "general"
 
 
 def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_path, settings):
@@ -351,7 +355,9 @@ def test_upload_api_rejects_unsafe_relative_paths(client, tmp_path, settings, re
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 200
+    assert response.json()["asset_count"] == 0
+    assert response.json()["rejected"][0]["code"] == "unsafe_path"
     assert Asset.objects.filter(batch=batch).count() == 0
 
 
@@ -612,9 +618,21 @@ def test_export_rejects_result_or_total_size_over_hard_limit(
 def test_changes_requested_preserves_original_and_creates_clean_revision_attempt(
     client, tmp_path, settings
 ):
-    from platform_app.models import Generation, PromptVersion, ReviewAnnotation, ReviewFeedback
+    from platform_app.models import (
+        Generation,
+        PromptNodeTemplate,
+        PromptVersion,
+        ReviewAnnotation,
+        ReviewFeedback,
+    )
 
     settings.MEDIA_ROOT = tmp_path
+    PromptNodeTemplate.objects.create(
+        node_name="N8",
+        version="2.1.0",
+        status=PromptNodeTemplate.Status.PUBLISHED,
+        instruction="Complete review modification instruction.",
+    )
     owner = make_user("owner")
     batch, _, _, original, _ = make_generation(owner, tmp_path)
     original_prompt_id = original.prompt_version_id
@@ -667,6 +685,7 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
     assert batch.status == batch.Status.QUEUED
     assert revision.reference_snapshot == original_references
     assert revision.prompt_version_id != original_prompt_id
+    assert revision.prompt_version.template_version == "2.1.0"
     assert revision.prompt_version.input_snapshot["identity_lock"] == "Keep the sage green cup and two handles"
     assert revision.prompt_version.input_snapshot["product_facts"] == "BPA-free silicone"
     assert revision.prompt_version.input_snapshot["revision_delta"] == {

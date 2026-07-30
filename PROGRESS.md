@@ -59,3 +59,11 @@
 - Status: deployed commit `8b253b7` to `hermes-remote:/opt/independent-image-platform` on 2026-07-30 under `global.lock`.
 - Change: deleted the original Django batch list/form/detail templates and legacy static JS. `/batches/`, `/batches/new/`, and `/batches/<id>/` now only perform authenticated compatibility redirects to React routes.
 - Verification: regression tests first reproduced the old page behavior, then passed after the deletion; backend 181 passed, frontend 41 passed, Vite build passed, remote health passed, and remote legacy redirect smoke passed.
+
+# Prompt OS v2 P0 local integration
+
+- Status: local implementation completed on 2026-07-30; remote preview still runs the earlier deployed version.
+- Change: usable image/folder/drag upload, per-file retry, official platform rule bundles, Shopee VN source-photo exception, nine-node Prompt OS, inference ledger, structured PromptVersion editing, review revision and failure simplification are integrated.
+- Prompt templates: N1–N9 publish complete `2.1.0` core instructions; DeepSeek receives the complete node template as the system message. The retired `2.0.0` one-line summaries remain immutable for audit.
+- Verification: backend 192 passed, frontend 45 passed, Django check, SQLite migration drift check, Vite build, and `git diff --check` passed.
+- Remaining: browser real folder upload, remote OSS/APIMart smoke, deployment, real ERP employee login/SKU import, and the six-category 54-image quality benchmark.

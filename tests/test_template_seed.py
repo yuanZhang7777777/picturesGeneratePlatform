@@ -2,7 +2,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 
-from platform_app.models import Batch, Cluster, OutputTemplate, RuleProfile
+from platform_app.models import Batch, Cluster, OutputTemplate, PromptNodeTemplate, RuleProfile
 from platform_app.services import confirm_generation, create_project
 
 
@@ -11,7 +11,7 @@ pytestmark = pytest.mark.django_db
 
 REGIONAL_TARGETS = {
     "shopee": {"SG", "MY", "TH", "VN", "PH", "ID", "TW", "BR"},
-    "tiktok": {"SG", "MY", "TH", "VN", "PH"},
+    "tiktok": {"SG", "MY", "TH", "VN", "PH", "US"},
 }
 
 
@@ -49,15 +49,98 @@ def test_seed_platform_templates_creates_published_global_baseline_and_drafts():
 
     for platform, sites in REGIONAL_TARGETS.items():
         assert set(OutputTemplate.objects.filter(platform=platform).values_list("site", flat=True)) == sites
-        assert set(RuleProfile.objects.filter(platform=platform).values_list("site", flat=True)) == sites
-        assert not OutputTemplate.objects.filter(platform=platform).exclude(status=OutputTemplate.Status.DRAFT).exists()
-        assert not RuleProfile.objects.filter(platform=platform).exclude(status=RuleProfile.Status.DRAFT).exists()
+        assert set(RuleProfile.objects.filter(platform=platform).exclude(site="").values_list("site", flat=True)) == sites
+        for site in sites:
+            assert OutputTemplate.objects.get(seed_key=f"{platform}-{site.lower()}-template").status == OutputTemplate.Status.DRAFT
+            assert RuleProfile.objects.get(seed_key=f"{platform}-{site.lower()}-rule").status == RuleProfile.Status.DRAFT
 
     for seeded_template in OutputTemplate.objects.all():
-        assert seeded_template.slots.filter(order=1).values_list("name", "purpose").get() == (
+        assert seeded_template.slots.filter(name="Standard white-background product hero").values_list("name", "purpose").get() == (
             "Standard white-background product hero",
             "Complete, accurate product on a pure white background with no promotional text or watermark",
         )
+
+
+def test_seed_creates_verified_rule_profiles_and_vietnam_general_template():
+    call_command("seed_platform_templates")
+
+    baseline = RuleProfile.objects.get(seed_key="global-marketplace-prompt-os-v2-rule")
+    assert baseline.status == RuleProfile.Status.PUBLISHED
+    assert baseline.rules[0]["severity"] == "INTERNAL_BASELINE"
+    assert baseline.rules[0]["verification_status"] == "verified"
+
+    tiktok_us = RuleProfile.objects.get(seed_key="tiktok-us-verified-20260730-rule")
+    assert tiktok_us.status == RuleProfile.Status.PUBLISHED
+    rule_ids = {rule["rule_id"] for rule in tiktok_us.rules}
+    assert "tiktok.us.gallery.no_added_text" in rule_ids
+    assert "tiktok.us.gallery.no_digital_rendering" in rule_ids
+    expected_fields = {
+        "rule_id",
+        "market",
+        "seller_tier",
+        "category_scope",
+        "slot_scope",
+        "severity",
+        "requirement",
+        "prompt_directive",
+        "source_url",
+        "source_date",
+        "checked_at",
+        "verification_status",
+    }
+    assert all(set(rule) == expected_fields for rule in tiktok_us.rules)
+
+    vn_template = OutputTemplate.objects.get(seed_key="shopee-vn-general-nine-slot-v2-template")
+    assert vn_template.status == OutputTemplate.Status.PUBLISHED
+    assert list(vn_template.slots.values_list("order", "name"))[:2] == [
+        (1, "Seller original product photo"),
+        (2, "Standard white-background product hero"),
+    ]
+    prompt_nodes = PromptNodeTemplate.objects.filter(version="2.1.0", status="published")
+    assert set(prompt_nodes.values_list("node_name", flat=True)) == {
+        f"N{index}" for index in range(1, 10)
+    }
+    for prompt_node in prompt_nodes:
+        assert len(prompt_node.instruction) >= 300
+        assert "JSON" in prompt_node.instruction
+        assert "只输出" in prompt_node.instruction
+
+
+def test_seed_publishes_new_prompt_version_without_overwriting_old_version():
+    old = PromptNodeTemplate.objects.create(
+        node_name="N1",
+        version="2.0.0",
+        status=PromptNodeTemplate.Status.PUBLISHED,
+        instruction="administrator preserved instruction",
+        output_schema={"type": "object"},
+    )
+
+    call_command("seed_platform_templates")
+
+    old.refresh_from_db()
+    current = PromptNodeTemplate.objects.get(node_name="N1", version="2.1.0")
+    assert old.status == PromptNodeTemplate.Status.RETIRED
+    assert old.instruction == "administrator preserved instruction"
+    assert current.status == PromptNodeTemplate.Status.PUBLISHED
+
+
+def test_new_projects_select_verified_rules_or_internal_baseline():
+    call_command("seed_platform_templates")
+    user = get_user_model().objects.create_user(username="rule-defaults", password="long-enough-password")
+
+    verified = create_project(owner=user, name="TikTok US", platform="tiktok", market="US")
+    unknown = create_project(owner=user, name="Unknown", platform="shopee", market="AE")
+    vietnam = create_project(
+        owner=user,
+        name="Vietnam general",
+        platform="shopee",
+        market="VN",
+        seller_tier="general",
+    )
+
+    assert verified.rule_profile.seed_key == "tiktok-us-verified-20260730-rule"
+    assert unknown.rule_profile.seed_key == "shopee-official-baseline-20260730-rule"
+    assert vietnam.output_template.seed_key == "shopee-vn-general-nine-slot-v2-template"
 
 
 def test_seed_platform_templates_is_idempotent_and_preserves_existing_edits():
@@ -68,8 +151,8 @@ def test_seed_platform_templates_is_idempotent_and_preserves_existing_edits():
 
     call_command("seed_platform_templates")
 
-    assert OutputTemplate.objects.count() == 14
-    assert RuleProfile.objects.count() == 14
+    assert OutputTemplate.objects.count() == 16
+    assert RuleProfile.objects.count() == 21
     assert OutputTemplate.objects.get(platform="global", site="", version="2026.07.9").slots.count() == 9
     global_rule.refresh_from_db()
     assert global_rule.rules == {"admin_edit": True}
@@ -91,8 +174,8 @@ def test_seed_uses_stable_identity_without_overwriting_admin_edits():
 
     call_command("seed_platform_templates")
 
-    assert OutputTemplate.objects.count() == 15
-    assert RuleProfile.objects.count() == 14
+    assert OutputTemplate.objects.count() == 17
+    assert RuleProfile.objects.count() == 21
     template.refresh_from_db()
     rule.refresh_from_db()
     assert template.name == "Administrator renamed template"
@@ -120,9 +203,11 @@ def test_unselected_projects_and_legacy_confirm_use_global_baseline():
     assert shopee.output_template == baseline
     assert tiktok.output_template == baseline
     assert legacy.output_template == baseline
-    assert not OutputTemplate.objects.filter(
-        platform__in=("shopee", "tiktok"), status=OutputTemplate.Status.PUBLISHED
-    ).exists()
+    assert list(
+        OutputTemplate.objects.filter(
+            platform__in=("shopee", "tiktok"), status=OutputTemplate.Status.PUBLISHED
+        ).values_list("seed_key", flat=True)
+    ) == ["shopee-vn-general-nine-slot-v2-template"]
 
 
 def test_seed_creates_new_nine_slot_version_without_rewriting_existing_template_or_batch():

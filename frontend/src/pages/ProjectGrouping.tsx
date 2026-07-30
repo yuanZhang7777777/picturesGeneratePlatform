@@ -3,12 +3,12 @@ import { DndContext, type DragEndEvent } from "@dnd-kit/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
-import { generateProject, importSkus, mergeAsset, updateCluster, uploadAssets } from "../api";
+import { generateProject, importSkus, mergeAsset, updateCluster, uploadAssets, uploadPath, type UploadResult } from "../api";
 import { ImportPanel } from "../components/ImportPanel";
 import { ProductCard } from "../components/ProductCard";
 import { EmptyState, ErrorPanel, PageHeading, Shell } from "../layout";
 import { useProjectSnapshot } from "../queries";
-import type { ImportMode, ProductSku } from "../types";
+import type { ClusterUpdateInput, ImportMode, ProductSku } from "../types";
 
 const slotOrders = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
@@ -18,6 +18,8 @@ export default function ProjectGrouping() {
   const queryClient = useQueryClient();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [undoVisible, setUndoVisible] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [rejectedFiles, setRejectedFiles] = useState<File[]>([]);
   const project = projectQuery.data;
   const selectedClusters = useMemo(() => {
     const ids = selectedIds.size ? selectedIds : new Set(project?.skus.map((sku) => sku.id) ?? []);
@@ -30,7 +32,10 @@ export default function ProjectGrouping() {
   };
   const upload = useMutation({
     mutationFn: ({ files, mode }: { files: File[]; mode: ImportMode }) => uploadAssets(projectId!, files, mode),
-    onSuccess: async (_result, input) => {
+    onSuccess: async (result, input) => {
+      setUploadResult(result);
+      const rejectedNames = new Set(result.rejected.map((item) => item.filename));
+      setRejectedFiles(input.files.filter((file) => rejectedNames.has(uploadPath(file))));
       await invalidate();
       if (input.mode === "auto") await generate.mutateAsync();
     },
@@ -54,7 +59,7 @@ export default function ProjectGrouping() {
     },
   });
   const save = useMutation({
-    mutationFn: ({ sku, payload }: { sku: ProductSku; payload: Record<string, string> }) => updateCluster(sku.id, sku.version, payload),
+    mutationFn: ({ sku, payload }: { sku: ProductSku; payload: ClusterUpdateInput }) => updateCluster(sku.id, sku.version, payload),
     onSuccess: invalidate,
   });
 
@@ -93,7 +98,18 @@ export default function ProjectGrouping() {
         onSkuImport={(skus, mode) => skuImport.mutate({ skus, mode })}
       />
       <div className="mt-6 space-y-3">
-        {upload.isError && <ErrorPanel error={upload.error} retry={() => void projectQuery.refetch()} />}
+        {uploadResult && (
+          <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
+            <p>成功导入 {uploadResult.asset_count} 个素材{uploadResult.rejected.length ? `，${uploadResult.rejected.length} 个未导入` : ""}。</p>
+            {uploadResult.rejected.map((item) => <p className="mt-1 text-amber-700" key={`${item.filename}:${item.code}`}>{item.filename}：{item.message}</p>)}
+            {rejectedFiles.length > 0 && upload.variables && (
+              <button className="mt-2 text-sm font-semibold text-indigo-700" onClick={() => upload.mutate({ files: rejectedFiles, mode: upload.variables!.mode })}>
+                重试失败项
+              </button>
+            )}
+          </div>
+        )}
+        {upload.isError && <ErrorPanel error={upload.error} retry={() => upload.variables && upload.mutate(upload.variables)} />}
         {skuImport.isError && <ErrorPanel error={skuImport.error} retry={() => void projectQuery.refetch()} />}
         {generate.isError && <ErrorPanel error={generate.error} retry={() => generate.mutate()} />}
         {merge.isError && <ErrorPanel error={merge.error} retry={() => void projectQuery.refetch()} />}

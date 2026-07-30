@@ -30,6 +30,58 @@ export interface ProductPrompt {
   slotOrder: number;
   slot: string;
   text: string;
+  readOnly?: boolean;
+}
+
+export type PromptFactClass = "confirmed" | "observed" | "inferred";
+
+export interface PromptFact {
+  fact_id: string;
+  statement: string;
+  fact_class: PromptFactClass;
+  confidence: number;
+  evidence_refs: string[];
+  risk_level: string;
+  allowed_uses: string[];
+  review_note?: string;
+}
+
+export interface FactLedgerSnapshot {
+  facts?: PromptFact[];
+  review_summary?: {
+    confirmed_count: number;
+    observed_count: number;
+    inferred_count: number;
+    high_risk_count: number;
+  };
+  blocked_claim_topics?: string[];
+}
+
+export type RuleGateMessage = string | {
+  message?: string;
+  reason?: string;
+  statement?: string;
+  rule_id?: string;
+};
+
+export interface RuleGateSnapshot {
+  decision?: "pass" | "block";
+  hard_blocks?: RuleGateMessage[];
+  semantic_risks?: RuleGateMessage[];
+  warnings?: RuleGateMessage[];
+}
+
+export interface PromptAnalysisSnapshot {
+  fact_ledger?: FactLedgerSnapshot;
+  rule_gate?: RuleGateSnapshot;
+}
+
+export interface ClusterUpdateInput {
+  name?: string;
+  relation_type?: RelationType;
+  identity_lock?: string;
+  prompt_override?: string;
+  prompts?: { slot_order: number; prompt: string }[];
 }
 
 export interface ProductSku {
@@ -45,6 +97,7 @@ export interface ProductSku {
   preparationStatus?: string;
   version: number;
   prompts?: ProductPrompt[];
+  analysisSnapshot?: PromptAnalysisSnapshot;
   outputs: OutputImage[];
 }
 
@@ -53,6 +106,7 @@ export interface Project {
   name: string;
   platform: string;
   market: string;
+  sellerTier?: "general" | "mall";
   template: string;
   size: string;
   resolution?: string;
@@ -70,6 +124,7 @@ export interface ProjectInput {
   name: string;
   platform: string;
   market: string;
+  seller_tier?: "general" | "mall";
   template: string;
   size: string;
   resolution?: string;

@@ -129,6 +129,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
 LOCAL_MEDIA_ROOT = Path(os.getenv("LOCAL_MEDIA_ROOT", BASE_DIR / "media"))
 MEDIA_ROOT = LOCAL_MEDIA_ROOT
+DATA_UPLOAD_MAX_NUMBER_FILES = 150
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "platform_app.User"
 

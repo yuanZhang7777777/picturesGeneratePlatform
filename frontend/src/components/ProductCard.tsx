@@ -1,6 +1,6 @@
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { PromptEditor } from "./PromptEditor";
-import type { ProductAsset, ProductSku } from "../types";
+import type { ClusterUpdateInput, ProductAsset, ProductSku } from "../types";
 
 export function ProductCard({
   sku,
@@ -18,7 +18,7 @@ export function ProductCard({
   selected: boolean;
   onSelect: (checked: boolean) => void;
   onMerge: (assetId: string) => void;
-  onSave: (payload: Record<string, string>) => void;
+  onSave: (payload: ClusterUpdateInput) => void;
   disabled?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: sku.id, disabled });
