@@ -36,6 +36,39 @@ def test_image_asset_can_create_default_cluster():
     assert cluster.cluster_assets.get(asset=asset).role == "primary"
 
 
+def test_dual_speed_domain_defaults_are_business_safe():
+    from platform_app.models import Asset, Batch, Cluster, OutputSlot, OutputTemplate, PromptVersion
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Batch 1")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="product.jpg",
+        storage_path="originals/product.jpg",
+        sha256="a" * 64,
+        file_size=10,
+        content_type="image/jpeg",
+    )
+    cluster = Cluster.create_for_asset(batch=batch, asset=asset)
+    template = OutputTemplate.objects.create(name="Template", platform="global")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    prompt = PromptVersion.objects.create(
+        cluster=cluster,
+        created_by=user,
+        output_slot=slot,
+        prompt_text="Hero prompt",
+    )
+
+    assert batch.last_import_mode == "organize"
+    assert cluster.relation_type == "single_product"
+    assert cluster.preparation_status == "pending"
+    assert cluster.preparation_error == ""
+    assert cluster.analysis_snapshot == {}
+    assert cluster.auto_generate is False
+    assert prompt.output_slot == slot
+
+
 def test_cluster_rejects_more_than_sixteen_reference_images():
     from platform_app.models import Asset, Batch, Cluster
 

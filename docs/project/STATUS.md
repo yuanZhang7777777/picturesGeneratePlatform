@@ -2,7 +2,7 @@
 
 最后更新：2026-07-30
 维护者：主 Agent
-状态：A–N 需求和双速产品设计已冻结，实施计划与主 Agent 任务书已生成；当前代码仍是 8 槽、预检和 accepted 导出的技术 MVP，待按新计划改为 1+8、无审核门槛和选择式本地导出。OSS、ERP 与本地 APIMart 三节点 smoke 已通过，迁移后的服务器网络已通，服务器真实三模型 smoke 待执行
+状态：A–N 需求和双速产品设计已冻结，实施计划与主 Agent 任务书已生成；后端 Tasks 1–4 已在独立 worktree 完成：9 槽模板/准备状态、Prompt worker、按商品白底先行生成、成功即导出、修订与选择式临时 ZIP。OSS、ERP 与本地 APIMart 三节点 smoke 已通过，迁移后的服务器网络已通，服务器真实三模型 smoke 待执行
 
 ## 当前目标
 
@@ -30,7 +30,7 @@
 | C0-05 | 主 Agent | 收口精简需求边界 | 已填写 A–N 与双速流程决定 | 唯一边界、最终设计、实施计划和 `/goal` 任务书 | 需求、设计、计划、控制板 | 编号/矛盾/范围/命令自检 | 已完成 | 无 |
 | P0-01 | 产品与 Prompt OS | 结构化 Prompt、事实与身份锁 | 产品方案、已发布模板 | 模型/编译器契约；竞品只形成 Style DNA，不作生成参考 | 模型、服务、迁移、测试 | Prompt OS 与全量后端回归 | 已完成 | 规则和模板按站点持续发布 |
 | P0-02 | 前端体验 | 双速商品生产工作台 | 现有 React、最终设计和 Tasks 2–4 API | 自动/整理双入口、商品卡、9 槽 Prompt、生产结果、圈选修改与选择式本地 ZIP | `frontend/**` | 组件/API 合同测试、生产构建、桌面视觉验收 | 待开始 | API 契约冻结后执行 Task 5 |
-| P0-03 | 后端平台 | 商品准备、1+8 生成、修订与选择式导出 | Prompt OS 契约与商品资料接口 | ERP Token 查询、私有 OSS、白底结果作为槽 2–9 参考、成功即导出、历史版本保留 | Django 应用、迁移、测试、Compose | API/权限/全量回归、服务器 health/OSS/ERP/SKU smoke | 待开始 | 按实施计划 Tasks 1–4 顺序执行 |
+| P0-03 | 后端平台 | 商品准备、1+8 生成、修订与选择式导出 | Prompt OS 契约与商品资料接口 | ERP Token 查询、私有 OSS、白底结果作为槽 2–9 参考、成功即导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | `pytest -q` 172 passed；`manage.py check` 0 issues；`makemigrations --check --dry-run` no changes；`run_prompt_worker --once` processed=0；`git diff --check` clean | 已完成（本地假模式） | 真实 APIMart/ERP/OSS 服务器 smoke 与前端 Task 5 未执行 |
 | P0-04 | 平台规则/合规 | 9 槽模板与官方规则种子 | 官方来源、站点范围和管理员发布标准 | 1+8、1:1、1k 默认套图；Shopee/TikTok 来源登记；无来源规则保持 draft | 规则文档、种子数据 | 来源/版本人工复核 | 待开始 | 实施计划 Task 6，发布仅限管理员刘学城 |
 | P0-05 | QA/发布 | 假模式发布门禁与运维收口 | Compose、Caddy、现有测试 | 同源静态部署、运行手册、验证证据 | `docker/**`、Compose、环境模板、运行文档 | Compose 静态解析、服务器构建、health/OSS smoke | 进行中 | 2 号服务器 Docker Compose 构建和 `/health/ready` 通过；HTTP 临时入口仍非正式 HTTPS 发布 |
 | P0-06 | 主 Agent + 平台/QA | APIMart 真实契约与费用门禁 | APIMart 中文文档、公开测试图、精确目标模型 | 三模型的真实包络适配、结构化输出、异步任务恢复与质量基准证据 | 视觉/Prompt/图像适配器、测试、运行文档 | 公开图契约、标注基准集、失败语义、任务轮询与费用记录 | 进行中 | 本地开发机已完成 DeepSeek 文本、GPT-5 Nano 视觉观察、GPT Image 2 提交/轮询/结果下载最小真实 smoke；迁移后的服务器已通过 APIMart DNS、TLS 与 HTTP 连通检查，下一步在服务器执行同套真实模型 smoke |

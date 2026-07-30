@@ -51,6 +51,19 @@ def test_preflight_counts_clusters_and_quota(tmp_path, settings):
     assert result["blocking_errors"] == []
 
 
+@override_settings(USER_DAILY_GENERATION_LIMIT=1, GENERATION_QUOTAS_ENABLED=False)
+def test_confirm_generation_ignores_daily_quota_when_business_quota_is_disabled(tmp_path, settings):
+    from platform_app.services import confirm_generation
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=2)
+    user.daily_generation_limit = 1
+    user.save(update_fields=["daily_generation_limit"])
+
+    generations = confirm_generation(batch, user)
+
+    assert len(generations) == 2
+
+
 def test_confirm_generation_is_idempotent(tmp_path, settings):
     from platform_app.services import confirm_generation
 
@@ -63,7 +76,56 @@ def test_confirm_generation_is_idempotent(tmp_path, settings):
     assert batch.generations.count() == 2
 
 
-@override_settings(USER_DAILY_GENERATION_LIMIT=1)
+def test_ensure_cluster_generations_creates_detail_slots_only_after_completed_hero(tmp_path, settings):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate, PromptVersion, ResultAsset
+    from platform_app.services import ensure_cluster_generations
+
+    settings.MEDIA_ROOT = tmp_path
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    for order in range(2, 10):
+        OutputSlot.objects.create(template=template, name=f"Slot {order}", order=order)
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    for slot in template.slots.order_by("order"):
+        PromptVersion.objects.create(
+            cluster=cluster,
+            created_by=user,
+            output_slot=slot,
+            prompt_text=f"Prompt {slot.order}",
+            input_snapshot={"reference_snapshot": [batch.assets.first().storage_path]},
+        )
+
+    first = ensure_cluster_generations(cluster, user)
+    second = ensure_cluster_generations(cluster, user)
+
+    assert [item.id for item in second] == [item.id for item in first]
+    assert list(cluster.generations.values_list("output_slot__order", flat=True)) == [1]
+
+    hero = first[0]
+    hero.status = Generation.Status.COMPLETED
+    hero.save(update_fields=["status", "updated_at"])
+    hero_path = f"results/{batch.id}/{cluster.id}/{hero.output_slot_id}/1/{hero.id}.png"
+    ResultAsset.objects.create(
+        generation=hero,
+        storage_path=hero_path,
+        sha256="1" * 64,
+        file_size=10,
+    )
+
+    all_generations = ensure_cluster_generations(cluster, user)
+
+    assert [item.output_slot.order for item in all_generations] == list(range(1, 10))
+    detail_refs = [
+        generation.reference_snapshot
+        for generation in all_generations
+        if generation.output_slot.order == 2
+    ][0]
+    assert hero_path in detail_refs
+
+
+@override_settings(USER_DAILY_GENERATION_LIMIT=1, GENERATION_QUOTAS_ENABLED=True)
 def test_confirm_generation_rejects_user_quota(tmp_path, settings):
     from platform_app.services import confirm_generation
 

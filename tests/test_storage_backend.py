@@ -1,5 +1,6 @@
 from io import BytesIO
 import hashlib
+import json
 import zipfile
 
 import pytest
@@ -138,7 +139,11 @@ def test_authorized_media_and_export_read_private_oss_objects(fake_oss, client):
 
     asset_response = client.get(reverse("api_asset_media", args=[asset.id]))
     result_response = client.get(reverse("api_result_media", args=[result.id]))
-    export_response = client.get(reverse("api_project_export", args=[batch.id]))
+    export_response = client.post(
+        reverse("api_project_export", args=[batch.id]),
+        data=json.dumps({"generation_ids": []}),
+        content_type="application/json",
+    )
 
     assert b"".join(asset_response.streaming_content) == b"asset"
     assert b"".join(result_response.streaming_content) == b"result"
@@ -146,5 +151,4 @@ def test_authorized_media_and_export_read_private_oss_objects(fake_oss, client):
     with zipfile.ZipFile(BytesIO(exported)) as archive:
         assert archive.read(archive.namelist()[0]) == b"result"
     export_keys = [key for key in fake_oss.objects if key.startswith(f"independent-image-platform/exports/{batch.id}/")]
-    assert len(export_keys) == 1
-    assert fake_oss.objects[export_keys[0]] == exported
+    assert export_keys == []

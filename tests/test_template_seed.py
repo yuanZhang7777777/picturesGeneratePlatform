@@ -18,8 +18,8 @@ REGIONAL_TARGETS = {
 def test_seed_platform_templates_creates_published_global_baseline_and_drafts():
     call_command("seed_platform_templates")
 
-    template = OutputTemplate.objects.get(platform="global", site="", version="2026.07.8")
-    assert template.version == "2026.07.8"
+    template = OutputTemplate.objects.get(platform="global", site="", version="2026.07.9")
+    assert template.version == "2026.07.9"
     assert template.status == OutputTemplate.Status.PUBLISHED
     assert template.default_size == "1:1"
     assert template.default_resolution == "1k"
@@ -31,17 +31,18 @@ def test_seed_platform_templates_creates_published_global_baseline_and_drafts():
         ("Key benefit", "Show one verified product selling point"),
         ("Product detail", "Show material, construction, or detail evidence"),
         ("Function", "Show a verified product function"),
-        ("Size and scale", "Show verified dimensions or real-world scale without unverified claims"),
         ("Usage", "Show realistic product use"),
-        ("Lifestyle scene", "Show the product in a relevant lifestyle scene"),
-        ("Packaging and accessories", "Show included packaging or verified accessories"),
+        ("Model or scale", "Show model, wearer, user, pet, or real-world scale without unverified claims"),
+        ("Size, packaging, or contents", "Show verified size, packaging, or included items without inventing numbers"),
+        ("Marketplace conversion", "Show marketplace-ready conversion creative in the target market language"),
+        ("Supplemental conversion", "Show one additional conversion angle without repeating earlier slots"),
     ]
 
     rule = RuleProfile.objects.get(platform="global", site="", name="Global marketplace baseline")
     assert rule.version == "2026.07"
     assert rule.status == RuleProfile.Status.PUBLISHED
     assert rule.rules == {
-        "review_required": True,
+        "review_required": False,
         "localized_copy": True,
         "no_unverified_claims": True,
     }
@@ -69,14 +70,14 @@ def test_seed_platform_templates_is_idempotent_and_preserves_existing_edits():
 
     assert OutputTemplate.objects.count() == 14
     assert RuleProfile.objects.count() == 14
-    assert OutputTemplate.objects.get(platform="global", site="", version="2026.07.8").slots.count() == 8
+    assert OutputTemplate.objects.get(platform="global", site="", version="2026.07.9").slots.count() == 9
     global_rule.refresh_from_db()
     assert global_rule.rules == {"admin_edit": True}
 
 
 def test_seed_uses_stable_identity_without_overwriting_admin_edits():
     call_command("seed_platform_templates")
-    template = OutputTemplate.objects.get(platform="global", site="", version="2026.07.8")
+    template = OutputTemplate.objects.get(platform="global", site="", version="2026.07.9")
     rule = RuleProfile.objects.get(seed_key="global-marketplace-baseline-rule")
     template.name = "Administrator renamed template"
     template.status = OutputTemplate.Status.DRAFT
@@ -97,7 +98,7 @@ def test_seed_uses_stable_identity_without_overwriting_admin_edits():
     assert template.name == "Administrator renamed template"
     assert template.status == OutputTemplate.Status.DRAFT
     assert template.version == "admin-version"
-    assert template.slots.count() == 8
+    assert template.slots.count() == 9
     assert rule.name == "Administrator renamed rule"
     assert rule.status == RuleProfile.Status.DRAFT
     assert rule.version == "admin-version"
@@ -106,7 +107,7 @@ def test_seed_uses_stable_identity_without_overwriting_admin_edits():
 
 def test_unselected_projects_and_legacy_confirm_use_global_baseline():
     call_command("seed_platform_templates")
-    baseline = OutputTemplate.objects.get(platform="global", site="", version="2026.07.8")
+    baseline = OutputTemplate.objects.get(platform="global", site="", version="2026.07.9")
     user = get_user_model().objects.create_user(username="seed-user", password="long-enough-password")
 
     shopee = create_project(owner=user, name="Shopee project", platform="shopee", market="SG")
@@ -124,7 +125,7 @@ def test_unselected_projects_and_legacy_confirm_use_global_baseline():
     ).exists()
 
 
-def test_seed_creates_new_eight_slot_version_without_rewriting_existing_template_or_batch():
+def test_seed_creates_new_nine_slot_version_without_rewriting_existing_template_or_batch():
     legacy = OutputTemplate.objects.create(
         seed_key="global-marketplace-baseline-template",
         platform="global",
@@ -148,7 +149,7 @@ def test_seed_creates_new_eight_slot_version_without_rewriting_existing_template
     assert batch.output_template_id == legacy.id
 
 
-def test_seeded_eight_slot_template_beats_custom_template_and_preserves_old_batch():
+def test_seeded_nine_slot_template_beats_custom_template_and_preserves_old_batch():
     legacy = OutputTemplate.objects.create(
         seed_key="global-marketplace-baseline-template",
         platform="global",
@@ -159,9 +160,9 @@ def test_seeded_eight_slot_template_beats_custom_template_and_preserves_old_batc
     )
     legacy.slots.create(name="Legacy main", order=1)
     custom = OutputTemplate.objects.create(
-        platform="global", site="", name="Custom eight", version="zzzz", status=OutputTemplate.Status.PUBLISHED
+        platform="global", site="", name="Custom nine", version="zzzz", status=OutputTemplate.Status.PUBLISHED
     )
-    for order in range(1, 9):
+    for order in range(1, 10):
         custom.slots.create(name=f"Custom {order}", order=order)
     user = get_user_model().objects.create_user(username="seed-priority", password="long-enough-password")
     old_batch = Batch.objects.create(owner=user, name="Old", output_template=legacy)
@@ -170,17 +171,17 @@ def test_seeded_eight_slot_template_beats_custom_template_and_preserves_old_batc
     fresh = create_project(owner=user, name="Fresh")
     from platform_app.services import preflight_batch
 
-    assert fresh.output_template.seed_key == "global-marketplace-eight-slot-template"
-    assert preflight_batch(fresh, user)["slot_count"] == 8
+    assert fresh.output_template.seed_key == "global-marketplace-nine-slot-template"
+    assert preflight_batch(fresh, user)["slot_count"] == 9
     assert old_batch.output_template_id == legacy.id
 
 
-def test_new_install_baseline_seed_beats_custom_eight_slot_template():
+def test_new_install_baseline_seed_beats_custom_nine_slot_template():
     call_command("seed_platform_templates")
     custom = OutputTemplate.objects.create(
-        platform="global", site="", name="Custom eight", version="zzzz", status=OutputTemplate.Status.PUBLISHED
+        platform="global", site="", name="Custom nine", version="zzzz", status=OutputTemplate.Status.PUBLISHED
     )
-    for order in range(1, 9):
+    for order in range(1, 10):
         custom.slots.create(name=f"Custom {order}", order=order)
     user = get_user_model().objects.create_user(username="baseline-priority", password="long-enough-password")
 
@@ -213,14 +214,40 @@ def test_upgrade_seed_beats_legacy_baseline_that_already_has_eight_slots():
     Cluster.objects.create(batch=pending, name="Pending SKU")
     preflight = preflight_batch(pending, user)
     confirmed = confirm_generation(pending, user)
-    upgrade = OutputTemplate.objects.get(seed_key="global-marketplace-eight-slot-template")
+    upgrade = OutputTemplate.objects.get(seed_key="global-marketplace-nine-slot-template")
     old_batch.refresh_from_db()
     pending.refresh_from_db()
 
     assert fresh.output_template_id == upgrade.id
     assert preflight["template"]["id"] == str(upgrade.id)
     assert pending.output_template_id == upgrade.id
-    assert len(confirmed) == 8
+    assert len(confirmed) == 9
     assert old_batch.output_template_id == legacy.id
     assert list(old_batch.generations.values_list("id", flat=True)) == [generation.id for generation in old_generations]
     assert old_cluster.generations.count() == 8
+
+
+def test_seed_creates_nine_slot_upgrade_without_rewriting_generated_legacy_template():
+    user = get_user_model().objects.create_user(username="nine-slot-owner", password="long-enough-password")
+    legacy = OutputTemplate.objects.create(
+        seed_key="global-marketplace-baseline-template",
+        platform="global",
+        site="",
+        name="Legacy eight",
+        version="2026.07.8",
+        status=OutputTemplate.Status.PUBLISHED,
+    )
+    for order in range(1, 9):
+        legacy.slots.create(name=f"Legacy {order}", order=order)
+    old_batch = Batch.objects.create(owner=user, name="Old", output_template=legacy)
+    Cluster.objects.create(batch=old_batch, name="Old SKU")
+    old_generations = confirm_generation(old_batch, user)
+
+    call_command("seed_platform_templates")
+    fresh = create_project(owner=user, name="Fresh")
+
+    old_batch.refresh_from_db()
+    assert fresh.output_template.seed_key == "global-marketplace-nine-slot-template"
+    assert fresh.output_template.slots.count() == 9
+    assert old_batch.output_template_id == legacy.id
+    assert list(old_batch.generations.values_list("id", flat=True)) == [item.id for item in old_generations]

@@ -1,10 +1,12 @@
+import csv
 import json
 import mimetypes
+import re
 import uuid
 import zipfile
 from io import BytesIO
+from io import StringIO
 from pathlib import Path, PurePosixPath
-from tempfile import TemporaryFile
 
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
@@ -13,6 +15,7 @@ from django.middleware.csrf import get_token
 from django.db import connection
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.http import require_POST
 
@@ -22,6 +25,7 @@ from .services import (
     CatalogAuthExpired,
     confirm_generation,
     create_project,
+    ensure_cluster_generations,
     generation_failure_message,
     LocalStorage,
     import_skus,
@@ -30,7 +34,9 @@ from .services import (
     review_generation,
     preflight_batch,
     register_uploaded_asset,
+    regenerate_generation,
     optimize_cluster_prompt,
+    request_generation_revision,
     safe_storage_path,
     serialize_project,
 )
@@ -222,6 +228,7 @@ def api_upload_assets(request, batch_id):
     batch = _batch_for_user(request.user, batch_id)
     uploads = request.FILES.getlist("files")
     relative_paths = request.POST.getlist("relative_paths")
+    mode = request.POST.get("mode") or batch.last_import_mode
     try:
         filenames = [
             _relative_upload_path(relative_paths[index]) if index < len(relative_paths) else uploaded.name
@@ -233,7 +240,7 @@ def api_upload_assets(request, batch_id):
     for uploaded, filename in zip(uploads, filenames):
         try:
             assets.append(
-                register_uploaded_asset(batch, filename, uploaded.read(), uploaded.content_type)
+                register_uploaded_asset(batch, filename, uploaded.read(), uploaded.content_type, mode=mode)
             )
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
@@ -250,7 +257,7 @@ def api_sku_import(request, batch_id):
         if not isinstance(payload, dict):
             raise ValueError("request body must be an object")
         erp_token = request.session.get("erp_access_token")
-        return JsonResponse(import_skus(batch, payload.get("skus"), erp_token=erp_token))
+        return JsonResponse(import_skus(batch, payload.get("skus"), erp_token=erp_token, mode=payload.get("mode")))
     except CatalogAuthExpired as exc:
         request.session.pop("erp_access_token", None)
         return JsonResponse({"error": str(exc)}, status=401)
@@ -417,6 +424,29 @@ def api_confirm_generation(request, batch_id):
 @login_required
 @password_change_required
 @require_POST
+def api_project_generate(request, batch_id):
+    batch = _batch_for_user(request.user, batch_id)
+    try:
+        payload = json.loads(request.body or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be an object")
+        cluster_ids = payload.get("cluster_ids") or []
+        slot_orders = payload.get("slot_orders") or None
+        if cluster_ids:
+            clusters = batch.clusters.filter(id__in=cluster_ids)
+        else:
+            clusters = batch.clusters.all()
+        generations = []
+        for cluster in clusters:
+            generations.extend(ensure_cluster_generations(cluster, request.user, slot_orders=slot_orders))
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"generation_count": len(generations)})
+
+
+@login_required
+@password_change_required
+@require_POST
 def api_generation_retry(request, generation_id):
     generation = _generation_for_user(request.user, generation_id)
     try:
@@ -424,6 +454,18 @@ def api_generation_retry(request, generation_id):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     return JsonResponse({"id": str(retry.id), "attempt": retry.attempt, "status": retry.status})
+
+
+@login_required
+@password_change_required
+@require_POST
+def api_generation_regenerate(request, generation_id):
+    generation = _generation_for_user(request.user, generation_id)
+    try:
+        regenerated = regenerate_generation(generation, request.user)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"id": str(regenerated.id), "attempt": regenerated.attempt, "status": regenerated.status})
 
 
 @login_required
@@ -513,27 +555,72 @@ def api_generation_review(request, generation_id):
 
 @login_required
 @password_change_required
-@require_http_methods(["GET"])
+@require_POST
+def api_generation_revise(request, generation_id):
+    generation = _generation_for_user(request.user, generation_id)
+    try:
+        payload = json.loads(request.body or "{}")
+        revision = request_generation_revision(
+            generation,
+            request.user,
+            issue_tags=payload.get("issue_tags", []),
+            description=payload.get("description", ""),
+            annotations=payload.get("annotations", []),
+        )
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(
+        {
+            "generation": {
+                "id": str(revision.id),
+                "attempt": revision.attempt,
+                "status": revision.status,
+                "review_status": revision.review_status,
+            }
+        }
+    )
+
+
+def _archive_name_part(value, fallback):
+    value = str(value or fallback).strip()
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value)
+    value = re.sub(r"\s+", " ", value).strip(" .")
+    return value or fallback
+
+
+def _selected_export_generations(batch, generation_ids):
+    queryset = batch.generations.select_related("cluster", "output_slot").prefetch_related("result_assets")
+    if generation_ids:
+        requested = [uuid.UUID(str(value)) for value in generation_ids]
+        return list(queryset.filter(id__in=requested, status=Generation.Status.COMPLETED).order_by("cluster__name", "output_slot__order", "-attempt"))
+    latest = {}
+    for generation in queryset.filter(status=Generation.Status.COMPLETED).order_by(
+        "cluster_id", "output_slot_id", "-attempt", "-id"
+    ):
+        latest.setdefault((generation.cluster_id, generation.output_slot_id), generation)
+    return list(latest.values())
+
+
+@login_required
+@password_change_required
+@require_POST
 def api_project_export(request, batch_id):
     batch = _batch_for_user(request.user, batch_id)
-    latest = {}
-    generations = (
-        batch.generations.select_related("cluster", "output_slot")
-        .prefetch_related("result_assets")
-        .order_by("cluster_id", "output_slot_id", "-attempt", "-id")
-    )
-    for generation in generations:
-        latest.setdefault((generation.cluster_id, generation.output_slot_id), generation)
-
+    try:
+        payload = json.loads(request.body or "{}")
+        generation_ids = payload.get("generation_ids", [])
+        if not isinstance(generation_ids, list):
+            raise ValueError("generation_ids must be a list")
+        generations = _selected_export_generations(batch, generation_ids)
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
     storage = LocalStorage()
     entries = []
+    manifest = [["generation_id", "product", "sku", "slot_order", "slot_name", "attempt", "filename"]]
     total_size = 0
-    for generation in latest.values():
-        if (
-            generation.status != Generation.Status.COMPLETED
-            or generation.review_status != Generation.ReviewStatus.ACCEPTED
-        ):
-            continue
+    root_name = _archive_name_part(f"{batch.name}_{timezone.localdate():%Y%m%d}", "project")
+    seen_names = {}
+    for generation in generations:
         results = list(generation.result_assets.all())
         for result in results:
             try:
@@ -555,28 +642,40 @@ def api_project_export(request, batch_id):
             suffix = Path(storage_path).suffix.lower()
             if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
                 suffix = ".bin"
-            result_suffix = f"-result-{result.id}" if len(results) > 1 else ""
-            entries.append(
-                (
-                    storage.read(storage_path),
-                    (
-                        f"project-{batch.id}/cluster-{generation.cluster_id}/"
-                        f"slot-{generation.output_slot_id}/attempt-{generation.attempt}"
-                        f"{result_suffix}{suffix}"
-                    ),
-                )
+            product = _archive_name_part(generation.cluster.product_name or generation.cluster.name, "product")
+            sku = _archive_name_part(generation.cluster.sku, "") if generation.cluster.sku else ""
+            folder = f"{product}__{sku}" if sku else product
+            slot_name = _archive_name_part(generation.output_slot.name, f"slot-{generation.output_slot.order}")
+            archive_name = f"{root_name}/{folder}/{generation.output_slot.order:02d}_{slot_name}{suffix}"
+            if archive_name in seen_names:
+                seen_names[archive_name] += 1
+                stem = archive_name[: -len(suffix)]
+                archive_name = f"{stem}_{seen_names[archive_name]}{suffix}"
+            else:
+                seen_names[archive_name] = 1
+            entries.append((storage.read(storage_path), archive_name))
+            manifest.append(
+                [
+                    str(generation.id),
+                    product,
+                    sku,
+                    str(generation.output_slot.order),
+                    generation.output_slot.name,
+                    str(generation.attempt),
+                    archive_name,
+                ]
             )
     if not entries:
-        return JsonResponse({"error": "No accepted images are available to export"}, status=400)
+        return JsonResponse({"error": "No completed images are available to export"}, status=400)
 
-    temporary = TemporaryFile()
-    with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+    export_data = BytesIO()
+    with zipfile.ZipFile(export_data, "w", zipfile.ZIP_DEFLATED) as archive:
         for data, archive_name in entries:
             archive.writestr(archive_name, data)
-    temporary.seek(0)
-    export_data = temporary.read()
-    export_path = f"exports/{batch.id}/{uuid.uuid4().hex}.zip"
-    storage.save(export_path, export_data)
+        csv_buffer = StringIO()
+        writer = csv.writer(csv_buffer)
+        writer.writerows(manifest)
+        archive.writestr(f"{root_name}/导出清单.csv", "\ufeff" + csv_buffer.getvalue())
     AuditEvent.objects.create(
         actor=request.user,
         action="project.export",
@@ -584,9 +683,10 @@ def api_project_export(request, batch_id):
         object_id=str(batch.id),
         metadata={"file_count": len(entries)},
     )
+    export_data.seek(0)
     return FileResponse(
-        BytesIO(export_data),
+        BytesIO(export_data.getvalue()),
         as_attachment=True,
-        filename=f"project-{batch.id}.zip",
+        filename=f"{root_name}.zip",
         content_type="application/zip",
     )

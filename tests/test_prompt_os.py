@@ -414,3 +414,120 @@ def test_prompt_node_template_publish_and_rollback_keeps_one_active_version():
     second.refresh_from_db()
     assert first.status == PromptNodeTemplate.Status.PUBLISHED
     assert second.status == PromptNodeTemplate.Status.RETIRED
+
+
+def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path, settings):
+    import json
+
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+    from platform_app.management.commands.seed_platform_templates import GLOBAL_SLOTS
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Prompt queue", output_template=None)
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="b" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+
+    template = OutputTemplate.objects.create(
+        seed_key="global-marketplace-nine-slot-template",
+        platform="global",
+        site="",
+        name="Nine slot",
+        version="2026.07.9",
+    )
+    for order, name, purpose in GLOBAL_SLOTS:
+        template.slots.create(order=order, name=name, purpose=purpose)
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class PromptClient:
+        def observe_images(self, instruction, image_paths):
+            assert image_paths and image_paths[0].endswith("source.png")
+            return {
+                "output_text": json.dumps(
+                    {
+                        "product_name": "Silicone cup",
+                        "confidence": 0.91,
+                        "product_facts": ["green silicone cup", "two handles"],
+                        "identity_lock": "Keep green cup and two handles",
+                        "target_consumer": "adult",
+                    }
+                ),
+                "raw": {"node": "vision"},
+            }
+
+        def optimize_prompt(self, payload):
+            assert "Silicone cup" in payload["text"]
+            return {
+                "output_text": json.dumps(
+                    {
+                        "slots": [
+                            {"order": order, "prompt": f"Prompt for slot {order}"}
+                            for order in range(1, 10)
+                        ]
+                    }
+                ),
+                "raw": {"node": "prompt"},
+            }
+
+    assert process_prompt_once(PromptClient(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == "ready"
+    assert cluster.product_name == "Silicone cup"
+    assert cluster.product_facts == "green silicone cup; two handles"
+    assert cluster.identity_lock == "Keep green cup and two handles"
+    assert cluster.analysis_snapshot["confidence"] == 0.91
+    prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
+    assert [prompt.output_slot.order for prompt in prompts] == list(range(1, 10))
+    assert [prompt.prompt_text for prompt in prompts] == [f"Prompt for slot {order}" for order in range(1, 10)]
+
+
+def test_prompt_worker_marks_only_current_cluster_failed_after_json_repair_fails(tmp_path, settings):
+    from platform_app.models import Asset, Batch, Cluster, OutputSlot, OutputTemplate
+    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Template")
+    OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = Batch.objects.create(owner=user, name="Prompt queue", output_template=template)
+
+    for index in range(2):
+        storage_path = f"originals/{batch.id}/{index}.png"
+        (tmp_path / storage_path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / storage_path).write_bytes(b"png-bytes")
+        asset = Asset.objects.create(
+            batch=batch,
+            kind=Asset.Kind.IMAGE,
+            original_filename=f"{index}.png",
+            storage_path=storage_path,
+            sha256=str(index).rjust(64, "0"),
+            file_size=9,
+            content_type="image/png",
+        )
+        request_cluster_preparation(Cluster.create_for_asset(batch, asset), auto_generate=False)
+
+    class BadClient:
+        def observe_images(self, instruction, image_paths):
+            return {"output_text": "{bad", "raw": {}}
+
+        def optimize_prompt(self, payload):
+            return {"output_text": "{still bad", "raw": {}}
+
+    assert process_prompt_once(BadClient(), LocalStorage(tmp_path)) == 1
+    statuses = list(batch.clusters.order_by("created_at").values_list("preparation_status", flat=True))
+    assert statuses == ["failed", "pending"]

@@ -242,9 +242,32 @@ class FakeAPIMartClient:
         return buffer.getvalue()
 
     def observe_images(self, instruction, image_paths):
-        return {"output_text": json.dumps({"ok": True}), "raw": {}}
+        return {
+            "output_text": json.dumps(
+                {
+                    "product_name": "Demo product",
+                    "confidence": 0.9,
+                    "product_facts": ["visible product reference"],
+                    "identity_lock": "Preserve the visible product identity.",
+                    "target_consumer": "adult",
+                }
+            ),
+            "raw": {},
+        }
 
     def optimize_prompt(self, payload):
+        if "slots" in payload.get("text", ""):
+            return {
+                "output_text": json.dumps(
+                    {
+                        "slots": [
+                            {"order": order, "prompt": f"Create demo ecommerce product image slot {order}."}
+                            for order in range(1, 10)
+                        ]
+                    }
+                ),
+                "raw": {},
+            }
         return {"output_text": json.dumps({"suggested_prompt": payload.get("text", "")}), "raw": {}}
 
 
@@ -358,11 +381,15 @@ class APIMartClient:
         return response.content
 
     def complete_chat(self, messages, *, model=None):
+        temperature = settings.APIMART_PROMPT_TEMPERATURE
+        if temperature < 0 or temperature > 2:
+            raise ProviderError("APIMart prompt temperature must be between 0 and 2")
         response = self.session.post(
             self._api_url("/api/v1/chat/completions"),
             json={
                 "model": model or settings.APIMART_PROMPT_MODEL,
                 "stream": False,
+                "temperature": temperature,
                 "messages": messages,
             },
             headers=self.headers,
@@ -570,8 +597,33 @@ def _inspect_image(data):
         raise ValueError("Upload must be JPEG, PNG, or UTF-8 TXT") from exc
 
 
+def _normalize_import_mode(mode):
+    mode = str(mode or Batch.ImportMode.ORGANIZE).strip()
+    if mode not in Batch.ImportMode.values:
+        raise ValueError("mode must be auto or organize")
+    return mode
+
+
 @transaction.atomic
-def register_uploaded_asset(batch, filename, content, content_type):
+def request_cluster_preparation(cluster, *, auto_generate):
+    locked = Cluster.objects.select_for_update().get(id=cluster.id)
+    locked.auto_generate = bool(auto_generate)
+    locked.preparation_status = Cluster.PreparationStatus.PENDING
+    locked.preparation_error = ""
+    locked.save(
+        update_fields=[
+            "auto_generate",
+            "preparation_status",
+            "preparation_error",
+            "updated_at",
+        ]
+    )
+    return locked
+
+
+@transaction.atomic
+def register_uploaded_asset(batch, filename, content, content_type, *, mode=None):
+    mode = _normalize_import_mode(mode or batch.last_import_mode)
     data = _bytes(content)
     suffix = Path(filename).suffix.lower()
     sha256 = hashlib.sha256(data).hexdigest()
@@ -609,10 +661,12 @@ def register_uploaded_asset(batch, filename, content, content_type):
         width=width,
         height=height,
     )
-    Cluster.create_for_asset(batch=batch, asset=asset)
-    if batch.status == Batch.Status.DRAFT:
+    cluster = Cluster.create_for_asset(batch=batch, asset=asset)
+    request_cluster_preparation(cluster, auto_generate=mode == Batch.ImportMode.AUTO)
+    if batch.status == Batch.Status.DRAFT or batch.last_import_mode != mode:
         batch.status = Batch.Status.ORGANIZING
-        batch.save(update_fields=["status", "updated_at"])
+        batch.last_import_mode = mode
+        batch.save(update_fields=["status", "last_import_mode", "updated_at"])
     return asset
 
 
@@ -751,7 +805,7 @@ def _serialize_sku_import_item(item):
 
 
 def _project_is_locked(batch):
-    return bool(batch.confirmed_generation_key) or batch.generations.exists()
+    return False
 
 
 def _create_sku_import_item(batch, sku, product_name, status, *, cluster=None, error_message=""):
@@ -771,7 +825,8 @@ def _create_sku_import_item(batch, sku, product_name, status, *, cluster=None, e
     )
 
 
-def import_skus(batch, skus, *, erp_token=None, catalog_client=None, image_downloader=None):
+def import_skus(batch, skus, *, erp_token=None, catalog_client=None, image_downloader=None, mode=None):
+    mode = _normalize_import_mode(mode or batch.last_import_mode)
     if not isinstance(skus, list):
         raise ValueError("skus must be an array")
     if len(skus) > settings.CATALOG_MAX_SKUS_PER_REQUEST:
@@ -874,10 +929,16 @@ def import_skus(batch, skus, *, erp_token=None, catalog_client=None, image_downl
                                 role=ClusterAsset.Role.PRIMARY,
                                 order=1,
                             )
+                            request_cluster_preparation(cluster, auto_generate=mode == Batch.ImportMode.AUTO)
                             if locked_batch.status == Batch.Status.DRAFT:
                                 locked_batch.status = Batch.Status.ORGANIZING
-                                locked_batch.save(update_fields=["status", "updated_at"])
-                        elif product_name and cluster.product_name != product_name:
+                        else:
+                            request_cluster_preparation(cluster, auto_generate=mode == Batch.ImportMode.AUTO)
+                        if locked_batch.status == Batch.Status.DRAFT or locked_batch.last_import_mode != mode:
+                            locked_batch.status = Batch.Status.ORGANIZING
+                            locked_batch.last_import_mode = mode
+                            locked_batch.save(update_fields=["status", "last_import_mode", "updated_at"])
+                        if product_name and cluster.product_name != product_name:
                             cluster.product_name = product_name
                             cluster.name = product_name
                             cluster.version += 1
@@ -984,7 +1045,7 @@ def rollback_prompt_node_template(node_name, version):
 
 def _global_fallback_template():
     for seed_key in (
-        "global-marketplace-eight-slot-template",
+        "global-marketplace-nine-slot-template",
         "global-marketplace-baseline-template",
     ):
         template = OutputTemplate.objects.filter(
@@ -992,7 +1053,7 @@ def _global_fallback_template():
             site="",
             status=OutputTemplate.Status.PUBLISHED,
             seed_key=seed_key,
-            slots__order=8,
+            slots__order=9,
         ).first()
         if template is not None:
             return template
@@ -1184,6 +1245,160 @@ def compile_slot_prompt(
     }
 
 
+def _json_object(text):
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError("provider returned non-object JSON")
+    return payload
+
+
+def _provider_json(response, repair):
+    text = response.get("output_text", "")
+    try:
+        return _json_object(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        fixed = repair(text)
+        return _json_object(fixed.get("output_text", ""))
+
+
+def _string_list(value):
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _slot_prompt_map(payload):
+    slots = payload.get("slots")
+    if not isinstance(slots, list):
+        raise ValueError("prompt JSON must include slots")
+    prompts = {}
+    for item in slots:
+        if not isinstance(item, dict):
+            continue
+        try:
+            order = int(item.get("order"))
+        except (TypeError, ValueError):
+            continue
+        prompt = str(item.get("prompt") or "").strip()
+        if order and prompt:
+            prompts[order] = prompt
+    return prompts
+
+
+def process_prompt_once(client=None, storage=None):
+    client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
+    storage = storage or LocalStorage()
+    cluster = (
+        Cluster.objects.select_related("batch", "batch__owner", "batch__output_template")
+        .filter(preparation_status=Cluster.PreparationStatus.PENDING)
+        .order_by("updated_at", "created_at", "id")
+        .first()
+    )
+    if cluster is None:
+        return 0
+    Cluster.objects.filter(id=cluster.id).update(
+        preparation_status=Cluster.PreparationStatus.PREPARING,
+        preparation_error="",
+        updated_at=timezone.now(),
+    )
+    try:
+        references = _reference_snapshot(cluster)
+        with storage.reference_paths(references) as image_paths:
+            observation = _provider_json(
+                client.observe_images("Return strict JSON describing this product.", image_paths),
+                lambda text: client.optimize_prompt({"text": text}),
+            )
+        confidence = float(observation.get("confidence", 1))
+        product_name = str(observation.get("product_name") or observation.get("name") or "").strip()
+        if confidence < 0.5 or not product_name:
+            Cluster.objects.filter(id=cluster.id).update(
+                product_name=product_name or "名称待确认",
+                analysis_snapshot=observation,
+                preparation_status=Cluster.PreparationStatus.BLOCKED,
+                preparation_error="low confidence product name",
+                updated_at=timezone.now(),
+            )
+            return 1
+        facts = "; ".join(_string_list(observation.get("product_facts") or observation.get("facts")))
+        identity_lock = str(observation.get("identity_lock") or "").strip()
+        target_consumer = str(observation.get("target_consumer") or "").strip()
+        Cluster.objects.filter(id=cluster.id).update(
+            product_name=product_name,
+            name=product_name,
+            product_facts=facts,
+            identity_lock=identity_lock,
+            target_consumer=target_consumer,
+            analysis_snapshot=observation,
+            updated_at=timezone.now(),
+        )
+        cluster.refresh_from_db()
+        template = cluster.batch.output_template or _global_fallback_template()
+        slots = list(template.slots.order_by("order", "id"))
+        prompt_payload = _provider_json(
+            client.optimize_prompt(
+                {
+                    "text": "\n".join(
+                        [
+                            f"Product name: {cluster.product_name}",
+                            f"Facts: {cluster.product_facts}",
+                            f"Identity lock: {cluster.identity_lock}",
+                            "Return JSON with slots: [{order, prompt}] for 1..9.",
+                        ]
+                    )
+                }
+            ),
+            lambda text: client.optimize_prompt({"text": text}),
+        )
+        prompts = _slot_prompt_map(prompt_payload)
+        if any(slot.order not in prompts for slot in slots):
+            raise ValueError("prompt JSON missing slot prompts")
+        existing = {
+            prompt.output_slot_id: prompt
+            for prompt in cluster.prompt_versions.filter(output_slot__in=slots, generations__isnull=True)
+        }
+        node_template = _published_prompt_node("slot_prompt")
+        for slot in slots:
+            compiled = compile_slot_prompt(cluster, slot, batch=cluster.batch, template=template, node_template=node_template)
+            prompt_text = prompts[slot.order]
+            compiled["prompt"] = prompt_text
+            compiled["input_snapshot"]["reference_snapshot"] = compiled["reference_snapshot"]
+            values = {
+                "cluster": cluster,
+                "output_slot": slot,
+                "created_by": cluster.batch.owner,
+                "node_name": compiled["node_name"],
+                "template_version": compiled["template_version"],
+                "provider_model": compiled["provider_model"],
+                "prompt_text": prompt_text,
+                "input_snapshot": compiled["input_snapshot"],
+                "structured_output": compiled,
+                "evaluation": compiled["evaluation"],
+                "source_snapshot": compiled["input_snapshot"],
+            }
+            if slot.id in existing:
+                PromptVersion.objects.filter(id=existing[slot.id].id).update(**{k: v for k, v in values.items() if k not in {"cluster", "output_slot", "created_by"}})
+            else:
+                PromptVersion.objects.create(**values)
+        Cluster.objects.filter(id=cluster.id).update(
+            preparation_status=Cluster.PreparationStatus.READY,
+            preparation_error="",
+            updated_at=timezone.now(),
+        )
+        cluster.refresh_from_db()
+        if cluster.auto_generate:
+            ensure_cluster_generations(cluster, cluster.batch.owner)
+        return 1
+    except Exception as exc:
+        Cluster.objects.filter(id=cluster.id).update(
+            preparation_status=Cluster.PreparationStatus.FAILED,
+            preparation_error=_sanitize_provider_text(str(exc)),
+            updated_at=timezone.now(),
+        )
+        return 1
+
+
 def _used_generations_today(user=None):
     today = timezone.localdate()
     queryset = Generation.objects.exclude(status=Generation.Status.CANCELED).filter(created_at__date=today)
@@ -1205,6 +1420,8 @@ def _locked_daily_usage(scope, user=None):
 
 @transaction.atomic
 def reserve_generation_usage(user, count):
+    if not settings.GENERATION_QUOTAS_ENABLED:
+        return
     if count <= 0:
         return
     organization = _locked_daily_usage(DailyGenerationUsage.Scope.ORGANIZATION)
@@ -1236,10 +1453,11 @@ def preflight_batch(batch, user, template=None):
         blocking_errors.append("output template requires a standard product hero at order 1")
     if generation_count > BATCH_GENERATION_LIMIT:
         blocking_errors.append("batch generation limit exceeded")
-    if generation_count > org_remaining:
-        blocking_errors.append("organization daily quota exceeded")
-    if generation_count > user_remaining:
-        blocking_errors.append("user daily quota exceeded")
+    if settings.GENERATION_QUOTAS_ENABLED:
+        if generation_count > org_remaining:
+            blocking_errors.append("organization daily quota exceeded")
+        if generation_count > user_remaining:
+            blocking_errors.append("user daily quota exceeded")
 
     return {
         "cluster_count": cluster_count,
@@ -1263,6 +1481,135 @@ def preflight_batch(batch, user, template=None):
             else None
         ),
     }
+
+
+def _latest_completed_hero(cluster, template):
+    return (
+        cluster.generations.filter(
+            output_slot__template=template,
+            output_slot__order=1,
+            status=Generation.Status.COMPLETED,
+            result_assets__isnull=False,
+        )
+        .prefetch_related("result_assets")
+        .order_by("-attempt", "-created_at", "-id")
+        .first()
+    )
+
+
+def _prompt_for_slot(cluster, slot):
+    return (
+        cluster.prompt_versions.filter(output_slot=slot)
+        .order_by("-created_at", "-id")
+        .first()
+    )
+
+
+@transaction.atomic
+def ensure_cluster_generations(cluster, user, *, slot_orders=None, force_new=False):
+    locked = Cluster.objects.select_for_update().select_related("batch", "batch__output_template", "batch__rule_profile").get(id=cluster.id)
+    batch = locked.batch
+    template = batch.output_template or _global_fallback_template()
+    if template.status != OutputTemplate.Status.PUBLISHED:
+        raise ValueError("output template must be published before generation")
+    if batch.rule_profile_id and batch.rule_profile.status != RuleProfile.Status.PUBLISHED:
+        raise ValueError("rule profile must be published before generation")
+    if batch.output_template_id != template.id:
+        batch.output_template = template
+    if not batch.market:
+        batch.market = batch.site
+    if not batch.size:
+        batch.size = template.default_size
+    if not batch.resolution:
+        batch.resolution = template.default_resolution
+    batch.save(update_fields=["output_template", "market", "size", "resolution", "updated_at"])
+
+    requested = {int(order) for order in slot_orders} if slot_orders else None
+    slots = list(template.slots.order_by("order", "id"))
+    if requested:
+        slots = [slot for slot in slots if slot.order in requested or slot.order == 1]
+    if not any(slot.order == 1 for slot in slots):
+        raise ValueError("output template requires a standard product hero at order 1")
+
+    hero = _latest_completed_hero(locked, template)
+    creatable = [slot for slot in slots if slot.order == 1 or hero is not None]
+    if not force_new:
+        existing = {
+            generation.output_slot_id: generation
+            for generation in locked.generations.filter(
+                output_slot__in=creatable,
+                status__in=[
+                    Generation.Status.QUEUED,
+                    Generation.Status.PREPARING,
+                    Generation.Status.SUBMITTING,
+                    Generation.Status.SUBMITTED,
+                    Generation.Status.PROCESSING,
+                    Generation.Status.ARCHIVING,
+                    Generation.Status.COMPLETED,
+                ],
+            ).order_by("output_slot__order", "-attempt", "-id")
+        }
+    else:
+        existing = {}
+
+    to_create = [slot for slot in creatable if force_new or slot.id not in existing]
+    reserve_generation_usage(user, len(to_create))
+    hero_refs = []
+    if hero is not None:
+        hero_refs = [result.storage_path for result in hero.result_assets.all()]
+    created = []
+    node_template = _published_prompt_node("slot_prompt")
+    for slot in to_create:
+        prompt_version = _prompt_for_slot(locked, slot)
+        if prompt_version is None:
+            compiled = compile_slot_prompt(locked, slot, batch=batch, template=template, node_template=node_template)
+            prompt_version = PromptVersion.objects.create(
+                cluster=locked,
+                output_slot=slot,
+                created_by=user,
+                node_name=compiled["node_name"],
+                template_version=compiled["template_version"],
+                provider_model=compiled["provider_model"],
+                prompt_text=compiled["prompt"],
+                input_snapshot=compiled["input_snapshot"],
+                structured_output=compiled,
+                evaluation=compiled["evaluation"],
+                source_snapshot=compiled["input_snapshot"],
+            )
+        references = _prompt_version_references(prompt_version) or _reference_snapshot(locked)
+        if slot.order > 1:
+            references = list(dict.fromkeys([*references, *hero_refs]))
+        created.append(
+            Generation.objects.create(
+                batch=batch,
+                cluster=locked,
+                output_slot=slot,
+                prompt_version=prompt_version,
+                created_by=user,
+                attempt=latest_attempt(locked, slot) + 1,
+                status=Generation.Status.QUEUED,
+                prompt_text=prompt_version.prompt_text,
+                size=batch.size or template.default_size,
+                resolution=batch.resolution or template.default_resolution,
+                reference_snapshot=references,
+                template_snapshot=_template_snapshot(template, slot),
+                rule_snapshot=_rule_snapshot(batch.rule_profile),
+            )
+        )
+    Batch.objects.filter(id=batch.id).update(status=Batch.Status.QUEUED, updated_at=timezone.now())
+    return list(
+        locked.generations.select_related("output_slot")
+        .filter(output_slot__in=slots)
+        .order_by("output_slot__order", "attempt", "id")
+    )
+
+
+def regenerate_generation(source, user, prompt_version=None):
+    overrides = {}
+    if prompt_version is not None:
+        overrides["prompt_version"] = prompt_version
+        overrides["prompt_text"] = prompt_version.prompt_text
+    return _create_followup_attempt(source, user, **overrides)
 
 
 @transaction.atomic
@@ -1316,6 +1663,7 @@ def confirm_generation(batch, user, template=None):
             )
             prompt_version = PromptVersion.objects.create(
                 cluster=cluster,
+                output_slot=slot,
                 created_by=user,
                 node_name=compiled["node_name"],
                 template_version=compiled["template_version"],
@@ -1574,6 +1922,7 @@ def _ensure_generation_prompt_policy(generation, user):
     structured_output["prompt"] = prompt_text
     prompt_version = PromptVersion.objects.create(
         cluster=generation.cluster,
+        output_slot=generation.output_slot,
         created_by=user or generation.created_by or generation.batch.owner,
         node_name=previous.node_name if previous else "slot_prompt",
         template_version=previous.template_version if previous else "builtin-v1",
@@ -1818,6 +2167,7 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
         structured_output["prompt"] = prompt_text
         prompt_version = PromptVersion.objects.create(
             cluster=locked.cluster,
+            output_slot=locked.output_slot,
             created_by=reviewer,
             node_name=previous.node_name if previous else "slot_prompt",
             template_version=previous.template_version if previous else "builtin-v1",
@@ -1848,6 +2198,17 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
         metadata={"decision": decision, "revision_generation_id": str(revision.id) if revision else ""},
     )
     return feedback, revision
+
+
+def request_generation_revision(generation, user, *, issue_tags, description, annotations):
+    return review_generation(
+        generation,
+        user,
+        decision=ReviewFeedback.Decision.CHANGES_REQUESTED,
+        issue_tags=issue_tags,
+        description=description,
+        annotations=annotations,
+    )[1]
 
 
 def safe_storage_path(storage_path, expected_prefix):

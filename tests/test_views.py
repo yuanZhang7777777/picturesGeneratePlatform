@@ -63,6 +63,27 @@ def test_upload_api_creates_assets_and_default_clusters(client, tmp_path, settin
     assert batch.clusters.count() == 2
 
 
+def test_upload_api_records_import_mode_and_preparation_request(client, tmp_path, settings):
+    from platform_app.models import Batch
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Batch 1")
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_upload_assets", args=[batch.id]),
+        {"mode": "auto", "files": [image_file("a.png")]},
+    )
+
+    assert response.status_code == 200
+    batch.refresh_from_db()
+    cluster = batch.clusters.get()
+    assert batch.last_import_mode == "auto"
+    assert cluster.auto_generate is True
+    assert cluster.preparation_status == "pending"
+
+
 def test_snapshot_includes_cluster_and_generation_state(client, tmp_path, settings):
     from platform_app.services import confirm_generation, create_batch, register_uploaded_asset
 
@@ -101,6 +122,48 @@ def test_retry_endpoint_creates_new_attempt_for_failed_generation(client, tmp_pa
     assert response.status_code == 200
     assert response.json()["attempt"] == 2
     assert Generation.objects.filter(cluster=generation.cluster, output_slot=generation.output_slot).count() == 2
+
+
+def test_project_generate_api_is_cluster_scoped_and_idempotent(client, tmp_path, settings):
+    from platform_app.models import OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.services import create_batch, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Template")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = create_batch(user, "Batch 1")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    first = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png").clusters.get()
+    second = register_uploaded_asset(batch, "b.png", image_file("b.png").read(), "image/png").clusters.get()
+    for cluster in (first, second):
+        PromptVersion.objects.create(
+            cluster=cluster,
+            created_by=user,
+            output_slot=slot,
+            prompt_text=f"Prompt {cluster.id}",
+        )
+    client.force_login(user)
+
+    payload = {"cluster_ids": [str(first.id)], "slot_orders": [1]}
+    first_response = client.post(
+        reverse("api_project_generate", args=[batch.id]),
+        data=__import__("json").dumps(payload),
+        content_type="application/json",
+    )
+    second_response = client.post(
+        reverse("api_project_generate", args=[batch.id]),
+        data=__import__("json").dumps(payload),
+        content_type="application/json",
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.json()["generation_count"] == 1
+    assert second_response.json()["generation_count"] == 1
+    assert first.generations.count() == 1
+    assert second.generations.count() == 0
 
 
 def test_update_cluster_prompt_requires_current_version(client, tmp_path, settings):

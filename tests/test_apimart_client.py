@@ -129,6 +129,7 @@ def test_rate_limit_error_is_sanitized():
     APIMART_API_KEY="secret-key",
     APIMART_BASE_URL="https://api.apimart.ai",
     APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    APIMART_PROMPT_TEMPERATURE=1.2,
 )
 def test_optimize_prompt_posts_deepseek_chat_completions_payload():
     from platform_app.services import APIMartClient
@@ -154,7 +155,24 @@ def test_optimize_prompt_posts_deepseek_chat_completions_payload():
     assert url == "https://api.apimart.ai/api/v1/chat/completions"
     assert kwargs["json"]["model"] == "deepseek-v4-pro"
     assert kwargs["json"]["stream"] is False
+    assert kwargs["json"]["temperature"] == 1.2
     assert kwargs["json"]["messages"][0]["role"] == "system"
+
+
+@pytest.mark.parametrize("temperature", [-0.1, 2.1])
+@override_settings(
+    APIMART_API_KEY="secret-key",
+    APIMART_BASE_URL="https://api.apimart.ai",
+    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+)
+def test_optimize_prompt_rejects_temperature_outside_apimart_range(settings, temperature):
+    from platform_app.services import APIMartClient, ProviderError
+
+    settings.APIMART_PROMPT_TEMPERATURE = temperature
+    client = APIMartClient(session=Session([]))
+
+    with pytest.raises(ProviderError, match="temperature"):
+        client.optimize_prompt({"text": "make prompt"})
 
 
 @override_settings(

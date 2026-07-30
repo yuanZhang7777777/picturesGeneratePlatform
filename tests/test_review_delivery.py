@@ -494,8 +494,9 @@ def test_media_guard_rejects_other_batch_prefix_and_prefix_symlink(client, tmp_p
     assert client.get(reverse("api_asset_media", args=[asset.id])).status_code == 404
 
 
-def test_accept_review_is_audited_and_enables_safe_export(client, tmp_path, settings):
+def test_completed_result_exports_without_review_gate_and_without_persisting_zip(client, tmp_path, settings, monkeypatch):
     from platform_app.models import AuditEvent, Generation
+    from platform_app import views
 
     settings.MEDIA_ROOT = tmp_path
     owner = make_user("owner")
@@ -503,37 +504,30 @@ def test_accept_review_is_audited_and_enables_safe_export(client, tmp_path, sett
     batch, cluster, slot, generation, _ = make_generation(owner, tmp_path)
     client.force_login(owner)
 
-    reviewed = post_json(
-        client,
-        reverse("api_generation_review", args=[generation.id]),
-        {"decision": "accept", "issue_tags": [], "description": "", "annotations": []},
-    )
-    assert reviewed.status_code == 200
-    generation.refresh_from_db()
-    assert generation.review_status == Generation.ReviewStatus.ACCEPTED
-    assert generation.cluster.generations.count() == 1
-    assert AuditEvent.objects.filter(
-        actor=owner, action="generation.accept", object_id=str(generation.id)
-    ).exists()
+    def fail_save(*args, **kwargs):
+        raise AssertionError("export ZIP must not be stored")
 
-    exported = client.get(reverse("api_project_export", args=[batch.id]))
+    monkeypatch.setattr(views.LocalStorage, "save", fail_save)
+
+    exported = post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []})
     assert exported.status_code == 200
     assert exported.streaming
-    assert client.post(reverse("api_project_export", args=[batch.id])).status_code == 405
+    assert client.get(reverse("api_project_export", args=[batch.id])).status_code == 405
     archive = zipfile.ZipFile(io.BytesIO(response_bytes(exported)))
-    assert archive.namelist() == [
-        f"project-{batch.id}/cluster-{cluster.id}/slot-{slot.id}/attempt-1.png"
-    ]
-    assert archive.read(archive.namelist()[0]) == b"result"
+    names = archive.namelist()
+    assert any(name.endswith("Cup/01_main.png") for name in names)
+    assert archive.read(next(name for name in names if name.endswith(".png"))) == b"result"
+    manifest = archive.read(next(name for name in names if name.endswith("导出清单.csv"))).decode("utf-8-sig")
+    assert str(generation.id) in manifest
     assert AuditEvent.objects.filter(
         actor=owner, action="project.export", object_id=str(batch.id)
     ).exists()
 
     client.force_login(other)
-    assert client.get(reverse("api_project_export", args=[batch.id])).status_code == 404
+    assert post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []}).status_code == 404
 
 
-def test_export_rejects_unaccepted_outputs_and_uses_only_latest_accepted_attempt(
+def test_export_defaults_to_latest_success_and_explicit_ids_can_select_old_success(
     client, tmp_path, settings
 ):
     from platform_app.models import Generation, PromptVersion, ResultAsset
@@ -542,12 +536,6 @@ def test_export_rejects_unaccepted_outputs_and_uses_only_latest_accepted_attempt
     owner = make_user("owner")
     batch, cluster, slot, first, _ = make_generation(owner, tmp_path, content=b"old")
     client.force_login(owner)
-
-    unavailable = client.get(reverse("api_project_export", args=[batch.id]))
-    assert unavailable.status_code == 400
-
-    first.review_status = Generation.ReviewStatus.ACCEPTED
-    first.save(update_fields=["review_status"])
     second_prompt = PromptVersion.objects.create(
         cluster=cluster,
         created_by=owner,
@@ -573,12 +561,17 @@ def test_export_rejects_unaccepted_outputs_and_uses_only_latest_accepted_attempt
         file_size=3,
     )
 
-    exported = client.get(reverse("api_project_export", args=[batch.id]))
+    exported = post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []})
     archive = zipfile.ZipFile(io.BytesIO(response_bytes(exported)))
-    assert archive.namelist() == [
-        f"project-{batch.id}/cluster-{cluster.id}/slot-{slot.id}/attempt-2.jpg"
-    ]
-    assert archive.read(archive.namelist()[0]) == b"new"
+    assert archive.read(next(name for name in archive.namelist() if name.endswith(".jpg"))) == b"new"
+
+    old_export = post_json(
+        client,
+        reverse("api_project_export", args=[batch.id]),
+        {"generation_ids": [str(first.id)]},
+    )
+    old_archive = zipfile.ZipFile(io.BytesIO(response_bytes(old_export)))
+    assert old_archive.read(next(name for name in old_archive.namelist() if name.endswith(".png"))) == b"old"
 
 
 def test_export_rejects_result_or_total_size_over_hard_limit(
@@ -596,13 +589,13 @@ def test_export_rejects_result_or_total_size_over_hard_limit(
 
     monkeypatch.setattr(views, "MAX_EXPORT_RESULT_BYTES", 4, raising=False)
     monkeypatch.setattr(views, "MAX_EXPORT_TOTAL_BYTES", 100, raising=False)
-    response = client.get(reverse("api_project_export", args=[batch.id]))
+    response = post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []})
     assert response.status_code == 400
     assert "too large" in response.json()["error"].lower()
 
     monkeypatch.setattr(views, "MAX_EXPORT_RESULT_BYTES", 100, raising=False)
     monkeypatch.setattr(views, "MAX_EXPORT_TOTAL_BYTES", 4, raising=False)
-    response = client.get(reverse("api_project_export", args=[batch.id]))
+    response = post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []})
     assert response.status_code == 400
     assert "too large" in response.json()["error"].lower()
 
@@ -720,6 +713,32 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
     }
 
 
+def test_revise_endpoint_creates_revision_without_review_decision(client, tmp_path, settings):
+    from platform_app.models import Generation
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("revise-owner")
+    _, _, _, original, _ = make_generation(owner, tmp_path, name="Revise")
+    client.force_login(owner)
+
+    response = post_json(
+        client,
+        reverse("api_generation_revise", args=[original.id]),
+        {
+            "issue_tags": ["composition"],
+            "description": "Move the product left.",
+            "annotations": [{"kind": "circle", "rect": [0.2, 0.2, 0.3, 0.3]}],
+        },
+    )
+
+    assert response.status_code == 200
+    revision = Generation.objects.get(id=response.json()["generation"]["id"])
+    assert revision.id != original.id
+    assert revision.attempt == 2
+    assert revision.status == Generation.Status.QUEUED
+    assert revision.prompt_version_id != original.prompt_version_id
+
+
 def test_review_records_reject_queryset_delete(tmp_path, settings):
     from platform_app.models import Generation, ReviewAnnotation, ReviewFeedback
 
@@ -833,6 +852,7 @@ def test_retry_and_revision_reserve_daily_quota(client, tmp_path, settings):
     from platform_app.services import confirm_generation
 
     settings.MEDIA_ROOT = tmp_path
+    settings.GENERATION_QUOTAS_ENABLED = True
     owner = make_user("quota-owner")
     owner.daily_generation_limit = 1
     owner.save(update_fields=["daily_generation_limit"])

@@ -10,6 +10,7 @@ from django.utils import timezone
 
 PROMPT_VERSION_IMMUTABLE_SNAPSHOT_FIELDS = (
     "cluster_id",
+    "output_slot_id",
     "created_by_id",
     "node_name",
     "template_version",
@@ -103,6 +104,10 @@ class User(AbstractUser):
 
 
 class Batch(models.Model):
+    class ImportMode(models.TextChoices):
+        AUTO = "auto", "Auto"
+        ORGANIZE = "organize", "Organize"
+
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
         UPLOADING = "uploading", "Uploading"
@@ -141,6 +146,11 @@ class Batch(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     global_prompt = models.TextField(blank=True)
     confirmed_generation_key = models.UUIDField(null=True, blank=True, unique=True)
+    last_import_mode = models.CharField(
+        max_length=20,
+        choices=ImportMode.choices,
+        default=ImportMode.ORGANIZE,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     objects = ArchivableWithGenerationQuerySet.as_manager()
@@ -205,6 +215,17 @@ class Asset(models.Model):
 
 
 class Cluster(models.Model):
+    class RelationType(models.TextChoices):
+        SINGLE_PRODUCT = "single_product", "Single product"
+        VARIANT_GROUP = "variant_group", "Variant group"
+
+    class PreparationStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PREPARING = "preparing", "Preparing"
+        READY = "ready", "Ready"
+        BLOCKED = "blocked", "Blocked"
+        FAILED = "failed", "Failed"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name="clusters")
     name = models.CharField(max_length=200)
@@ -214,6 +235,19 @@ class Cluster(models.Model):
     identity_lock = models.TextField(blank=True)
     target_consumer = models.CharField(max_length=40, blank=True)
     prompt_override = models.TextField(blank=True)
+    relation_type = models.CharField(
+        max_length=40,
+        choices=RelationType.choices,
+        default=RelationType.SINGLE_PRODUCT,
+    )
+    preparation_status = models.CharField(
+        max_length=20,
+        choices=PreparationStatus.choices,
+        default=PreparationStatus.PENDING,
+    )
+    preparation_error = models.TextField(blank=True)
+    analysis_snapshot = models.JSONField(default=dict, blank=True)
+    auto_generate = models.BooleanField(default=False)
     version = models.PositiveIntegerField(default=1)
     assets = models.ManyToManyField(Asset, through="ClusterAsset", related_name="clusters")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -410,6 +444,13 @@ class PromptVersion(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cluster = models.ForeignKey(Cluster, on_delete=models.CASCADE, related_name="prompt_versions")
+    output_slot = models.ForeignKey(
+        OutputSlot,
+        on_delete=models.PROTECT,
+        related_name="prompt_versions",
+        null=True,
+        blank=True,
+    )
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     node_name = models.CharField(max_length=80, default="slot_prompt")
     template_version = models.CharField(max_length=40, default="builtin-v1")

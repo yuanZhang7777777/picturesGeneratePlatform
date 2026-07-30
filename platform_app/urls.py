@@ -41,6 +41,11 @@ urlpatterns = [
         name="api_project_confirm",
     ),
     path(
+        "api/projects/<uuid:batch_id>/generate/",
+        views.api_project_generate,
+        name="api_project_generate",
+    ),
+    path(
         "api/projects/<uuid:batch_id>/export/",
         views.api_project_export,
         name="api_project_export",
@@ -49,6 +54,7 @@ urlpatterns = [
     path("api/batches/<uuid:batch_id>/snapshot/", views.api_batch_snapshot, name="api_batch_snapshot"),
     path("api/batches/<uuid:batch_id>/preflight/", views.api_preflight, name="api_preflight"),
     path("api/batches/<uuid:batch_id>/confirm/", views.api_confirm_generation, name="api_confirm_generation"),
+    path("api/batches/<uuid:batch_id>/generate/", views.api_project_generate, name="api_generate_batch"),
     path("api/clusters/<uuid:cluster_id>/", views.api_update_cluster, name="api_update_cluster"),
     path("api/clusters/<uuid:cluster_id>/optimize-prompt/", views.api_optimize_prompt, name="api_optimize_prompt"),
     path("api/clusters/<uuid:cluster_id>/merge/", views.api_merge_asset, name="api_merge_asset"),
@@ -56,6 +62,16 @@ urlpatterns = [
     path("api/assets/<uuid:asset_id>/media/", views.api_asset_media, name="api_asset_media"),
     path("api/results/<uuid:result_id>/media/", views.api_result_media, name="api_result_media"),
     path("api/generations/<uuid:generation_id>/retry/", views.api_generation_retry, name="api_generation_retry"),
+    path(
+        "api/generations/<uuid:generation_id>/regenerate/",
+        views.api_generation_regenerate,
+        name="api_generation_regenerate",
+    ),
+    path(
+        "api/generations/<uuid:generation_id>/revise/",
+        views.api_generation_revise,
+        name="api_generation_revise",
+    ),
     path(
         "api/generations/<uuid:generation_id>/review/",
         views.api_generation_review,

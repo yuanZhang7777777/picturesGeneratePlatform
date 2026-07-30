@@ -118,7 +118,7 @@ def test_sku_import_keeps_success_when_another_sku_fails_and_exposes_plan_snapsh
     user, batch = make_batch()
     monkeypatch.setattr(
         "platform_app.views.import_skus",
-        lambda target, skus, erp_token=None: import_skus(
+        lambda target, skus, erp_token=None, mode="organize": import_skus(
             target, skus, catalog_client=FakeCatalogClient(), image_downloader=lambda url: (image_bytes(), "image/png")
         ),
     )
@@ -165,8 +165,47 @@ def test_sku_import_keeps_success_when_another_sku_fails_and_exposes_plan_snapsh
     assert sku["productName"] == "Travel mug"
     assert sku["importStatus"] == "imported"
     assert snapshot["skuImports"] == [failed_item, imported_item]
-    assert len(snapshot["templateSlots"]) == 8
-    assert snapshot["preflight"]["generation_count"] == 8
+    assert len(snapshot["templateSlots"]) == 9
+    assert snapshot["preflight"]["generation_count"] == 9
+
+
+def test_sku_import_records_mode_and_can_append_after_generation_history(client, tmp_path, settings, monkeypatch):
+    settings.MEDIA_ROOT = tmp_path
+    settings.CATALOG_ALLOWED_IMAGE_HOSTS = ("8.8.8.8",)
+    user, batch = make_batch()
+    old_cluster = Cluster.objects.create(batch=batch, name="Existing")
+    Generation.objects.create(
+        batch=batch,
+        cluster=old_cluster,
+        output_slot=OutputSlot.objects.order_by("order").first(),
+    )
+    monkeypatch.setattr(
+        "platform_app.views.import_skus",
+        lambda target, skus, erp_token=None, mode="organize": import_skus(
+            target,
+            skus,
+            catalog_client=FakeCatalogClient(),
+            image_downloader=lambda url: (image_bytes(), "image/png"),
+            mode=mode,
+        ),
+    )
+    client.force_login(user)
+    session = client.session
+    session["erp_access_token"] = "user-token"
+    session.save()
+
+    response = client.post(
+        reverse("api_sku_import", args=[batch.id]),
+        data='{"skus": ["OK-1"], "mode": "auto"}',
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    batch.refresh_from_db()
+    cluster = Cluster.objects.get(batch=batch, sku="OK-1")
+    assert batch.last_import_mode == "auto"
+    assert cluster.auto_generate is True
+    assert cluster.preparation_status == "pending"
 
 
 def test_sku_import_requires_erp_session_token(client):
@@ -192,10 +231,11 @@ def test_sku_import_passes_session_token_to_catalog(client, monkeypatch):
     session.save()
     captured = {}
 
-    def fake_import_skus(target, skus, *, erp_token=None):
+    def fake_import_skus(target, skus, *, erp_token=None, mode="organize"):
         captured["batch"] = target
         captured["skus"] = skus
         captured["token"] = erp_token
+        captured["mode"] = mode
         return {"imported": 0, "failed": 0, "items": []}
 
     monkeypatch.setattr("platform_app.views.import_skus", fake_import_skus)
@@ -207,7 +247,7 @@ def test_sku_import_passes_session_token_to_catalog(client, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert captured == {"batch": batch, "skus": ["OK-1"], "token": "user-token"}
+    assert captured == {"batch": batch, "skus": ["OK-1"], "token": "user-token", "mode": None}
 
 
 def test_sku_import_propagates_expired_erp_token_without_audit_rows(client, monkeypatch):
@@ -217,7 +257,7 @@ def test_sku_import_propagates_expired_erp_token_without_audit_rows(client, monk
     session["erp_access_token"] = "expired-token"
     session.save()
 
-    def fake_import_skus(target, skus, *, erp_token=None):
+    def fake_import_skus(target, skus, *, erp_token=None, mode="organize"):
         raise CatalogAuthExpired("ERP login expired")
 
     monkeypatch.setattr("platform_app.views.import_skus", fake_import_skus)
@@ -558,7 +598,7 @@ def test_sku_import_persists_each_item_before_downloading_the_next(tmp_path, set
     assert {key: result[key] for key in ("imported", "failed")} == {"imported": 2, "failed": 0}
 
 
-def test_generation_history_locks_all_new_skus_without_downloading(tmp_path, settings):
+def test_sku_import_after_generation_history_appends_new_product(tmp_path, settings):
     settings.MEDIA_ROOT = tmp_path
     settings.CATALOG_ALLOWED_IMAGE_HOSTS = ("8.8.8.8",)
     _, batch = make_batch()
@@ -569,37 +609,19 @@ def test_generation_history_locks_all_new_skus_without_downloading(tmp_path, set
         output_slot=OutputSlot.objects.order_by("order").first(),
     )
 
-    class NeverCatalogClient:
-        def fetch_products(self, skus):
-            raise AssertionError("locked projects must not query the catalog")
+    result = import_skus(
+        batch,
+        ["OK-1"],
+        catalog_client=FakeCatalogClient(),
+        image_downloader=lambda url: (image_bytes(), "image/png"),
+    )
 
-    result = import_skus(batch, ["NEW-1", "NEW-2"], catalog_client=NeverCatalogClient())
-
-    assert result == {
-        "imported": 0,
-        "failed": 2,
-        "items": [
-            {
-                "sku": "NEW-1",
-                "productName": "",
-                "status": "failed",
-                "clusterId": None,
-                "errorCode": "project_locked",
-            },
-            {
-                "sku": "NEW-2",
-                "productName": "",
-                "status": "failed",
-                "clusterId": None,
-                "errorCode": "project_locked",
-            },
-        ],
-    }
-    assert list(batch.clusters.values_list("name", flat=True)) == ["Existing"]
-    assert not Asset.objects.filter(batch=batch).exists()
+    assert result["imported"] == 1
+    assert set(batch.clusters.values_list("name", flat=True)) == {"Existing", "Travel mug"}
+    assert Asset.objects.filter(batch=batch).count() == 1
 
 
-def test_sku_import_rechecks_project_lock_after_download(tmp_path, settings):
+def test_sku_import_ignores_legacy_generation_key_after_download(tmp_path, settings):
     settings.MEDIA_ROOT = tmp_path
     settings.CATALOG_ALLOWED_IMAGE_HOSTS = ("8.8.8.8",)
     _, batch = make_batch()
@@ -615,9 +637,9 @@ def test_sku_import_rechecks_project_lock_after_download(tmp_path, settings):
         image_downloader=download,
     )
 
-    assert result["items"][0]["errorCode"] == "project_locked"
-    assert not Cluster.objects.filter(batch=batch, sku="RACING").exists()
-    assert not Asset.objects.filter(batch=batch).exists()
+    assert result["items"][0]["errorCode"] is None
+    assert Cluster.objects.filter(batch=batch, sku="RACING").exists()
+    assert Asset.objects.filter(batch=batch).exists()
 
 
 def test_catalog_failure_is_audited_as_unavailable_without_leaking_details(

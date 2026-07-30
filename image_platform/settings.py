@@ -21,6 +21,13 @@ def env_int(name: str, default: int) -> int:
     return int(value)
 
 
+def env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return float(value)
+
+
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-change-me")
 DEBUG = env_bool("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = [
@@ -138,6 +145,7 @@ APIMART_BASE_URL = os.getenv("APIMART_BASE_URL", "https://api.apimart.ai/v1").rs
 APIMART_PROMPT_MODEL = os.getenv("APIMART_PROMPT_MODEL", "deepseek-v4-pro")
 APIMART_VISION_MODEL = os.getenv("APIMART_VISION_MODEL", "gpt-5-nano-2025-08-07")
 APIMART_IMAGE_MODEL = os.getenv("APIMART_IMAGE_MODEL", "gpt-image-2")
+APIMART_PROMPT_TEMPERATURE = env_float("APIMART_PROMPT_TEMPERATURE", 1.2)
 APIMART_FAKE_MODE = env_bool("APIMART_FAKE_MODE", True)
 ERP_LOGIN_URL = os.getenv("ERP_LOGIN_URL", "")
 PLATFORM_ADMIN_ERP_USERS = tuple(
@@ -159,5 +167,7 @@ OSS_ACCESS_KEY_ID = os.getenv("OSS_ACCESS_KEY_ID", "")
 OSS_ACCESS_KEY_SECRET = os.getenv("OSS_ACCESS_KEY_SECRET", "")
 OSS_PREFIX = os.getenv("OSS_PREFIX", "independent-image-platform")
 MAX_ACTIVE_GENERATIONS = env_int("MAX_ACTIVE_GENERATIONS", 2)
+GENERATION_PROVIDER_ACTIVE_LIMIT = env_int("GENERATION_PROVIDER_ACTIVE_LIMIT", 500)
+GENERATION_QUOTAS_ENABLED = env_bool("GENERATION_QUOTAS_ENABLED", False)
 ORG_DAILY_GENERATION_LIMIT = env_int("ORG_DAILY_GENERATION_LIMIT", 2000)
 USER_DAILY_GENERATION_LIMIT = env_int("USER_DAILY_GENERATION_LIMIT", 100)
