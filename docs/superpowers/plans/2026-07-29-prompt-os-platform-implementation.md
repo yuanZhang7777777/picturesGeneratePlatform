@@ -1,5 +1,7 @@
 # Prompt OS 商品出图平台实施计划
 
+> 历史阶段计划。2026-07-30 起由 `2026-07-30-dual-speed-platform-implementation.md` 取代；本文只保留已完成切片的实现记录。
+
 本计划将 2026-07-29 产品方案落到可运行的内部假模式版本。真实 APIMart、OSS、HTTPS 与生产部署只在契约测试、服务器 Secret 配置和发布门禁通过后启用。
 
 ## Task 1：领域模型与 Prompt OS

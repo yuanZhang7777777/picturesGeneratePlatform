@@ -1,28 +1,29 @@
 # 商品图规则官方来源登记册
 
-更新：2026-07-29
-用途：为 Shopee/TikTok Shop 规则与 8 张套图模板保留来源、适用范围和发布门槛。本文是设计输入，不替代各站 Seller Center 的最新规则或法律意见。
+更新：2026-07-30
+用途：为 Shopee/TikTok Shop 规则与默认 `1+8` 九图套图保留来源、适用范围和发布门槛。本文是设计输入，不替代各站 Seller Center 的最新规则或法律意见。
 
 ## 已核对的官方来源
 
 | 平台 | 官方来源 | 核对日期 | 可落地规则 | 系统处理 |
 | --- | --- | --- | --- | --- |
-| Shopee（MY 广告/商品详情页资料） | [Improve Your Product Detail Page for Successful Advertising](https://ads.shopee.com.my/learn/faq/502/104) | 2026-07-29 | 推荐 1:1、至少 1024×1024、真实商品、清晰白底主图、无水印；允许尺寸、成分、用法等信息图。 | Shopee 默认 8 张、1:1、1k；第 1 槽使用干净主图，其余槽位可使用经事实校验的本地化信息图。 |
-| TikTok Shop（商品上架） | [How to Add Products to Your Shop](https://seller-us.tiktok.com/university/essay?knowledge_id=6581713858676522&lang=en) | 2026-07-29 | 至少 1 张、最多 9 张；JPG/JPEG/PNG、单图最大 10 MB、至少 600×600；主图展示完整商品；不得添加文字、图形或水印；展示多角度和关键特征。 | 8 张模板符合数量范围；TikTok 第 1 槽锁定无文字、完整商品、白底路线。 |
-| TikTok Shop（PDP 质量） | [Product Detail Pages & Listing Quality Guidelines](https://seller-us.tiktok.com/university/essay?knowledge_id=481891871868714&lang=en) | 2026-07-29 | “Good”质量建议至少 5 张高分辨率商品图，含多角度/细节以及品类相关规格信息；主图避免水印、边框和促销文字。 | 第 2–8 槽按产品事实分配细节、尺寸、用法、场景和模型图，并全部进入人工审核。 |
-| TikTok Shop（上架政策） | [Product Listing Policy](https://seller-us.tiktok.com/university/essay?knowledge_id=3196690250417921) | 2026-07-29 | 商品图必须准确代表实际销售商品，不得侵犯知识产权或个人权利；主图需纯白背景、客观展示商品。 | Prompt QA 阻止未证实卖点；身份锁、审核与竞品 Style DNA 均不得改变商品事实或带入竞品素材。 |
-| TikTok Shop（内容政策） | [Content Policy](https://seller-us.tiktok.com/university/essay?knowledge_id=6837891779151617) | 2026-07-29 | 图上文字与视觉内容属于受政策约束的内容，禁止误导、垃圾信息、欺诈与有害表达。 | 文字由站点语言与商品事实编译，审核中心标出政策风险，只有人工通过版本可导出。 |
+| Shopee（MY 广告/商品详情页资料） | [Improve Your Product Detail Page for Successful Advertising](https://ads.shopee.com.my/learn/faq/502/104) | 2026-07-29 | 推荐 1:1、至少 1024×1024、真实商品、清晰白底主图、无水印；允许尺寸、成分、用法等信息图。 | 系统默认生成 9 张、1:1、1k：第 1 槽使用干净白底图，第 2–9 槽使用经事实约束的营销图。 |
+| TikTok Shop（商品上架） | [How to Add Products to Your Shop](https://seller-us.tiktok.com/university/essay?knowledge_id=6581713858676522&lang=en) | 2026-07-29 | 至少 1 张、最多 9 张；JPG/JPEG/PNG、单图最大 10 MB、至少 600×600；主图展示完整商品；不得添加文字、图形或水印；展示多角度和关键特征。 | `1+8` 九图模板与数量上限相符；第 1 槽锁定无文字、完整商品、白底路线。 |
+| TikTok Shop（PDP 质量） | [Product Detail Pages & Listing Quality Guidelines](https://seller-us.tiktok.com/university/essay?knowledge_id=481891871868714&lang=en) | 2026-07-29 | “Good”质量建议至少 5 张高分辨率商品图，含多角度/细节以及品类相关规格信息；主图避免水印、边框和促销文字。 | 第 2–9 槽按产品事实分配细节、尺寸、用法、场景和模特图；成功结果默认可选，员工可取消、修改或重做。 |
+| TikTok Shop（上架政策） | [Product Listing Policy](https://seller-us.tiktok.com/university/essay?knowledge_id=3196690250417921) | 2026-07-29 | 商品图必须准确代表实际销售商品，不得侵犯知识产权或个人权利；主图需纯白背景、客观展示商品。 | 结构化 Prompt 与身份锁不得改变商品事实或带入竞品素材；员工在导出前自行选择结果。 |
+| TikTok Shop（内容政策） | [Content Policy](https://seller-us.tiktok.com/university/essay?knowledge_id=6837891779151617) | 2026-07-29 | 图上文字与视觉内容属于受政策约束的内容，禁止误导、垃圾信息、欺诈与有害表达。 | 图上文字由站点语言与商品事实编译，生成结果不设审核门槛，员工可取消选择或修改后再导出。 |
 
-## 默认 8 槽图策略
+## 默认 `1+8` 九槽图策略
 
-1. **标准白底产品主图**：所有平台均固定为第 1 槽；完整、真实、商品身份准确、无促销文案和水印。TikTok 规则进一步要求纯白背景与客观展示。第 2–8 槽仅在同一商品、同一模板的此图技术完成后才提交。
+1. **标准白底产品主图**：所有平台均固定为第 1 槽；完整、真实、商品身份准确、无促销文案和水印。TikTok 规则进一步要求纯白背景与客观展示。第 2–9 槽仅在同一商品的第 1 槽技术完成后才提交。
 2. **商品第二角度**：展示结构、配件或背面。
 3. **核心卖点**：只使用已确认事实；按平台规则决定是否可见文字。
 4. **材质/工艺细节**：不臆造材质、认证或性能。
 5. **使用场景**：匹配目标消费者；婴幼儿商品使用婴幼儿场景。
 6. **模特/比例展示**：由商品和市场匹配模特，不改变商品结构。
 7. **尺寸/包装/包含物**：只能使用可核对的规格与包装清单。
-8. **补充转化图**：使用方式、对比前后限制或本地化卖点；禁止虚假效果、价格和未证实优惠。
+8. **平台转化营销图**：按市场和平台模板表达一个经事实校验的重点卖点。
+9. **补充转化图**：使用方式、对比前后限制或本地化卖点；禁止虚假效果、价格和未证实优惠。
 
 用户可从管理员发布且 APIMart 支持的比例、分辨率和槽位组合中调整；默认仅为 `1:1` 与 `1k`，不是平台合规保证。
 
@@ -36,4 +37,4 @@
 
 - 管理员刘学城是平台规则与模板的唯一发布人；系统先保存来源 URL、核对日期、适用站点、版本和槽位规则，再允许发布。
 - Shopee 八站与 TikTok Shop 东南亚各站的 Seller Center 页面、公告和官方 PDF/PPT 必须逐站归档链接与提取摘要；当官方文档为 PDF/PPT 时，保存来源链接、文件哈希、提取日期和适用范围，不复制整份受版权保护的材料。
-- 未经该流程发布的站点继续使用 `global` 通用模板，界面必须显示“规则待确认”，不能宣称自动合规。
+- 未经该流程发布的站点继续使用 `global` 通用模板，不阻止生成、不向普通员工反复提示；系统与文档均不得宣称其已自动符合目标站点规则。

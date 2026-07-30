@@ -1,5 +1,7 @@
 # Independent Image Platform MVP Implementation Plan
 
+> Historical plan. 2026-07-30 起由 `2026-07-30-dual-speed-platform-implementation.md` 取代；不要执行本文与新计划冲突的旧产品步骤。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a deployable internal image-generation MVP for login, folder-style uploads, image clusters, prompts, async APIMart generation, failure-only retry, result history, and IP:port preview deployment.

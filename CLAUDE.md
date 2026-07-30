@@ -4,7 +4,8 @@
 
 - 产品以“批量生产型商品图平台”为主，单商品创作台为辅；不要把它做成自由画布或表单集合。
 - 运营语言使用“项目、商品/SKU 分组、输出图、版本、创意 Brief”；不要把 Batch、Cluster、Attempt 等技术词暴露给普通用户。
-- 每张上传图片默认形成一个商品/SKU 分组；拖入同一分组表示同一商品的多角度参考。
+- 每张上传图片默认形成一个商品分组；图片拖入同一分组即共同产出一套图，分组内明确标记为“同商品参考”或“多色/多款组合”。
+- 每次上传或 ERP 导入都明确选择“导入并自动出图”或“导入后整理”；两种模式共用同一条识别、Prompt、1+8 生成、结果修改和本地导出链路。
 
 ## 主 Agent 与专业 Agent
 
@@ -20,19 +21,19 @@
 - 前端服务端状态使用 TanStack Query；拖拽分组使用 dnd-kit；局部 UI 状态优先 React 原生 state/context。首版不引入 Redux、Zustand、Next.js、Redis、消息队列或微服务。
 - 生产由 Caddy 同源托管前端静态资源并转发 Django API；保留 Django 的 session Cookie 和 CSRF 边界，不在浏览器存储认证 token。
 - 平台登录使用 ERP 校验并创建本地影子用户；SKU 导入必须使用当前登录用户服务端 session 中的 ERP Token，不得回退为平台固定商品资料账号。
-- 正式素材、SKU 拉取图、生成结果和导出 ZIP 写入私有 OSS 前缀；本地 `MEDIA_ROOT` 只用于开发和假模式回退。
-- 生成前必须走预检与人工确认；失败只重做失败项，旧版本不可覆盖。
-- 不论目标平台、市场或营销模板，套图第 1 槽始终是标准白底产品主图：完整、真实、无促销文字、无水印，且受商品身份锁约束；平台差异仅作用于后续槽位。同一批次、商品集群和模板的第 2–8 槽，只有第 1 槽技术完成后才能提交；主图失败或取消时后续槽位保持排队、不得调用供应商，直到白底图重做完成。
+- 正式素材、SKU 拉取图、生成结果和历史版本写入私有 OSS 前缀；导出 ZIP 临时生成并由浏览器下载到员工本地，不在服务器或 OSS 长期保留。
+- 自动模式在识别和 Prompt 成功后直接提交；整理模式由员工点击生成选中商品。失败只重做失败项，旧版本不可覆盖。
+- 不论目标平台、市场或营销模板，套图第 1 槽始终是标准白底产品主图：完整、真实、无促销文字、无水印，且受商品身份锁约束；平台差异仅作用于后续槽位。同一项目、商品分组和模板的第 2–9 槽，只有第 1 槽技术完成并归档后才能提交，并把白底结果加入我方商品参考图；主图失败或取消时后续槽位保持排队、不得调用供应商，直到白底图重做完成。
 - 平台规则、套图模板、Prompt 与参考图在生成时必须可追溯到快照；未验证的规则不得宣称合规。
 
-## Prompt OS 与审核边界
+## Prompt OS 与结果边界
 
 - 生成指令只使用已确认的商品事实、身份锁、已发布模板和当前项目参考图；缺失信息必须显式提示，不能臆造。
 - 竞品图只能通过已批准的 `gpt-5-nano-2025-08-07` 视觉观察器提炼为抽象的构图、节奏或风格策略；绝不进入生成参考图数组、`gpt-image-2`、`deepseek-v4-pro`、生产 Prompt、导出包或商品事实来源。
 - APIMart 中文文档与账户契约测试是模型 ID、端点、参数、响应、限流和计费的唯一接入依据；上游模型文档只作能力参考，发生冲突时以 APIMart 为准。
 - APIMart 当前契约：`deepseek-v4-pro` 文本节点走非流式 Chat Completions；`gpt-5-nano-2025-08-07` 视觉观察走 Responses，文本从 `output[].content[].text` 提取；`gpt-image-2` 生成前先 `/v1/uploads/images` 上传我方参考图，`image_urls` 使用 URL 字符串数组，不使用 base64 或 `{url: ...}` 对象数组。
 - Prompt Worker 负责结构化 Brief/Prompt 工作；Generation Worker 负责异步生图、轮询和归档。当前 Prompt Worker 尚是占位循环，不能作为异步 Prompt 已交付的证据。
-- 输出图必须经过人工审核；只有 `accepted` 版本允许进入平台导出。技术失败重做和人工修改都创建新版本，不覆盖历史。
+- 输出图生成成功后默认可被选择导出，不设置人工审核门槛或 AI 质检节点。取消选择、技术失败重做、主动再生成和圈选修改都创建或选择明确版本，不覆盖历史。
 
 ## 安全与部署
 
@@ -44,6 +45,10 @@
 
 ## 权威文档
 
+- 业务边界确认：`docs/project/REQUIREMENTS-BOUNDARY-CONFIRMATION.md`（A–N 已确认，是唯一产品边界）；`SYSTEM-BOUNDARY-CONFIRMATION.md` 只保留原始答题记录
+- 当前产品设计：`docs/superpowers/specs/2026-07-30-dual-speed-product-platform-design.md`
+- 当前实施计划：`docs/superpowers/plans/2026-07-30-dual-speed-platform-implementation.md`
+- 主 Agent 任务书：`docs/project/LEADER-GOAL-DUAL-SPEED-PLATFORM.md`
 - 产品方向与调研：`docs/research/2026-07-29-top-image-platform-redesign-research.md`
 - Agent 协作与交付设计：`docs/superpowers/specs/2026-07-29-agent-orchestrated-delivery-design.md`
 - React 前端架构：`docs/superpowers/specs/2026-07-29-react-frontend-architecture-design.md`

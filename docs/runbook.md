@@ -29,32 +29,25 @@ Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worke
 
 SKU 商品资料导入使用当前登录用户的 ERP Token 调用 `CATALOG_QUERY_URL`，请求体只发送 `{"skuList": [...]}`。`CATALOG_ALLOWED_IMAGE_HOSTS` 仅接受逗号分隔的公网 IPv4/IPv6 字面量，不能填主机名；初始图片链接和每次重定向都必须命中该名单。单请求默认最多 `CATALOG_MAX_SKUS_PER_REQUEST=50`；其余下载门限为超时、重定向次数、最大字节数与最大像素数。发布前用受限测试 SKU 验证登录包络、Token 字段、过期行为、图片源 IP 白名单和私有归档；不能把原始商品资料响应、图片 URL 或 Token 写进日志。
 
-正式素材存储使用 `STORAGE_BACKEND=oss`，并配置 `OSS_ENDPOINT`、`OSS_BUCKET`、`OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` 和 `OSS_PREFIX=independent-image-platform`。原图、SKU 拉取图、生成结果和导出 ZIP 都写入该 OSS 私有前缀；`LOCAL_MEDIA_ROOT` 仅用于开发和假模式回退。
+正式素材存储使用 `STORAGE_BACKEND=oss`，并配置 `OSS_ENDPOINT`、`OSS_BUCKET`、`OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` 和 `OSS_PREFIX=independent-image-platform`。原图、SKU 拉取图、生成结果和历史版本写入该 OSS 私有前缀；导出 ZIP 临时生成后由浏览器下载到员工本地，不在服务器或 OSS 长期保留。`LOCAL_MEDIA_ROOT` 仅用于开发和假模式回退。
 
 APIMart 中文文档与受限账户的最小契约测试是唯一接入事实来源：测试精确模型 ID、`/v1/responses` 图片输入、结构化输出封装、错误语义、限流和账务。上游模型文档仅帮助判断能力方向，不能代替 APIMart 参数或可用性结论。当前本地真实 smoke 已验证：`deepseek-v4-pro` 文本节点走非流式 Chat Completions，`gpt-5-nano-2025-08-07` 视觉观察走 Responses 并从 `output[].content[].text` 提取文本，`gpt-image-2` 先通过 `/v1/uploads/images` 上传我方参考图，再用字符串数组 `image_urls` 提交 `/v1/images/generations`，任务完成后必须下载结果并归档到受控存储。
 
-## 出站网络放行申请
+## 出站网络与连通性
 
-2 号服务器当前公网出口 IP 为 `139.224.2.166`，内网 IP 为 `192.168.0.138`。发布 smoke 已确认服务器能访问常见国内 HTTPS 站点、ERP `103.198.125.2:16777/8077` 和销售系统 `121.46.237.218:8071`；到 APIMart 仍超时，同一目标从开发机可连通，因此 APIMart 是服务器出口策略、DNS 或目标侧白名单问题。
+生产服务器统一通过 SSH 别名 `hermes-remote` 操作，仓库文档不记录服务器公网 IP。2026-07-30 迁移后只读 smoke 已确认该服务器能够解析 `api.apimart.ai` 的 IPv4 地址、建立 TCP/HTTPS 连接并通过证书校验；请求 `/v1` 返回 HTTP `404`，证明 APIMart 网关已可达，但不代表鉴权、模型权限或付费生图链路已经验收。
 
-不要把“入站访问端口”和“出站目的端口”混在一起：安全组里开放 `18000/19000` 是允许员工浏览器从公网访问本服务器的预览入口；APIMart 的 `443` 是本服务器主动访问外部 HTTPS API 时的目的端口，ERP 的 `16777/8077` 也是本服务器主动访问外部服务的目的端口。只开放入站 `18000/19000` 不能解决服务器访问 APIMart 或 ERP 超时。
+不要把“入站访问端口”和“出站目的端口”混在一起：安全组里开放 `18000/19000` 是允许员工浏览器访问本服务器的预览入口；APIMart 的 `443` 是本服务器主动访问外部 HTTPS API 时的目的端口。当前 APIMart 出站网络阻塞已解除。
 
-2026-07-30 运行配置：ERP 登录与 SKU 商品资料查询使用 `103.198.125.2:16777`，销售系统 API 使用 `121.46.237.218:8071`。
+2026-07-30 运行配置：ERP 登录与 SKU 商品资料查询使用 `103.198.125.2:16777`，销售系统 API 使用 `121.46.237.218:8071`，两者此前均已通过服务器 smoke。
 
-向 IT 或网络负责人申请时，只申请当前失败的 APIMart 出站访问；ERP 与销售系统已通过 smoke，不作为本次放行目标：
-
-- 源：2 号服务器公网出口 `139.224.2.166`，如按 VPC/安全组管理则同时标注内网 `192.168.0.138`。
-- 目的：`api.apimart.ai`，TCP `443`，方向为出站；用于 APIMart OpenAI 兼容 API，Base URL 为 `https://api.apimart.ai/v1`。优先按域名/FQDN 放行，不要固定单个解析 IP。
-- DNS/路由：确保服务器可解析 `api.apimart.ai` 的 IPv4 A 记录并通过 IPv4 出口访问；当前服务器无公网 IPv6，不能只返回或优先使用 IPv6。
-- 若公司统一走 HTTP/HTTPS 代理，需提供代理地址、端口和认证方式，再把代理配置注入 Docker Compose 的 Web、Generation Worker 和 Prompt Worker 环境。
-
-验收命令只输出连通状态，不得打印 `.env` 或密钥：
+验收命令只输出连通状态，不得打印 `.env`、Token 或密钥：
 
 ```bash
-curl -4 -I --max-time 10 https://api.apimart.ai/v1
-timeout 8 bash -lc '</dev/tcp/103.198.125.2/16777'
-timeout 8 bash -lc '</dev/tcp/103.198.125.2/8077'
-timeout 8 bash -lc '</dev/tcp/121.46.237.218/8071'
+ssh -o BatchMode=yes -o ConnectTimeout=8 hermes-remote \
+  "curl --noproxy '*' --connect-timeout 8 --max-time 15 -sS -o /dev/null \
+  -w 'http_code=%{http_code} tls_verify=%{ssl_verify_result} total=%{time_total}\n' \
+  https://api.apimart.ai/v1"
 ```
 
 在启动真实环境前检查替换标记，但不要打印 `.env` 内容：
@@ -118,9 +111,9 @@ docker compose logs --tail=100 web generation-worker prompt-worker proxy
 
 不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 尚未实现跨进程任务原子认领；并发 one-shot 调试可能在真实付费模式重复提交。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 
-假模式手工验收路径：登录测试账号 → 创建项目 → 上传两张 PNG → 默认两个商品/SKU → 拖拽合并 → 预检 → 确认生成 → 等待队列完成 → 审核结果 → 验证未通过/失败项只生成新版本。不得把技术完成的图片当作可导出结果；只有审核 `accepted` 的版本可导出。
+当前技术 MVP 的假模式仍保留旧预检/审核页面，只用于回归已有接口。双速改造完成后的手工验收路径为：登录测试账号 → 创建项目 → 上传两张 PNG → 分别验证自动模式与整理模式 → 拖拽合并 → 白底图完成后生成 8 张营销图 → 结果默认全选 → 圈选修改单张 → 下载本地 ZIP。成功结果无需 `accepted` 状态；导出必须使用员工明确选中的成功版本。
 
-## 管理员规则、模板与审核发布
+## 管理员规则、模板与发布
 
 管理员通过同源 `/admin/` 登录后维护平台规则、输出模板及槽位。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。正式种子不由本运维任务写入，而由独立 `template-seed` 任务提交：仅 global generic 模板可作为 `published` 基线；Shopee/TikTok 必须在官方规则发布前保持 `draft`。草稿或未核对规则不得被描述为自动合规。
 
