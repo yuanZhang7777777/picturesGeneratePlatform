@@ -47,3 +47,9 @@
 - Contract fixes: Prompt JSON repair, PostgreSQL row locks without nullable joins, automatic slots 2–9 enqueue after white-background slot completion, and export gate requiring `review_status=accepted`.
 - Smoke: APIMart DeepSeek/GPT-5 Nano/GPT Image 2 three-node smoke passed; OSS write/read/delete passed; one real paid 1+8 batch completed 9/9 results, then 9 accepted images exported to a local ZIP.
 - Verification: backend 179 passed, frontend 41 passed, Vite build passed, Django check passed, remote migration dry-run passed, HTTP/DOM smoke passed. ERP login endpoint is reachable; real employee login/SKU import still needs browser or dedicated smoke account validation.
+
+# ERP login page polish
+
+- Status: deployed commit `b7ac583` to `hermes-remote:/opt/independent-image-platform` on 2026-07-30 under `global.lock`.
+- Change: login now presents a polished ERP account card, explains that first successful ERP login auto-creates the platform shadow account, and keeps ERP password out of platform storage.
+- Verification: focused login page test failed before the template change and passed after; full backend suite passed with 180 tests; remote Django check, health check, and login page smoke passed.
