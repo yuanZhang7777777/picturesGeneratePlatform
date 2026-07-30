@@ -40,3 +40,10 @@
 - Contract: upload and ERP SKU import both send explicit `mode: auto|organize`; project generation sends selected cluster IDs and slot orders 1–9; result export posts selected generation IDs; revise/regenerate use generation-scoped endpoints.
 - Remaining dependency: integration E2E/browser smoke must verify the backend `/generate/`, `/regenerate/`, `/revise/`, and selected `/export/` contracts with the new workspace.
 - Verification: `npm --prefix frontend test` passed with 41 tests; `npm --prefix frontend run build` passed on 2026-07-30.
+
+# Real preview deploy and paid 1+8 smoke
+
+- Status: deployed commit `ce7da6b` to `hermes-remote:/opt/independent-image-platform` on 2026-07-30 under `global.lock`.
+- Contract fixes: Prompt JSON repair, PostgreSQL row locks without nullable joins, automatic slots 2–9 enqueue after white-background slot completion, and export gate requiring `review_status=accepted`.
+- Smoke: APIMart DeepSeek/GPT-5 Nano/GPT Image 2 three-node smoke passed; OSS write/read/delete passed; one real paid 1+8 batch completed 9/9 results, then 9 accepted images exported to a local ZIP.
+- Verification: backend 179 passed, frontend 41 passed, Vite build passed, Django check passed, remote migration dry-run passed, HTTP/DOM smoke passed. ERP login endpoint is reachable; real employee login/SKU import still needs browser or dedicated smoke account validation.

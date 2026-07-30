@@ -2,11 +2,11 @@
 
 最后更新：2026-07-30
 维护者：主 Agent
-状态：A–N 需求和双速产品设计已冻结，实施计划与主 Agent 任务书已生成；gpt-5.5 后端、前端和 QA worktree 已完成并正在主 Agent 集成：双速工作区、项目结果页、9 槽模板/准备状态、Prompt worker、按商品白底先行生成、成功即导出、修订与选择式临时 ZIP、管理员权限、规则发布元数据校验和 APIMart 三节点脱敏 smoke 命令。真实服务器三模型 smoke 与部署未执行，仍需主 Agent 签核
+状态：双速产品设计已落地到预览环境；服务器已完成真实 APIMart/OSS、1+8 付费生图、人工审核通过和本地 ZIP 导出 smoke。当前仍是测试预览，不是面向 100 名员工的正式 HTTPS 发布；真实 ERP 员工账号成功登录与 SKU 导入 smoke 待人工或专用 smoke 账号验证。
 
 ## 当前目标
 
-按 `2026-07-30-dual-speed-platform-implementation.md` 将技术 MVP 重设为公司内部批量 AI 商品图生产平台。体验主线：工作台 → 上传/ERP → 自动出图或导入后整理 → 自动识别与 Prompt → 1 张白底图 + 8 张营销图 → 结果选择/修改 → 本地导出。
+按 `2026-07-30-dual-speed-platform-implementation.md` 将技术 MVP 重设为公司内部批量 AI 商品图生产平台。体验主线：工作台 → 上传/ERP → 自动出图或导入后整理 → 自动识别与 Prompt → 1 张白底图 + 8 张营销图 → 人工审核通过 → 结果选择/修改 → 本地导出。
 
 ## 角色会话
 
@@ -29,11 +29,11 @@
 | C0-04 | 主 Agent | 确认前端技术栈 | 交互/性能目标 | React + TypeScript + Vite、TanStack Query、dnd-kit 与同源 Django API | 前端架构文档 | 架构审阅 | 已完成 | 无 |
 | C0-05 | 主 Agent | 收口精简需求边界 | 已填写 A–N 与双速流程决定 | 唯一边界、最终设计、实施计划和 `/goal` 任务书 | 需求、设计、计划、控制板 | 编号/矛盾/范围/命令自检 | 已完成 | 无 |
 | P0-01 | 产品与 Prompt OS | 结构化 Prompt、事实与身份锁 | 产品方案、已发布模板 | 模型/编译器契约；竞品只形成 Style DNA，不作生成参考 | 模型、服务、迁移、测试 | Prompt OS 与全量后端回归 | 已完成 | 规则和模板按站点持续发布 |
-| P0-02 | 前端体验 | 双速商品生产工作台 | 现有 React、最终设计和 Tasks 2–4 API | 自动/整理双入口、商品卡、9 槽 Prompt、项目结果页、圈选修改与选择式本地 ZIP | `frontend/src/**` | `npm --prefix frontend test` 41 passed；`npm --prefix frontend run build` passed | 已完成 | 仍需集成后 E2E/browser smoke |
-| P0-03 | 后端平台 | 商品准备、1+8 生成、修订与选择式导出 | Prompt OS 契约与商品资料接口 | ERP Token 查询、私有 OSS、白底结果作为槽 2–9 参考、成功即导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | `pytest -q` 177 passed；`manage.py check` 0 issues；`makemigrations --check --dry-run` no changes；`run_prompt_worker --once` processed=0；`git diff --check` clean | 已完成（本地假模式） | 真实 APIMart/ERP/OSS 服务器 smoke 与集成 E2E/browser smoke 未执行 |
+| P0-02 | 前端体验 | 双速商品生产工作台 | 现有 React、最终设计和 Tasks 2–4 API | 自动/整理双入口、商品卡、9 槽 Prompt、项目结果页、圈选修改与选择式本地 ZIP | `frontend/src/**` | `npm --prefix frontend test` 41 passed；`npm --prefix frontend run build` passed；远端同源入口 HTTP/DOM smoke passed | 已完成 | 浏览器插件不可用，已用 SSH 隧道与 HTTP/DOM smoke 替代 |
+| P0-03 | 后端平台 | 商品准备、1+8 生成、修订与选择式导出 | Prompt OS 契约与商品资料接口 | ERP Token 查询、私有 OSS、白底结果作为槽 2–9 参考、人工审核通过后导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | `pytest -q` 179 passed；`manage.py check` 0 issues；远端容器 `makemigrations --check --dry-run` no changes；真实 1+8 付费 smoke、审核和导出 passed | 已完成（预览已部署） | 真实 ERP 员工账号成功登录/SKU 导入 smoke 待验收 |
 | P0-04 | 平台规则/合规 | 9 槽模板与官方规则种子 | 官方来源、站点范围和管理员发布标准 | global 1+8、1:1、1k 默认套图；Shopee/TikTok 来源登记；无来源规则保持 draft；admin 发布非 global 规则必须有来源 URL、站点、核对日期和版本 | `platform_app/admin.py`、seed 命令、规则文档、测试 | `tests/test_auth_permissions.py tests/test_template_seed.py` | 本地完成 | 逐站官方规则仍需人工复核；发布仅限管理员刘学城 |
-| P0-05 | QA/发布 | 假模式发布门禁与运维收口 | Compose、Caddy、现有测试 | 同源静态部署、运行手册、验证证据；APIMart smoke 命令只输出节点状态、耗时和哈希，假 key 非零且不泄漏 | `platform_app/management/commands/smoke_apimart_nodes.py`、`docs/runbook.md`、`PROGRESS.md`、`BLOCKED.md` | `tests/test_apimart_client.py`、Django check、migration dry-run | 本地完成 | 真实服务器 smoke 和部署未执行；HTTP 临时入口仍非正式 HTTPS 发布 |
-| P0-06 | 主 Agent + 平台/QA | APIMart 真实契约与费用门禁 | APIMart 中文文档、公开测试图、精确目标模型 | 三模型的真实包络适配、结构化输出、异步任务恢复与质量基准证据 | 视觉/Prompt/图像适配器、测试、运行文档 | 公开图契约、标注基准集、失败语义、任务轮询与费用记录 | 进行中 | 本地开发机已完成 DeepSeek 文本、GPT-5 Nano 视觉观察、GPT Image 2 提交/轮询/结果下载最小真实 smoke；迁移后的服务器已通过 APIMart DNS、TLS 与 HTTP 连通检查，下一步在服务器执行同套真实模型 smoke |
+| P0-05 | QA/发布 | 真实预览发布门禁与运维收口 | Compose、Caddy、现有测试 | 同源静态部署、运行手册、验证证据；APIMart smoke 命令只输出节点状态、耗时和哈希，假 key 非零且不泄漏 | `platform_app/management/commands/smoke_apimart_nodes.py`、`docs/runbook.md`、`PROGRESS.md`、`BLOCKED.md` | 远端 Compose config/build/up/seed/health passed；HTTP/DOM smoke passed；日志无密钥明文 | 已完成（预览已部署） | HTTP 临时入口仍非正式 HTTPS 发布 |
+| P0-06 | 主 Agent + 平台/QA | APIMart 真实契约与费用门禁 | APIMart 中文文档、公开测试图、精确目标模型 | 三模型的真实包络适配、结构化输出、异步任务恢复与质量基准证据 | 视觉/Prompt/图像适配器、测试、运行文档 | 服务器 DeepSeek、GPT-5 Nano、GPT Image 2 三节点 smoke passed；真实 1+8 付费 smoke 9/9 completed；ZIP 仅审核通过版本 exported | 已完成（低并发） | 动态公平并发与 500 上限仍需分级压测 |
 
 ## 当前决定
 
@@ -43,7 +43,7 @@
 | 2026-07-29 | 一 Agent 一会话，主 Agent 统一集成 | 保留角色上下文并防止决策分散 | 以本控制板为唯一事实来源 |
 | 2026-07-29 | 运营前端采用 React + TypeScript + Vite | 创作台、拖拽、队列和审核需要可组合状态与高质量交互 | Django 保留为同源 API、Session、任务与后台；不引入 Next.js 或额外后端基础设施 |
 | 2026-07-29 | 竞品图只用于抽象策略，不可作为生成参考 | 防止商品身份、版权与合规风险 | 原图仅可到批准的 `gpt-5-nano-2025-08-07` 视觉观察器；Prompt OS、前端生成请求和 `gpt-image-2` 均不得传递竞品图 |
-| 2026-07-30 | 不设置正式审核门槛 | 运营要批量傻瓜式生产 | 成功图默认可导出；员工取消选择、选历史版本、圈选修改或主动再生成 |
+| 2026-07-30 | 生成完成后必须人工审核通过才可导出 | 运营确认只导出审核通过图片，驳回/修改要保留历史 | 未审核或要求修改的图不得进 ZIP；员工可选历史已通过版本、圈选修改或主动再生成 |
 | 2026-07-29 | APIMart API 活跃异步任务硬上限为 500 | 支撑目标吞吐，但不将供应商 API 上限误作当前服务器能力 | 运行默认仍为 2；按 2、5、8、50、100、250、500 分级压测，完成原子认领与限流后才能提高 |
 | 2026-07-30 | 正式入口使用公网 IP + 端口，不使用来源 IP 白名单 | 内部员工直接登录 | 真实 ERP 密码登录前必须启用员工设备信任的 HTTPS；HTTP 只可做测试预览 |
 | 2026-07-30 | ERP 登录成功的全部用户可进入平台，刘学城是唯一初始管理员 | 运营希望沿用 ERP 权限校验和个人账号查询 | 平台创建本地影子用户；管理员身份由 `PLATFORM_ADMIN_ERP_USERS` 中的 ERP 登录名决定 |
@@ -53,7 +53,7 @@
 | 2026-07-29 | 闲时允许用户临时借用并发 | 在全局上限内提高资源利用率 | 基础每人 2 个活跃任务；有其他用户排队时恢复公平轮转 |
 | 2026-07-29 | 竞品版式结构可作为 Style DNA 借鉴 | 满足同等商业视觉策略需求 | 可复用画面层级、版式、色彩、光线和场景密度；竞品原图仅发送给 `gpt-5-nano-2025-08-07` 观察器，不得传给生成、文本、Prompt 或导出链路，也不得复制商标、包装、人物、原文案及逐像素页面 |
 | 2026-07-30 | 上传与 ERP 是并列入口，每次都选自动出图或导入后整理 | 覆盖一张图一个商品和多图合并两类实际工作 | 两种模式共用识别、Prompt、1+8、结果、修改和本地导出 |
-| 2026-07-30 | 导出按员工选中的成功版本、商品名称与 SKU 交付 | 员工需要默认全选又能排除不满意图 | 默认最新成功版本；可选历史成功版本；ZIP 按“商品名称__SKU/01–09 槽位”组织 |
+| 2026-07-30 | 导出按员工选中的审核通过版本、商品名称与 SKU 交付 | 员工需要默认全选又能排除不满意图 | 默认最新通过版本；可选历史通过版本；ZIP 按“商品名称__SKU/01–09 槽位”组织 |
 | 2026-07-30 | 拖入目标集群即完成图片分配 | 运营希望批量整理时不被逐次弹窗打断，且多图不一定只是角度图 | 默认一图一集群；放下即合并并支持撤销。集群单独标记“同商品参考”或“多色/多款组合”，一个集群只产出一套图 |
 | 2026-07-30 | ERP SKU 与图片/文件夹是并列一级入口 | 两种来源最终都要完成相同的商品确认、Prompt 和生图流程 | ERP 侧只消费 SKU、`productName` 与 `pic`；销售、库存、成本等字段不进入平台或 Prompt |
 | 2026-07-30 | 文件夹 TXT 与 ERP 入口文本框都只提供“种子风格提示词” | 一个文件夹通常对应同一店铺风格，完整生产 Prompt 应由各商品节点生成 | 有内容时默认作为项目级风格；为空时由营销 Prompt 节点生成建议；每个商品生成独立可编辑 Prompt，仍不得虚构事实 |
@@ -62,7 +62,7 @@
 | 2026-07-30 | ERP 与 SKU 商品资料主机使用 `103.198.125.2` | 现有日更和服务器 smoke 均证明该主机可达 | 服务器 `.env` 已切到 `103.198.125.2:16777` |
 | 2026-07-29 | Prompt OS 固定使用 APIMart 的 DeepSeek V4 Pro、GPT-5 Nano 视觉观察器与 GPT Image 2 | 让自动视觉理解可用，同时隔离竞品素材与生成链路 | `gpt-5-nano-2025-08-07` 只将我方源图、竞品图或生成候选图变为 Schema 校验的视觉事实包；`deepseek-v4-pro` 处理所有文本语义节点和结构化 Prompt；`gpt-image-2` 只生成/修订图片。竞品原图只到视觉观察器，绝不进入 DeepSeek、GPT Image 2、生产 Prompt、生成任务或导出。P0 必须以 APIMart 中文文档和账户验证三个精确模型 ID，失败时阻断而不降级 |
 | 2026-07-29 | APIMart 视觉观察器首次真实契约成功，不等于质量通过 | 区分“接口可调用”与“商品视觉事实可靠” | 使用公开测试图的两次最小付费调用确认 `gpt-5-nano-2025-08-07`、`input_image` 和严格 JSON 路径可用；下一步须以带人工标注的商品基准集衡量事实准确率，未通过前不得作为自动审核结论 |
-| 2026-07-30 | APIMart 基础节点先在本地真实打通，再在迁移后的服务器复测 | 本地三个节点已完成最小真实 smoke；服务器出站网络已于 2026-07-30 验证恢复 | `deepseek-v4-pro` 走非流式 Chat Completions；`gpt-5-nano-2025-08-07` 走 Responses，文本从 `output[].content[].text` 提取；`gpt-image-2` 先上传参考图，再用 URL 字符串数组 `image_urls` 提交生成；下一步补服务器真实鉴权与三模型证据 |
+| 2026-07-30 | APIMart 基础节点已在服务器真实打通 | 本地与服务器三节点均已完成最小真实 smoke，且真实 1+8 项目 9/9 完成 | `deepseek-v4-pro` 走非流式 Chat Completions；`gpt-5-nano-2025-08-07` 走 Responses，文本从 `output[].content[].text` 提取；`gpt-image-2` 先上传参考图，再用 URL 字符串数组 `image_urls` 提交生成；下一步只做质量基准与分级并发压测 |
 | 2026-07-30 | 当前改造按 Tasks 1–7 顺序执行 | 核心 Django 服务文件存在共享写入点，盲目并行会冲突 | 后端 Tasks 1–4 串行；API 冻结后前端 Task 5 可并行；规则和 QA 不改共享实现 |
 | 2026-07-29 | APIMart 的真实账号包络优先于文档示例 | 同一供应商不同模型端点的外层 JSON 已出现不一致，不能依赖单一伪造包络 | `deepseek-v4-pro` 账户实测为顶层 OpenAI Chat Completions 包络，非文档示例的 `code/data`；适配器必须按端点/模型显式解析并以真实 fixture 回归。GPT Image 2 已实测 `submitted → processing → completed`、结果 URL 与费用字段，完成后必须立即受限下载归档；`cancelled` 视为终态 |
 
@@ -71,7 +71,7 @@
 | 项目 | 影响 | Owner | 处理条件 |
 | --- | --- | --- | --- |
 | Shopee/TikTok 各站最终规则仍在逐站核对 | 不能发布超出已核对范围的自动合规承诺 | 平台规则/合规 | 官方来源登记、版本与管理员刘学城发布完成 |
-| APIMart 服务器侧真实模型 smoke 尚未执行 | 网络已可达，但服务器凭据、模型权限、任务轮询与归档仍需完整验证 | 后端平台 + QA/发布 | 在受限环境中执行 DeepSeek、GPT-5 Nano 与 GPT Image 2 最小真实 smoke，不打印密钥或图片签名 URL |
+| ERP 成功登录与 SKU 导入真实员工链路未自动验证 | 当前只证明登录接口网络可达；还不能宣称所有 ERP 账号/SKU 导入已验收 | 后端平台 + QA/发布 | 用浏览器人工登录一个真实 ERP 员工账号并导入 1 个真实 SKU，或在服务器写入专用 smoke 账号变量后运行脱敏 smoke |
 | 动态公平并发与 500 上限执行尚未启用 | 不能把供应商上限当成当前服务器能力 | 后端平台 + QA/发布 | 原子认领/限流、真实契约测试与分级压测 |
 | HTTP 临时入口 | 不能承载真实 ERP 密码和 100 名员工素材 | QA/发布 | 公网 IP + 端口启用员工设备信任的 HTTPS 与账号安全；不使用来源 IP 白名单 |
 | 本机无 Docker CLI | 本地不能复现 Compose 构建 | QA/发布 | 服务器 Docker Compose 已作为当前发布验证环境；本地仍只跑单元/构建测试 |

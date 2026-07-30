@@ -4,7 +4,7 @@
 
 - 首次导入也显示两个按钮，`导入并自动出图`为主要操作；项目只记住上次选择，不用隐藏开关｜猜错会影响误操作率。
 - DeepSeek 温度默认 `1.2`，范围 `0–2`；严格 JSON 只修复重试一次｜再高会增加结构失败。
-- 不设置正式审核或 AI 质检；成功图默认可导出，员工可取消、圈选修改或再生成版本｜猜错会改变导出门槛。
+- 必须人工审核通过后才可导出；员工可取消、圈选修改或再生成版本，旧版本永久保留｜这是运营确认后的导出门槛。
 - 不设每日 2,000 张上限；真实并发仍从 2 开始压测，500 只是供应商硬上限｜猜错会影响成本与容量。
 - APIMart 暂停时允许整理，不自动换模型｜猜错会改变供应商边界。
 - 产品/文档子 Agent 优先用 5.5；不可用时继承当前模型并记录，不阻断。
@@ -15,7 +15,7 @@
 
 ## 现状与任务 0
 
-2026-07-30 起始实测：后端 160 passed、前端 35 passed、skipped 0；Django check 无异常、无待生成迁移、Vite build 成功。当前 gpt-5.5 多 Agent 集成后本地实测：后端 177 passed、前端 41 passed、Django check、迁移检查、Vite build、Prompt worker 空队列、APIMart fake smoke 和 diff check 均通过。香港服务器 SSH、项目目录及 APIMart DNS/TLS/HTTP 已通；服务器真实三模型 smoke 未跑。
+2026-07-30 起始实测：后端 160 passed、前端 35 passed、skipped 0；Django check 无异常、无待生成迁移、Vite build 成功。当前集成后本地实测：后端 179 passed、前端 41 passed、Django check、Vite build 均通过。香港服务器已完成 Compose 部署、APIMart 三节点真实 smoke、OSS 写读删、真实 1+8 付费出图、人工审核通过和 ZIP 导出；真实 ERP 员工账号成功登录/SKU 导入仍需人工或专用 smoke 账号验证。
 
 先读 `CLAUDE.md`、`docs/project/REQUIREMENTS-BOUNDARY-CONFIRMATION.md`、`docs/superpowers/specs/2026-07-30-dual-speed-product-platform-design.md`、`docs/superpowers/plans/2026-07-30-dual-speed-platform-implementation.md`。运行计划末尾全量命令；数字不符，把证据放 `BLOCKED.md` 首行并只做不受影响部分。核对后在 `PROGRESS.md` 用不超过 10 行写目标、顺序、最大风险。
 
@@ -31,7 +31,7 @@
 
 ## 完成条件
 
-1. 上传与 ERP 两入口都能选择自动/整理模式；正常商品得到 1+8 共 9 张，白底图失败时后 8 张零提交，成功图无需审核即可按选中版本下载本地 ZIP。
-2. 后端测试 `>=160`、前端 `>=35`、skipped `0`，全量检查全绿；服务器真实 DeepSeek、GPT-5 Nano、GPT Image 2、ERP、OSS 和完整商品 smoke 均有脱敏输出，Secret 泄漏为 0。
+1. 上传与 ERP 两入口都能选择自动/整理模式；正常商品得到 1+8 共 9 张，白底图失败时后 8 张零提交，只有人工审核通过图可按选中版本下载本地 ZIP。
+2. 后端测试 `>=160`、前端 `>=35`、skipped `0`，全量检查全绿；服务器真实 DeepSeek、GPT-5 Nano、GPT Image 2、OSS 和完整商品 smoke 均有脱敏输出，Secret 泄漏为 0；ERP 成功登录/SKU 导入单独验收。
 
 每条完成条件都要在对话贴实际命令输出和反向验证红→绿证据，只说完成不算。`BLOCKED.md` 随交付提交，空也写“无”。最多执行 3 轮全量修复；满轮即停，如实汇报卡点和剩余工作。

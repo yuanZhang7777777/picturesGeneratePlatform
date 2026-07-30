@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 将现有技术 MVP 改造成可通过“自动出图 / 导入后整理”两种方式，为每个上传或 ERP 商品稳定生成 1 张白底图和 8 张营销图，并支持单张修改、历史版本和本地批量导出。
+**Goal:** 将现有技术 MVP 改造成可通过“自动出图 / 导入后整理”两种方式，为每个上传或 ERP 商品稳定生成 1 张白底图和 8 张营销图，并支持人工审核、单张修改、历史版本和本地批量导出。
 
-**Architecture:** 复用现有 Django 领域模型、APIMart 客户端、OSS、ERP 登录和 React 工作台；只补商品准备状态、9 槽 Prompt、按商品生成和选择式导出。Prompt Worker 异步完成图片观察与 DeepSeek Prompt，Generation Worker 保持白底图先行并把白底结果加入后续 8 图参考。
+**Architecture:** 复用现有 Django 领域模型、APIMart 客户端、OSS、ERP 登录和 React 工作台；只补商品准备状态、9 槽 Prompt、按商品生成、人工审核门禁和选择式导出。Prompt Worker 异步完成图片观察与 DeepSeek Prompt，Generation Worker 保持白底图先行并把白底结果加入后续 8 图参考。
 
 **Tech Stack:** Django 5.2、PostgreSQL/SQLite tests、React 19、TypeScript、Vite、TanStack Query、dnd-kit、Caddy、Docker Compose、私有 OSS、APIMart。
 
@@ -83,7 +83,7 @@
 - [ ] 用 `(cluster, slot, attempt)` 唯一约束实现幂等，不新增 GenerationRequest；弃用 Batch 单次 `confirmed_generation_key` 门禁但保留旧字段兼容历史。
 - [ ] 对明确 429/5xx 使用有限重试；未知受理状态保持人工处置。重跑聚焦测试后提交 `feat: generate nine-slot product sets safely`。
 
-### Task 4: 去除审核门槛并实现修改与选择式导出
+### Task 4: 保留审核门槛并实现修改与选择式导出
 
 **Files:**
 - Modify: `platform_app/services.py`
@@ -95,11 +95,11 @@
 - Produces: `request_generation_revision(generation, user, *, issue_tags, description, annotations)`。
 - API: `POST /api/generations/<id>/revise/`；`POST /api/projects/<id>/export/ {"generation_ids":[]}` 返回 ZIP。
 
-- [ ] 写失败测试：completed 结果无需 accepted 即可导出；默认最新成功版本；显式 generation IDs 可选旧成功版本；他人项目 ID 返回 404。
+- [ ] 写失败测试：completed 结果未 accepted 不可导出；默认最新审核通过版本；显式 generation IDs 只能选择已通过旧版本；他人项目 ID 返回 404。
 - [ ] 写 ZIP 测试：`项目名_日期/商品名__SKU/01..09_槽位.原扩展名` 和 UTF-8 `导出清单.csv`；ZIP 不调用 storage.save。
 - [ ] 写圈选修改测试：批注坐标校验不减弱，修改创建新 PromptVersion/Generation，旧结果不覆盖。
 - [ ] 运行 `tests/test_review_delivery.py` 确认红灯；复用现有批注逻辑，不删除旧 Review 表和历史 API。
-- [ ] 实现新 revision/export 接口，移除 accepted 导出过滤和 OSS ZIP 持久化；提交 `feat: export selected results without review gate`。
+- [ ] 实现 revision/export 接口，保留 accepted 导出过滤并移除 OSS ZIP 持久化；提交 `feat: export selected approved results`。
 
 ### Task 5: 重做 React 双速工作区与结果页
 
@@ -126,7 +126,7 @@
 - Produces: `/projects/:id` 统一工作区；`/projects/:id/results` 生产与结果页；不再导航到 `/review`.
 
 - [ ] 写失败测试：两个导入按钮；自动模式提交后直接准备/生成；整理模式停在商品卡；拖拽合并可撤销；生成按钮显示商品/图片数。
-- [ ] 写结果测试：9 槽、默认全选最新成功图、取消选择、历史版本、再生成、圈选修改、选择式 ZIP。
+- [ ] 写结果测试：9 槽、默认全选最新审核通过图、取消选择、历史版本、再生成、圈选修改、选择式 ZIP。
 - [ ] 运行 `npm --prefix frontend test` 确认新增测试失败。
 - [ ] 复用 TanStack Query、dnd-kit 和现有 API 错误处理；删除预检按钮、确认弹窗、审核导航与“通过”动作，不增加状态库。
 - [ ] 结果页保持 3 秒/15 秒轮询规则；桌面 Chrome/Edge 在 1280px 宽无横向页面溢出。
@@ -177,4 +177,4 @@ npm --prefix frontend run build
 git diff --check
 ```
 
-完成标准：上传和 ERP 两条入口都能选择自动/整理模式；每个正常商品产生 1+8 共 9 张，成功结果无需审核即可选择式下载，历史版本与对象权限不退化；服务器真实三模型、OSS、ERP 和完整商品 smoke 有脱敏证据。
+完成标准：上传和 ERP 两条入口都能选择自动/整理模式；每个正常商品产生 1+8 共 9 张，只有人工审核通过结果可以选择式下载，历史版本与对象权限不退化；服务器真实三模型、OSS、ERP 和完整商品 smoke 有脱敏证据。

@@ -9,9 +9,9 @@
 | --- | --- | --- | --- | --- |
 | Shopee（MY 广告/商品详情页资料） | [Improve Your Product Detail Page for Successful Advertising](https://ads.shopee.com.my/learn/faq/502/104) | 2026-07-29 | 推荐 1:1、至少 1024×1024、真实商品、清晰白底主图、无水印；允许尺寸、成分、用法等信息图。 | 系统默认生成 9 张、1:1、1k：第 1 槽使用干净白底图，第 2–9 槽使用经事实约束的营销图。 |
 | TikTok Shop（商品上架） | [How to Add Products to Your Shop](https://seller-us.tiktok.com/university/essay?knowledge_id=6581713858676522&lang=en) | 2026-07-29 | 至少 1 张、最多 9 张；JPG/JPEG/PNG、单图最大 10 MB、至少 600×600；主图展示完整商品；不得添加文字、图形或水印；展示多角度和关键特征。 | `1+8` 九图模板与数量上限相符；第 1 槽锁定无文字、完整商品、白底路线。 |
-| TikTok Shop（PDP 质量） | [Product Detail Pages & Listing Quality Guidelines](https://seller-us.tiktok.com/university/essay?knowledge_id=481891871868714&lang=en) | 2026-07-29 | “Good”质量建议至少 5 张高分辨率商品图，含多角度/细节以及品类相关规格信息；主图避免水印、边框和促销文字。 | 第 2–9 槽按产品事实分配细节、尺寸、用法、场景和模特图；成功结果默认可选，员工可取消、修改或重做。 |
-| TikTok Shop（上架政策） | [Product Listing Policy](https://seller-us.tiktok.com/university/essay?knowledge_id=3196690250417921) | 2026-07-29 | 商品图必须准确代表实际销售商品，不得侵犯知识产权或个人权利；主图需纯白背景、客观展示商品。 | 结构化 Prompt 与身份锁不得改变商品事实或带入竞品素材；员工在导出前自行选择结果。 |
-| TikTok Shop（内容政策） | [Content Policy](https://seller-us.tiktok.com/university/essay?knowledge_id=6837891779151617) | 2026-07-29 | 图上文字与视觉内容属于受政策约束的内容，禁止误导、垃圾信息、欺诈与有害表达。 | 图上文字由站点语言与商品事实编译，生成结果不设审核门槛，员工可取消选择或修改后再导出。 |
+| TikTok Shop（PDP 质量） | [Product Detail Pages & Listing Quality Guidelines](https://seller-us.tiktok.com/university/essay?knowledge_id=481891871868714&lang=en) | 2026-07-29 | “Good”质量建议至少 5 张高分辨率商品图，含多角度/细节以及品类相关规格信息；主图避免水印、边框和促销文字。 | 第 2–9 槽按产品事实分配细节、尺寸、用法、场景和模特图；结果需人工审核通过后才可导出，员工可取消、修改或重做。 |
+| TikTok Shop（上架政策） | [Product Listing Policy](https://seller-us.tiktok.com/university/essay?knowledge_id=3196690250417921) | 2026-07-29 | 商品图必须准确代表实际销售商品，不得侵犯知识产权或个人权利；主图需纯白背景、客观展示商品。 | 结构化 Prompt 与身份锁不得改变商品事实或带入竞品素材；员工在审核通过后自行选择导出结果。 |
+| TikTok Shop（内容政策） | [Content Policy](https://seller-us.tiktok.com/university/essay?knowledge_id=6837891779151617) | 2026-07-29 | 图上文字与视觉内容属于受政策约束的内容，禁止误导、垃圾信息、欺诈与有害表达。 | 图上文字由站点语言与商品事实编译，生成结果必须人工审核通过后才可导出。 |
 
 ## 默认 `1+8` 九槽图策略
 

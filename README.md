@@ -1,6 +1,6 @@
 # 独立批量出图平台
 
-状态：MVP 已部署到 2 号云服务器预览环境，入口为该服务器 IP 的 `18083` 端口；2026-07-29 已根据业务反馈进入产品体验重设，当前预览只作为技术链路验证，不作为最终前端方向。
+状态：MVP 已部署到 2 号云服务器预览环境，入口为该服务器 IP 的 `18083` 端口；2026-07-30 已完成真实 APIMart/OSS、1+8 付费出图、人工审核和本地 ZIP 导出 smoke。当前入口仍是测试预览，不是面向 100 名员工的正式 HTTPS 发布。
 
 本项目面向公司内部运营人员，提供“上传图片/文件夹”和“ERP SKU”两个并列入口。每次导入可选择“导入并自动出图”或“导入后整理”；两种模式共用图片识别、商品卡、AI Prompt、1 张白底图 + 8 张营销图、单张修改、历史版本和本地批量导出。Django 负责登录、权限、任务和数据；`frontend/` 中的 React + TypeScript + Vite 工作台由 Caddy 同源提供静态文件，并由 Caddy 代理 Django API、认证、后台、健康检查和迁移期的 `/batches/` 页面。
 
@@ -18,7 +18,7 @@ ERP SKU 是两个一级入口之一：`POST /api/projects/{id}/sku-import/` 接�
 首版规划容量：
 
 - 最多约 100 名内部员工。
-- 不设置每日 2,000 张业务上限。
+- 目标每日约 2,000 张生成图提交；供应商和服务器并发需按运行手册分级压测后逐步提高。
 - 供应商 API 活跃异步任务上限为 500；当前预览默认并发为 2，必须完成原子队列、限流与分级压测后才可逐步提高。
 - 2 号云服务器独立 Docker Compose 栈。
 - 临时预览入口使用当前空闲的 `18083` 端口；正式使用不做来源 IP 白名单，按业务决定使用公网 IP + 端口，但真实 ERP 账号登录前必须启用员工设备信任的 HTTPS。
@@ -27,11 +27,11 @@ ERP SKU 是两个一级入口之一：`POST /api/projects/{id}/sku-import/` 接�
 
 - 部署目录：`/opt/independent-image-platform`。
 - Compose 项目名：`independent-image-platform`。
-- 服务器已配置真实 ERP、OSS 与 APIMart Secret；OSS 写读删、ERP 登录和 SKU 查询 smoke 已通过。迁移后的 2 号服务器已验证可解析并通过 TLS 直连 `api.apimart.ai:443`；服务器侧真实鉴权与三个模型的最小付费 smoke 仍待执行。本地开发机已完成 DeepSeek 文本、GPT-5 Nano 视觉观察、GPT Image 2 提交/轮询/结果下载的最小真实 smoke。
+- 服务器已配置真实 ERP、OSS 与 APIMart Secret；OSS 写读删 smoke 已通过。迁移后的 2 号服务器已完成 APIMart 三节点最小真实 smoke，并完成一个真实 1+8 项目：DeepSeek/GPT-5 Nano/GPT Image 2 全链路、9 张结果 OSS 归档、人工审核通过和 ZIP 导出。ERP 登录接口网络可达；真实员工账号成功登录/SKU 导入 smoke 需通过浏览器人工登录或服务器端专用 smoke 账号变量完成。
 - 已生成临时 `admin` 账号；密码保存在服务器 root-only 文件 `/opt/independent-image-platform/.admin_password`。
 - APIMart、OSS 与 ERP 凭据只写入服务器 root-only `.env` 或 Secret；不进入仓库、文档、前端、数据库、日志、Prompt 或导出包。
 - 模型名称、端点、参数、响应和限流以 [APIMart 中文文档](https://docs.apimart.ai/cn) 与受限账户契约测试为准；不以模型原厂文档直接推断可接入性。
-- `APIMART_FAKE_MODE=1` 仍是本地和新环境的唯一安全默认值。2 号服务器切到真实 APIMart 前，必须完成服务器侧供应商契约测试、限流验收和主 Agent 发布签核；网络连通不等于模型契约或付费链路已经验收。
+- `APIMART_FAKE_MODE=1` 仍是本地和新环境的唯一安全默认值；当前 2 号服务器预览环境已由主 Agent 在受限 smoke 中切到真实 APIMart。提高并发或开放正式素材前仍必须完成限流验收和主 Agent 发布签核。
 - HTTP 的 IP:端口入口只允许测试账号与非敏感素材；在公网 IP + 端口的 HTTPS 和账号安全就绪前，不得面向 100 名员工开放。
 
 ## 本地运行与静态验证
@@ -57,12 +57,12 @@ React 开发模式与 Docker 预览是两条路径：前者运行 Django 与 `np
 - 平台规则和套图模板只能由管理员在同源 `/admin/` 路径维护和发布，并记录官方来源、核对日期、适用平台/站点和版本。
 - 正式种子由独立 `template-seed` 任务处理：仅全局通用模板可作为 `published` 基线；Shopee/TikTok 规则和模板在官方规则完成核对、来源和版本写入前必须保持 `draft`，不能宣称自动合规。
 - 未发布或未核对的规则不能被宣称为自动合规。竞品图只能经批准的 `gpt-5-nano-2025-08-07` 视觉观察器形成抽象策略，不能作为生成参考图、商品事实、生产 Prompt、导出内容或上传至 `gpt-image-2`。
-- 生成成功的最新版本默认可导出；员工可以取消选择、选择历史成功版本、圈选修改或主动再生成。失败重做和人工修改均保留旧版本。
+- 生成成功的最新版本默认进入待审核；只有人工审核通过的版本可导出。员工可以取消选择、选择历史已通过版本、圈选修改或主动再生成。失败重做和人工修改均保留旧版本。
 
 ## Worker 边界
 
 - `generation-worker` 提交、轮询并归档图片任务。
-- `prompt-worker` 为结构化 Brief/Prompt 预留；当前实现仍是占位循环，不能作为异步 Prompt 工作已交付的证据。
+- `prompt-worker` 执行商品视觉理解、结构化 Prompt 生成和 9 槽 PromptVersion 准备。
 - 健康检查目前验证 Web 与数据库；发布时还必须确认两个 worker 容器持续运行且日志无重复退出。
 
 设计与调研：
