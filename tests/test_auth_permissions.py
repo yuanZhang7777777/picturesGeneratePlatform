@@ -1,7 +1,12 @@
 import pytest
+from django.contrib import admin
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
+from django.contrib.contenttypes.models import ContentType
+from django.test import RequestFactory
 from django.urls import reverse
 
+from platform_app.models import DailyGenerationUsage, OutputTemplate, PromptNodeTemplate, RuleProfile
 from platform_app.services import ErpAuthError
 
 
@@ -120,6 +125,7 @@ def test_authenticate_erp_user_creates_operator_shadow_user(settings):
     assert token == "operator-token"
     assert user.username == "operator"
     assert user.role == get_user_model().Role.OPERATOR
+    assert user.is_staff is False
     assert user.must_change_password is False
     assert not user.has_usable_password()
 
@@ -137,3 +143,56 @@ def test_authenticate_erp_user_marks_configured_admin(settings):
 
     assert token == "admin-token"
     assert user.role == get_user_model().Role.ADMIN
+    assert user.is_staff is True
+
+
+def test_operator_staff_cannot_see_model_or_queue_configuration_in_admin():
+    operator = make_user("operator-staff", is_superuser=False)
+    operator.is_staff = True
+    operator.save(update_fields=["is_staff"])
+    content_types = ContentType.objects.get_for_models(PromptNodeTemplate, DailyGenerationUsage)
+    operator.user_permissions.add(
+        *Permission.objects.filter(content_type__in=content_types.values(), codename__startswith="view_")
+    )
+    request = RequestFactory().get("/admin/")
+    request.user = operator
+
+    assert admin.site._registry[PromptNodeTemplate].has_module_permission(request) is False
+    assert admin.site._registry[DailyGenerationUsage].has_module_permission(request) is False
+
+
+def test_liuxuecheng_admin_can_manage_templates_and_rules_without_manual_permissions():
+    admin_user = make_user("liuxuecheng", role=get_user_model().Role.ADMIN)
+    admin_user.is_staff = True
+    admin_user.save(update_fields=["is_staff"])
+    request = RequestFactory().get("/admin/")
+    request.user = admin_user
+
+    assert admin.site._registry[OutputTemplate].has_change_permission(request) is True
+    assert admin.site._registry[RuleProfile].has_change_permission(request) is True
+
+
+def test_admin_rule_publish_requires_official_source_metadata():
+    admin_user = make_user("liuxuecheng", role=get_user_model().Role.ADMIN)
+    admin_user.is_staff = True
+    admin_user.save(update_fields=["is_staff"])
+    request = RequestFactory().post("/admin/platform_app/ruleprofile/add/")
+    request.user = admin_user
+    form_class = admin.site._registry[RuleProfile].get_form(request)
+
+    form = form_class(
+        data={
+            "platform": "shopee",
+            "site": "SG",
+            "name": "Shopee SG rules",
+            "version": "2026.07",
+            "status": RuleProfile.Status.PUBLISHED,
+            "source_url": "",
+            "checked_at": "",
+            "rules": "{}",
+        }
+    )
+
+    assert form.is_valid() is False
+    assert "source_url" in form.errors
+    assert "checked_at" in form.errors

@@ -29,3 +29,7 @@
 
 - Seventh review follow-up: Catalog login now requires a nonblank string Token, and a nonempty query list containing a non-object, missing SKU, or blank SKU is a catalog failure rather than a false `sku_not_found`. Valid catalog entries for SKUs not requested are ignored.
 - Verification: all 48 SKU import tests and all 142 pytest cases passed; `manage.py check`, `USE_SQLITE_FOR_TESTS=1 manage.py makemigrations --check --dry-run`, and `git diff --check` passed on 2026-07-29.
+
+- QA/release local Task 6-7 slice: platform admins from `PLATFORM_ADMIN_ERP_USERS` now become Django staff; admin-only template/rule/model/usage controls are hidden from ordinary staff users; non-global rule publishing in admin requires source URL, site, checked date, and version. Global seed is now the 1+8 nine-slot baseline, with legacy eight-slot templates preserved for historical batches.
+- APIMart smoke: added `python manage.py smoke_apimart_nodes`, which creates a local Pillow test image and exercises vision, prompt, and image nodes through fake mode or the configured APIMart client. Output is limited to node status, elapsed milliseconds, and SHA-256 hash; fake/empty/replacement keys are rejected in real mode without echoing the key.
+- Verification: focused auth/template/APIMart tests passed locally; Django check, migration dry-run, and final diff checks are recorded in the committing task output.

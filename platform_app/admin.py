@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django import forms
 
 from .models import (
     Asset,
@@ -22,6 +23,45 @@ from .models import (
 )
 
 
+class PlatformAdminOnlyMixin:
+    def _allowed(self, request):
+        return bool(
+            request.user
+            and request.user.is_active
+            and request.user.is_staff
+            and request.user.is_platform_admin
+        )
+
+    def has_module_permission(self, request):
+        return self._allowed(request)
+
+    def has_view_permission(self, request, obj=None):
+        return self._allowed(request)
+
+    def has_add_permission(self, request):
+        return self._allowed(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self._allowed(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self._allowed(request)
+
+
+class RuleProfileAdminForm(forms.ModelForm):
+    class Meta:
+        model = RuleProfile
+        fields = "__all__"
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("status") == RuleProfile.Status.PUBLISHED and cleaned.get("platform") != "global":
+            for field in ("source_url", "checked_at", "site", "version"):
+                if not cleaned.get(field):
+                    self.add_error(field, "Published market rules require official source metadata.")
+        return cleaned
+
+
 @admin.register(User)
 class PlatformUserAdmin(UserAdmin):
     fieldsets = UserAdmin.fieldsets + (
@@ -35,7 +75,9 @@ admin.site.register(Asset)
 admin.site.register(Cluster)
 admin.site.register(ClusterAsset)
 admin.site.register(CompetitorInsight)
-admin.site.register(OutputTemplate)
+@admin.register(OutputTemplate)
+class OutputTemplateAdmin(PlatformAdminOnlyMixin, admin.ModelAdmin):
+    list_display = ("name", "platform", "site", "version", "status")
 
 
 @admin.register(OutputSlot)
@@ -46,7 +88,9 @@ class OutputSlotAdmin(admin.ModelAdmin):
         return super().get_readonly_fields(request, obj)
 
 
-admin.site.register(PromptNodeTemplate)
+@admin.register(PromptNodeTemplate)
+class PromptNodeTemplateAdmin(PlatformAdminOnlyMixin, admin.ModelAdmin):
+    list_display = ("node_name", "version", "status", "updated_at")
 
 
 @admin.register(PromptVersion)
@@ -57,7 +101,10 @@ class PromptVersionAdmin(admin.ModelAdmin):
         return super().get_readonly_fields(request, obj)
 
 
-admin.site.register(RuleProfile)
+@admin.register(RuleProfile)
+class RuleProfileAdmin(PlatformAdminOnlyMixin, admin.ModelAdmin):
+    form = RuleProfileAdminForm
+    list_display = ("name", "platform", "site", "version", "status", "checked_at")
 
 
 @admin.register(Generation)
@@ -92,7 +139,7 @@ admin.site.register(AuditEvent)
 
 
 @admin.register(DailyGenerationUsage)
-class DailyGenerationUsageAdmin(admin.ModelAdmin):
+class DailyGenerationUsageAdmin(PlatformAdminOnlyMixin, admin.ModelAdmin):
     list_display = ("date", "scope", "user", "used")
     readonly_fields = ("date", "scope", "user", "used")
 

@@ -145,6 +145,10 @@ def authenticate_erp_user(username, password, *, client=None):
     if user.must_change_password:
         user.must_change_password = False
         changed.append("must_change_password")
+    is_staff = role == get_user_model().Role.ADMIN or user.is_superuser
+    if user.is_staff != is_staff:
+        user.is_staff = is_staff
+        changed.append("is_staff")
     if user.has_usable_password():
         user.set_unusable_password()
         changed.append("password")

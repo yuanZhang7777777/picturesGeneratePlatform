@@ -33,6 +33,15 @@ SKU 商品资料导入使用当前登录用户的 ERP Token 调用 `CATALOG_QUER
 
 APIMart 中文文档与受限账户的最小契约测试是唯一接入事实来源：测试精确模型 ID、`/v1/responses` 图片输入、结构化输出封装、错误语义、限流和账务。上游模型文档仅帮助判断能力方向，不能代替 APIMart 参数或可用性结论。当前本地真实 smoke 已验证：`deepseek-v4-pro` 文本节点走非流式 Chat Completions，`gpt-5-nano-2025-08-07` 视觉观察走 Responses 并从 `output[].content[].text` 提取文本，`gpt-image-2` 先通过 `/v1/uploads/images` 上传我方参考图，再用字符串数组 `image_urls` 提交 `/v1/images/generations`，任务完成后必须下载结果并归档到受控存储。
 
+本地 APIMart 三节点 smoke 命令：
+
+```powershell
+$env:APIMART_FAKE_MODE='1'
+python manage.py smoke_apimart_nodes
+```
+
+真实受限账户验证时，先由主 Agent 确认付费授权和 `.env`，再将 `APIMART_FAKE_MODE=0`。命令只允许输出节点名、状态、耗时和结果哈希；不得打印 API key、完整响应、上传 URL、任务结果 URL 或签名 URL。明显的假 key、空 key 或替换标记必须非零退出，且输出中不得回显该 key。
+
 ## 出站网络与连通性
 
 生产服务器统一通过 SSH 别名 `hermes-remote` 操作，仓库文档不记录服务器公网 IP。2026-07-30 迁移后只读 smoke 已确认该服务器能够解析 `api.apimart.ai` 的 IPv4 地址、建立 TCP/HTTPS 连接并通过证书校验；请求 `/v1` 返回 HTTP `404`，证明 APIMart 网关已可达，但不代表鉴权、模型权限或付费生图链路已经验收。
@@ -116,6 +125,8 @@ docker compose logs --tail=100 web generation-worker prompt-worker proxy
 ## 管理员规则、模板与发布
 
 管理员通过同源 `/admin/` 登录后维护平台规则、输出模板及槽位。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。正式种子不由本运维任务写入，而由独立 `template-seed` 任务提交：仅 global generic 模板可作为 `published` 基线；Shopee/TikTok 必须在官方规则发布前保持 `draft`。草稿或未核对规则不得被描述为自动合规。
+
+ERP 登录名在 `PLATFORM_ADMIN_ERP_USERS` 中的用户会成为平台管理员并可进入 Django admin；普通员工不应进入模型节点、队列/用量或模板规则配置页。非 global 的市场规则若要在 admin 发布，必须填写官方来源 URL、站点、核对日期和版本；Shopee/TikTok 未逐站核实前继续使用 global 1+8 九槽模板作为普通生成基线，不宣称自动合规。
 
 竞品图可经批准的 `gpt-5-nano-2025-08-07` 视觉观察器提炼为抽象构图或风格策略；不得作为商品参考图、事实来源、生产 Prompt、导出内容或传给 `gpt-image-2`。Prompt OS 只能把确认过的商品事实、身份锁、模板、我方参考图与受限 Style DNA 编译为生成指令。
 

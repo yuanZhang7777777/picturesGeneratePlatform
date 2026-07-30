@@ -1,6 +1,9 @@
 from pathlib import Path
+from io import StringIO
 
 import pytest
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import override_settings
 
 
@@ -276,3 +279,29 @@ def test_image_urls_normalizes_strings_objects_and_nested_results():
     assert _image_urls(
         {"result": {"images": [{"url": ["https://example.test/c.png"]}]}}
     ) == ["https://example.test/c.png"]
+
+
+@override_settings(APIMART_FAKE_MODE=True, APIMART_API_KEY="secret-key")
+def test_smoke_apimart_nodes_fake_mode_outputs_only_sanitized_statuses():
+    stdout = StringIO()
+
+    call_command("smoke_apimart_nodes", stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "vision status=ok" in output
+    assert "prompt status=ok" in output
+    assert "image status=completed" in output
+    assert "sha256=" in output
+    assert "secret-key" not in output
+    assert "fake://" not in output
+    assert "{\"" not in output
+
+
+@override_settings(APIMART_FAKE_MODE=False, APIMART_API_KEY="fake-test-key-123")
+def test_smoke_apimart_nodes_rejects_fake_key_without_leaking_it():
+    stdout = StringIO()
+
+    with pytest.raises(CommandError, match="invalid APIMart API key"):
+        call_command("smoke_apimart_nodes", stdout=stdout)
+
+    assert "fake-test-key-123" not in stdout.getvalue()
