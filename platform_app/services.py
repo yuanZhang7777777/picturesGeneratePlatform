@@ -2739,7 +2739,7 @@ def optimize_cluster_prompt(cluster, client=None):
 
 @transaction.atomic
 def update_cluster_content(cluster, user, payload):
-    locked = Cluster.objects.select_for_update().select_related("batch", "batch__output_template").get(id=cluster.id)
+    locked = Cluster.objects.select_for_update().select_related("batch").get(id=cluster.id)
     if payload.get("expected_version") != locked.version:
         raise ValueError("Cluster changed; refresh before saving")
     prompts = payload.get("prompts", [])
