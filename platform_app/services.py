@@ -1739,6 +1739,72 @@ def _identity_facts(identity):
     return "; ".join(dict.fromkeys(item for item in values if item))
 
 
+def _normalized_marketing_plans(marketing_plan, marketing_slots):
+    raw_plans = marketing_plan.get("plans")
+    if not isinstance(raw_plans, list):
+        raw_plans = marketing_plan.get("slot_plans")
+    if not isinstance(raw_plans, list):
+        raw_plans = marketing_plan.get("slots", [])
+    slot_orders_by_name = {slot.name: slot.order for slot in marketing_slots}
+    plans = {}
+    for index, item in enumerate(raw_plans):
+        if not isinstance(item, dict):
+            continue
+        raw_order = item.get("slot_order", item.get("slot_id"))
+        if str(raw_order or "").isdigit():
+            order = int(raw_order)
+        else:
+            order = slot_orders_by_name.get(str(item.get("slot_name") or ""))
+        if order is None and len(raw_plans) == len(marketing_slots):
+            order = marketing_slots[index].order
+        if order is None:
+            continue
+        normalized = dict(item)
+        normalized["slot_order"] = order
+        normalized.setdefault("main_scene", normalized.get("primary_scene", ""))
+        normalized.setdefault("main_action", normalized.get("primary_action", "none"))
+        normalized.setdefault(
+            "scene_family",
+            normalized.get("scene_title")
+            or normalized.get("role")
+            or normalized.get("decision_task")
+            or normalized.get("main_scene")
+            or f"slot-{order}",
+        )
+        normalized.setdefault(
+            "conversion_goal",
+            normalized.get("decision_task") or normalized.get("copy_intent", ""),
+        )
+        normalized.setdefault("visible_text_lines", [])
+        plans[order] = normalized
+    return plans
+
+
+def _repair_marketing_plan_schema(client, marketing_plan, marketing_slots):
+    required = [
+        {"slot_order": slot.order, "slot_name": slot.name}
+        for slot in marketing_slots
+    ]
+    response = client.optimize_prompt(
+        {
+            "system": (
+                "Normalize an ecommerce marketing plan into exactly one valid JSON object. "
+                "Do not add or remove slots and return no markdown or explanation."
+            ),
+            "text": "\n".join(
+                [
+                    "Return this exact root schema:",
+                    '{"plans":[{"slot_order":2,"scene_family":"string","conversion_goal":"string",'
+                    '"main_scene":"string","main_action":"string","visible_text_lines":[]}]}',
+                    f"Required slots: {json.dumps(required, ensure_ascii=False)}",
+                    f"Previous JSON: {json.dumps(marketing_plan, ensure_ascii=False)[:6000]}",
+                ]
+            ),
+        }
+    )
+    return _json_object(response.get("output_text", ""))
+
+
 def process_prompt_once(client=None, storage=None):
     client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
@@ -1931,44 +1997,16 @@ def process_prompt_once(client=None, storage=None):
             "Plan one distinct purchase-decision scene for every supplied marketing slot. Do not repeat scene families.",
             marketing_input,
         )
-        raw_plans = marketing_plan.get("plans")
-        if not isinstance(raw_plans, list):
-            raw_plans = marketing_plan.get("slot_plans")
-        if not isinstance(raw_plans, list):
-            raw_plans = marketing_plan.get("slots", [])
-        slot_orders_by_name = {slot.name: slot.order for slot in marketing_slots}
-        plans = {}
-        for index, item in enumerate(raw_plans):
-            if not isinstance(item, dict):
-                continue
-            raw_order = item.get("slot_order", item.get("slot_id"))
-            if str(raw_order or "").isdigit():
-                order = int(raw_order)
-            else:
-                order = slot_orders_by_name.get(str(item.get("slot_name") or ""))
-            if order is None and len(raw_plans) == len(marketing_slots):
-                order = marketing_slots[index].order
-            if order is None:
-                continue
-            normalized = dict(item)
-            normalized["slot_order"] = order
-            normalized.setdefault("main_scene", normalized.get("primary_scene", ""))
-            normalized.setdefault("main_action", normalized.get("primary_action", "none"))
-            normalized.setdefault(
-                "scene_family",
-                normalized.get("scene_title")
-                or normalized.get("role")
-                or normalized.get("decision_task")
-                or normalized.get("main_scene")
-                or f"slot-{order}",
+        expected_orders = {slot.order for slot in marketing_slots}
+        plans = _normalized_marketing_plans(marketing_plan, marketing_slots)
+        if set(plans) != expected_orders:
+            marketing_plan = _repair_marketing_plan_schema(
+                client,
+                marketing_plan,
+                marketing_slots,
             )
-            normalized.setdefault(
-                "conversion_goal",
-                normalized.get("decision_task") or normalized.get("copy_intent", ""),
-            )
-            normalized.setdefault("visible_text_lines", [])
-            plans[order] = normalized
-        if set(plans) != {slot.order for slot in marketing_slots}:
+            plans = _normalized_marketing_plans(marketing_plan, marketing_slots)
+        if set(plans) != expected_orders:
             raise ValueError("marketing plan missing slot plans")
         marketing_plan["plans"] = [plans[slot.order] for slot in marketing_slots]
         scene_families = [str(plans[slot.order].get("scene_family") or "") for slot in marketing_slots]

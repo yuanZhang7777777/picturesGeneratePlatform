@@ -505,6 +505,25 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
 
     class LowConfidenceClient(PromptClient):
         def optimize_prompt(self, payload):
+            if "Normalize an ecommerce marketing plan" in payload.get("system", ""):
+                return {
+                    "output_text": json.dumps(
+                        {
+                            "plans": [
+                                {
+                                    "slot_order": order,
+                                    "scene_family": f"family-{order}",
+                                    "conversion_goal": f"decision-{order}",
+                                    "main_scene": f"scene-{order}",
+                                    "main_action": "none",
+                                    "visible_text_lines": [],
+                                }
+                                for order in range(2, 10)
+                            ]
+                        }
+                    ),
+                    "raw": {},
+                }
             if "NODE N2" in payload["text"]:
                 return {
                     "output_text": json.dumps(
@@ -532,7 +551,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                                     "primary_action": "none",
                                     "copy_intent": f"decision-{order}",
                                 }
-                                for order in range(2, 10)
+                                for order in range(2, 9)
                             ],
                         }
                     ),
