@@ -1,9 +1,7 @@
-import base64
 import copy
 import hashlib
 import ipaddress
 import json
-import mimetypes
 import re
 import uuid
 from contextlib import contextmanager
@@ -229,6 +227,9 @@ class LocalStorage:
 
 
 class FakeAPIMartClient:
+    def upload_image(self, path):
+        return f"fake://upload/{Path(path).name}"
+
     def submit_generation(self, prompt, image_paths, size, resolution):
         return f"fake-{uuid.uuid4().hex}"
 
@@ -240,6 +241,12 @@ class FakeAPIMartClient:
         Image.new("RGB", (8, 8), "white").save(buffer, "PNG")
         return buffer.getvalue()
 
+    def observe_images(self, instruction, image_paths):
+        return {"output_text": json.dumps({"ok": True}), "raw": {}}
+
+    def optimize_prompt(self, payload):
+        return {"output_text": json.dumps({"suggested_prompt": payload.get("text", "")}), "raw": {}}
+
 
 class APIMartClient:
     def __init__(self, session=None, timeout=60):
@@ -247,19 +254,17 @@ class APIMartClient:
         self.timeout = timeout
 
     @property
-    def headers(self):
+    def auth_headers(self):
         if not settings.APIMART_API_KEY:
             raise ProviderError("APIMart API key is not configured")
+        return {"Authorization": f"Bearer {settings.APIMART_API_KEY}"}
+
+    @property
+    def headers(self):
         return {
-            "Authorization": f"Bearer {settings.APIMART_API_KEY}",
+            **self.auth_headers,
             "Content-Type": "application/json",
         }
-
-    def _data_uri(self, path):
-        raw = Path(path).read_bytes()
-        mime = mimetypes.guess_type(path)[0] or "image/png"
-        encoded = base64.b64encode(raw).decode("ascii")
-        return f"data:{mime};base64,{encoded}"
 
     def _json(self, response):
         if response.status_code >= 400:
@@ -275,9 +280,34 @@ class APIMartClient:
             path = path[3:]
         return f"{base}{path}"
 
+    def _api_url(self, path):
+        base = settings.APIMART_BASE_URL.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        return f"{base}{path}"
+
+    def upload_image(self, path):
+        try:
+            with Path(path).open("rb") as handle:
+                response = self.session.post(
+                    self._url("/v1/uploads/images"),
+                    headers=self.auth_headers,
+                    files={"file": handle},
+                    timeout=self.timeout,
+                )
+        except requests.RequestException as exc:
+            raise ProviderError(_sanitize_provider_text(str(exc))) from exc
+        url = self._json(response).get("url")
+        if not isinstance(url, str) or not url:
+            raise ProviderError("provider upload response did not include url")
+        return url
+
+    def _uploaded_image_urls(self, image_paths):
+        return [self.upload_image(path) for path in image_paths]
+
     def submit_generation(self, prompt, image_paths, size, resolution):
         payload = {
-            "model": "gpt-image-2",
+            "model": settings.APIMART_IMAGE_MODEL,
             "prompt": prompt,
             "n": 1,
             "size": size,
@@ -285,7 +315,7 @@ class APIMartClient:
             "official_fallback": False,
         }
         if image_paths:
-            payload["image_urls"] = [self._data_uri(path) for path in image_paths]
+            payload["image_urls"] = self._uploaded_image_urls(image_paths)
 
         try:
             response = self.session.post(
@@ -299,9 +329,14 @@ class APIMartClient:
         except requests.RequestException as exc:
             raise SubmitUnknown(_sanitize_provider_text(str(exc))) from exc
 
-        data = self._json(response).get("data")
+        payload = self._json(response)
+        data = payload.get("data")
         first = data[0] if isinstance(data, list) and data else data
-        task_id = first.get("task_id") if isinstance(first, dict) else None
+        task_id = (
+            first.get("task_id") or first.get("id")
+            if isinstance(first, dict)
+            else payload.get("task_id") or payload.get("id")
+        )
         if not task_id:
             raise ProviderError("provider response did not include task_id")
         return task_id
@@ -322,28 +357,68 @@ class APIMartClient:
             _raise_provider_error(response)
         return response.content
 
-    def optimize_prompt(self, payload):
-        text = payload.get("text", "")
+    def complete_chat(self, messages, *, model=None):
         response = self.session.post(
-            self._url("/v1/responses"),
+            self._api_url("/api/v1/chat/completions"),
             json={
-                "model": settings.APIMART_PROMPT_MODEL,
-                "input": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "input_text",
-                                "text": text,
-                            }
-                        ],
-                    }
-                ],
+                "model": model or settings.APIMART_PROMPT_MODEL,
+                "stream": False,
+                "messages": messages,
             },
             headers=self.headers,
             timeout=self.timeout,
         )
-        return self._json(response)
+        payload = self._json(response)
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ProviderError("provider chat response did not include choices")
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str):
+            raise ProviderError("provider chat response did not include message content")
+        return {"output_text": content, "raw": payload}
+
+    def _responses_output_text(self, payload):
+        if isinstance(payload.get("output_text"), str) and payload["output_text"]:
+            return payload["output_text"]
+        parts = []
+        for item in payload.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content", []):
+                if isinstance(content, dict) and isinstance(content.get("text"), str):
+                    parts.append(content["text"])
+        return "\n".join(parts)
+
+    def observe_images(self, instruction, image_paths):
+        content = [{"type": "input_text", "text": instruction}]
+        content.extend(
+            {"type": "input_image", "image_url": url}
+            for url in self._uploaded_image_urls(image_paths)
+        )
+        response = self.session.post(
+            self._url("/v1/responses"),
+            json={
+                "model": settings.APIMART_VISION_MODEL,
+                "input": [{"role": "user", "content": content}],
+            },
+            headers=self.headers,
+            timeout=self.timeout,
+        )
+        payload = self._json(response)
+        return {"output_text": self._responses_output_text(payload), "raw": payload}
+
+    def optimize_prompt(self, payload):
+        text = payload.get("text", "")
+        return self.complete_chat(
+            [
+                {
+                    "role": "system",
+                    "content": "Return only valid JSON for ecommerce image prompt planning.",
+                },
+                {"role": "user", "content": text},
+            ]
+        )
 
 
 class CatalogClient:
@@ -1283,18 +1358,24 @@ def confirm_generation(batch, user, template=None):
 
 def _normalize_provider_status(payload):
     status = payload.get("status", "").lower()
-    if status in {"processing", "in_progress", "submitted", "queued"}:
+    if status in {"pending", "processing", "in_progress", "submitted", "queued"}:
         return Generation.Status.PROCESSING
     if status in {"completed", "succeeded", "success"}:
         return Generation.Status.COMPLETED
-    if status in {"failed", "error", "canceled"}:
+    if status in {"failed", "error", "canceled", "cancelled"}:
         return Generation.Status.FAILED
     return Generation.Status.PROCESSING
 
 
 def _image_urls(payload):
     if "image_urls" in payload:
-        return list(payload["image_urls"])
+        urls = []
+        for item in payload["image_urls"]:
+            if isinstance(item, dict):
+                item = item.get("url")
+            if item:
+                urls.append(item)
+        return urls
     urls = []
     for image in payload.get("result", {}).get("images", []):
         value = image.get("url")

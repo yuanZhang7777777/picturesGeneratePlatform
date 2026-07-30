@@ -30,6 +30,7 @@
 - 生成指令只使用已确认的商品事实、身份锁、已发布模板和当前项目参考图；缺失信息必须显式提示，不能臆造。
 - 竞品图只能通过已批准的 `gpt-5-nano-2025-08-07` 视觉观察器提炼为抽象的构图、节奏或风格策略；绝不进入生成参考图数组、`gpt-image-2`、`deepseek-v4-pro`、生产 Prompt、导出包或商品事实来源。
 - APIMart 中文文档与账户契约测试是模型 ID、端点、参数、响应、限流和计费的唯一接入依据；上游模型文档只作能力参考，发生冲突时以 APIMart 为准。
+- APIMart 当前契约：`deepseek-v4-pro` 文本节点走非流式 Chat Completions；`gpt-5-nano-2025-08-07` 视觉观察走 Responses，文本从 `output[].content[].text` 提取；`gpt-image-2` 生成前先 `/v1/uploads/images` 上传我方参考图，`image_urls` 使用 URL 字符串数组，不使用 base64 或 `{url: ...}` 对象数组。
 - Prompt Worker 负责结构化 Brief/Prompt 工作；Generation Worker 负责异步生图、轮询和归档。当前 Prompt Worker 尚是占位循环，不能作为异步 Prompt 已交付的证据。
 - 输出图必须经过人工审核；只有 `accepted` 版本允许进入平台导出。技术失败重做和人工修改都创建新版本，不覆盖历史。
 

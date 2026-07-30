@@ -323,10 +323,10 @@ TikTok Shop 不复用 Shopee 营销图模板。当前美国官方规则要求主
 
 APIMart 当前文档对 base64、`n` 和 4K 比例存在不一致：
 
-- 参考图先使用官方上传接口取得 URL，不依赖 generation API 的 base64。
+- 参考图先使用官方上传接口取得 URL，不依赖 generation API 的 base64；`gpt-image-2` 当前账户实测要求 `image_urls` 为 URL 字符串数组。
 - `n` 固定为 1。
 - 4K 默认关闭，完成真实契约测试后再由管理员启用允许组合。
-- 同时兼容供应商 `processing` 和 `in_progress`，本地统一为 `processing`。
+- 同时兼容供应商 `pending`、`processing` 和 `in_progress`，本地统一为 `processing`。
 
 ## 6. 容量、额度与公平调度
 

@@ -134,8 +134,10 @@ CSRF_COOKIE_HTTPONLY = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 APIMART_API_KEY = os.getenv("APIMART_API_KEY", "")
-APIMART_BASE_URL = os.getenv("APIMART_BASE_URL", "https://api.apimart.ai").rstrip("/")
-APIMART_PROMPT_MODEL = os.getenv("APIMART_PROMPT_MODEL", "gpt-5.2-pro")
+APIMART_BASE_URL = os.getenv("APIMART_BASE_URL", "https://api.apimart.ai/v1").rstrip("/")
+APIMART_PROMPT_MODEL = os.getenv("APIMART_PROMPT_MODEL", "deepseek-v4-pro")
+APIMART_VISION_MODEL = os.getenv("APIMART_VISION_MODEL", "gpt-5-nano-2025-08-07")
+APIMART_IMAGE_MODEL = os.getenv("APIMART_IMAGE_MODEL", "gpt-image-2")
 APIMART_FAKE_MODE = env_bool("APIMART_FAKE_MODE", True)
 ERP_LOGIN_URL = os.getenv("ERP_LOGIN_URL", "")
 PLATFORM_ADMIN_ERP_USERS = tuple(

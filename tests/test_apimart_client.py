@@ -30,24 +30,52 @@ class Session:
 
 
 @override_settings(APIMART_API_KEY="secret-key", APIMART_BASE_URL="https://api.apimart.ai")
-def test_submit_generation_posts_official_payload(tmp_path):
+def test_upload_image_posts_multipart_file_and_returns_url(tmp_path):
     from platform_app.services import APIMartClient
 
     image = tmp_path / "ref.png"
     image.write_bytes(b"image-bytes")
-    session = Session([Response(200, {"code": 200, "data": [{"task_id": "task_1"}]})])
+    session = Session([Response(200, {"url": "https://upload.apimart.ai/f/image/ref.png"})])
+    client = APIMartClient(session=session)
+
+    uploaded_url = client.upload_image(str(image))
+
+    method, url, kwargs = session.calls[0]
+    assert uploaded_url == "https://upload.apimart.ai/f/image/ref.png"
+    assert method == "POST"
+    assert url == "https://api.apimart.ai/v1/uploads/images"
+    assert kwargs["headers"] == {"Authorization": "Bearer secret-key"}
+    assert "file" in kwargs["files"]
+
+
+@override_settings(
+    APIMART_API_KEY="secret-key",
+    APIMART_BASE_URL="https://api.apimart.ai",
+    APIMART_IMAGE_MODEL="gpt-image-2",
+)
+def test_submit_generation_uploads_references_then_posts_image_urls(tmp_path):
+    from platform_app.services import APIMartClient
+
+    image = tmp_path / "ref.png"
+    image.write_bytes(b"image-bytes")
+    session = Session(
+        [
+            Response(200, {"url": "https://upload.apimart.ai/f/image/ref.png"}),
+            Response(200, {"code": 200, "data": [{"task_id": "task_1"}]}),
+        ]
+    )
     client = APIMartClient(session=session)
 
     task_id = client.submit_generation("prompt", [str(image)], "1:1", "1k")
 
-    method, url, kwargs = session.calls[0]
+    method, url, kwargs = session.calls[1]
     assert task_id == "task_1"
     assert method == "POST"
     assert url == "https://api.apimart.ai/v1/images/generations"
     assert kwargs["headers"]["Authorization"] == "Bearer secret-key"
     assert kwargs["json"]["model"] == "gpt-image-2"
     assert kwargs["json"]["n"] == 1
-    assert kwargs["json"]["image_urls"][0].startswith("data:image/png;base64,")
+    assert kwargs["json"]["image_urls"] == ["https://upload.apimart.ai/f/image/ref.png"]
 
 
 @override_settings(APIMART_API_KEY="secret-key", APIMART_BASE_URL="https://api.apimart.ai/v1")
@@ -56,12 +84,18 @@ def test_submit_generation_accepts_versioned_base_url(tmp_path):
 
     image = tmp_path / "ref.png"
     image.write_bytes(b"image-bytes")
-    session = Session([Response(200, {"code": 200, "data": [{"task_id": "task_1"}]})])
+    session = Session(
+        [
+            Response(200, {"url": "https://upload.apimart.ai/f/image/ref.png"}),
+            Response(200, {"code": 200, "data": [{"task_id": "task_1"}]}),
+        ]
+    )
     client = APIMartClient(session=session)
 
     client.submit_generation("prompt", [str(image)], "1:1", "1k")
 
-    assert session.calls[0][1] == "https://api.apimart.ai/v1/images/generations"
+    assert session.calls[0][1] == "https://api.apimart.ai/v1/uploads/images"
+    assert session.calls[1][1] == "https://api.apimart.ai/v1/images/generations"
 
 
 @override_settings(APIMART_API_KEY="secret-key", APIMART_BASE_URL="https://api.apimart.ai")
@@ -94,22 +128,104 @@ def test_rate_limit_error_is_sanitized():
 @override_settings(
     APIMART_API_KEY="secret-key",
     APIMART_BASE_URL="https://api.apimart.ai",
-    APIMART_PROMPT_MODEL="gpt-5.2-pro",
+    APIMART_PROMPT_MODEL="deepseek-v4-pro",
 )
-def test_optimize_prompt_posts_responses_payload():
+def test_optimize_prompt_posts_deepseek_chat_completions_payload():
     from platform_app.services import APIMartClient
 
-    session = Session([Response(200, {"id": "resp_1", "output_text": "{\"ok\": true}"})])
+    session = Session(
+        [
+            Response(
+                200,
+                {
+                    "id": "chat_1",
+                    "choices": [{"message": {"content": "{\"suggested_prompt\":\"ok\"}"}}],
+                },
+            )
+        ]
+    )
     client = APIMartClient(session=session)
 
     data = client.optimize_prompt({"text": "make prompt"})
 
-    assert data["id"] == "resp_1"
+    assert data["output_text"] == "{\"suggested_prompt\":\"ok\"}"
     method, url, kwargs = session.calls[0]
     assert method == "POST"
+    assert url == "https://api.apimart.ai/api/v1/chat/completions"
+    assert kwargs["json"]["model"] == "deepseek-v4-pro"
+    assert kwargs["json"]["stream"] is False
+    assert kwargs["json"]["messages"][0]["role"] == "system"
+
+
+@override_settings(
+    APIMART_API_KEY="secret-key",
+    APIMART_BASE_URL="https://api.apimart.ai/v1",
+    APIMART_VISION_MODEL="gpt-5-nano-2025-08-07",
+)
+def test_observe_images_uploads_images_and_posts_responses_payload(tmp_path):
+    from platform_app.services import APIMartClient
+
+    image = tmp_path / "source.png"
+    image.write_bytes(b"image-bytes")
+    session = Session(
+        [
+            Response(200, {"url": "https://upload.apimart.ai/f/image/source.png"}),
+            Response(200, {"id": "resp_1", "output_text": "{\"category\":\"cup\"}"}),
+        ]
+    )
+    client = APIMartClient(session=session)
+
+    data = client.observe_images("Return strict JSON.", [str(image)])
+
+    assert data["output_text"] == "{\"category\":\"cup\"}"
+    method, url, kwargs = session.calls[1]
+    assert method == "POST"
     assert url == "https://api.apimart.ai/v1/responses"
-    assert kwargs["json"]["model"] == "gpt-5.2-pro"
-    assert kwargs["json"]["input"][0]["content"][0]["type"] == "input_text"
+    assert kwargs["json"]["model"] == "gpt-5-nano-2025-08-07"
+    assert kwargs["json"]["input"][0]["content"] == [
+        {"type": "input_text", "text": "Return strict JSON."},
+        {"type": "input_image", "image_url": "https://upload.apimart.ai/f/image/source.png"},
+    ]
+
+
+@override_settings(
+    APIMART_API_KEY="secret-key",
+    APIMART_BASE_URL="https://api.apimart.ai/v1",
+    APIMART_VISION_MODEL="gpt-5-nano-2025-08-07",
+)
+def test_observe_images_extracts_nested_responses_text(tmp_path):
+    from platform_app.services import APIMartClient
+
+    image = tmp_path / "source.png"
+    image.write_bytes(b"image-bytes")
+    session = Session(
+        [
+            Response(200, {"url": "https://upload.apimart.ai/f/image/source.png"}),
+            Response(
+                200,
+                {
+                    "id": "resp_1",
+                    "output": [
+                        {"type": "reasoning", "content": []},
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "{\"visible_object\":\"red block\"}",
+                                }
+                            ],
+                        },
+                    ],
+                },
+            ),
+        ]
+    )
+    client = APIMartClient(session=session)
+
+    data = client.observe_images("Return strict JSON.", [str(image)])
+
+    assert data["output_text"] == "{\"visible_object\":\"red block\"}"
 
 
 @override_settings(APIMART_API_KEY="secret-key")
@@ -120,3 +236,25 @@ def test_download_image_returns_raw_bytes():
     client = APIMartClient(session=session)
 
     assert client.download_image("https://example.test/result.png") == b"png-bytes"
+
+
+def test_provider_status_normalizes_real_apimart_pending_and_cancelled():
+    from platform_app.models import Generation
+    from platform_app.services import _normalize_provider_status
+
+    assert _normalize_provider_status({"status": "pending"}) == Generation.Status.PROCESSING
+    assert _normalize_provider_status({"status": "cancelled"}) == Generation.Status.FAILED
+
+
+def test_image_urls_normalizes_strings_objects_and_nested_results():
+    from platform_app.services import _image_urls
+
+    assert _image_urls({"image_urls": ["https://example.test/a.png"]}) == [
+        "https://example.test/a.png"
+    ]
+    assert _image_urls({"image_urls": [{"url": "https://example.test/b.png"}]}) == [
+        "https://example.test/b.png"
+    ]
+    assert _image_urls(
+        {"result": {"images": [{"url": ["https://example.test/c.png"]}]}}
+    ) == ["https://example.test/c.png"]
