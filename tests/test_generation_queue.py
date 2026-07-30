@@ -154,6 +154,38 @@ def test_worker_archives_result_and_marks_completed(tmp_path, settings):
     assert ResultAsset.objects.filter(generation=generation).count() == 1
 
 
+def test_worker_enqueues_detail_slots_after_hero_completion(tmp_path, settings):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.services import FakeAPIMartClient, LocalStorage, ensure_cluster_generations, process_generation_once
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    for order in range(2, 10):
+        OutputSlot.objects.create(template=template, name=f"Slot {order}", order=order)
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    for slot in template.slots.order_by("order"):
+        PromptVersion.objects.create(
+            cluster=cluster,
+            created_by=user,
+            output_slot=slot,
+            prompt_text=f"Prompt {slot.order}",
+            input_snapshot={"reference_snapshot": [batch.assets.first().storage_path]},
+        )
+
+    ensure_cluster_generations(cluster, user)
+    assert list(cluster.generations.values_list("output_slot__order", flat=True)) == [1]
+
+    assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
+    assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
+
+    orders = list(cluster.generations.order_by("output_slot__order").values_list("output_slot__order", flat=True))
+    statuses = list(cluster.generations.order_by("output_slot__order").values_list("status", flat=True))
+    assert orders == list(range(1, 10))
+    assert statuses == [Generation.Status.COMPLETED, *[Generation.Status.QUEUED] * 8]
+
+
 def test_submit_unknown_is_not_reposted_automatically(tmp_path, settings):
     from platform_app.models import Generation
     from platform_app.services import LocalStorage, SubmitUnknown, confirm_generation, process_generation_once

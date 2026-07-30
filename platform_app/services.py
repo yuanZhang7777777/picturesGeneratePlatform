@@ -1894,6 +1894,8 @@ def process_generation_once(client=None, storage=None):
     active.completed_at = timezone.now()
     active.save(update_fields=["status", "completed_at", "updated_at"])
     active.batch.recompute_status()
+    if active.output_slot.order == 1:
+        ensure_cluster_generations(active.cluster, active.created_by)
     return 1
 
 
