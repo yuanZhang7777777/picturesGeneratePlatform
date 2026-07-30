@@ -53,3 +53,9 @@
 - Status: deployed commit `b7ac583` to `hermes-remote:/opt/independent-image-platform` on 2026-07-30 under `global.lock`.
 - Change: login now presents a polished ERP account card, explains that first successful ERP login auto-creates the platform shadow account, and keeps ERP password out of platform storage.
 - Verification: focused login page test failed before the template change and passed after; full backend suite passed with 180 tests; remote Django check, health check, and login page smoke passed.
+
+# Legacy batch UI removal
+
+- Status: deployed commit `8b253b7` to `hermes-remote:/opt/independent-image-platform` on 2026-07-30 under `global.lock`.
+- Change: deleted the original Django batch list/form/detail templates and legacy static JS. `/batches/`, `/batches/new/`, and `/batches/<id>/` now only perform authenticated compatibility redirects to React routes.
+- Verification: regression tests first reproduced the old page behavior, then passed after the deletion; backend 181 passed, frontend 41 passed, Vite build passed, remote health passed, and remote legacy redirect smoke passed.
