@@ -4,66 +4,66 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "../App";
 
+const slotNames = [
+  "白底标准图",
+  "第二角度/结构图",
+  "核心卖点图",
+  "材质或细节图",
+  "使用场景图",
+  "模特或比例展示图",
+  "尺寸/包装/包含物图",
+  "平台转化营销图",
+  "补充转化图",
+];
+
+const outputs = slotNames.flatMap((slot, index) => {
+  const order = index + 1;
+  const base = {
+    id: `generation-${order}`,
+    name: slot,
+    slot,
+    slotId: `slot-${order}`,
+    slotOrder: order,
+    attempt: 1,
+    version: 1,
+    status: "completed",
+    reviewStatus: "pending",
+    imageUrl: `/api/results/result-${order}/media/`,
+    prompt: `${slot} prompt`,
+  };
+  return order === 2
+    ? [{ ...base, id: "generation-2-old", attempt: 1 }, { ...base, id: "generation-2", attempt: 2, version: 2 }]
+    : [base];
+});
+
 const project = {
   id: "project-demo",
   name: "夏日家居上新",
-  platform: "shopee",
+  platform: "Shopee",
   market: "SG",
   template: "商品基础套图",
   size: "1:1",
+  resolution: "1k",
   status: "running",
   updatedAt: "2026-07-29T00:00:00Z",
-  assets: [{ id: "asset-lamp-main", name: "desk-lamp-main.png", kind: "image", imageUrl: "/api/assets/asset-lamp-main/media/" }],
+  assets: [
+    { id: "asset-lamp-main", name: "desk-lamp-main.png", kind: "image", imageUrl: "/api/assets/asset-lamp-main/media/" },
+    { id: "asset-lamp-side", name: "desk-lamp-side.png", kind: "image", imageUrl: "/api/assets/asset-lamp-side/media/" },
+  ],
   skus: [{
     id: "sku-lamp",
     name: "桌面护眼灯",
+    sku: "LAMP-001",
+    relationType: "single_product",
     version: 1,
     assetIds: ["asset-lamp-main"],
+    assets: [{ id: "asset-lamp-main", name: "desk-lamp-main.png", kind: "image", imageUrl: "/api/assets/asset-lamp-main/media/" }],
     facts: "可调节灯臂",
     identityLock: "深蓝色灯头",
     brief: "极简书桌场景",
-    outputs: [{ id: "generation-lamp-main", name: "白底主图", slot: "主图", slotId: "main", slotOrder: 1, attempt: 1, version: 1, status: "completed", reviewStatus: "pending", imageUrl: "/api/results/result-lamp-main/media/" }],
-  }],
-};
-
-const reviewProject = {
-  ...project,
-  skus: [
-    project.skus[0],
-    {
-      ...project.skus[0],
-      id: "sku-second",
-      name: "第二个商品",
-      outputs: [{
-        ...project.skus[0].outputs[0],
-        id: "generation-second",
-        name: "第二张待审核图",
-      }],
-    },
-  ],
-};
-
-const productionProject = {
-  ...project,
-  skus: [{
-    ...project.skus[0],
-    outputs: [
-      { ...project.skus[0].outputs[0], id: "generation-main-running", slot: "商品图", slotId: "main", slotOrder: 1, status: "running" },
-      { ...project.skus[0].outputs[0], id: "generation-detail-old", slot: "商品图", slotId: "detail", slotOrder: 2, attempt: 1, status: "completed" },
-      { ...project.skus[0].outputs[0], id: "generation-detail-failed", slot: "商品图", slotId: "detail", slotOrder: 2, attempt: 2, status: "failed", failureReason: "provider timeout" },
-    ],
-  }],
-};
-
-const studioHistoryProject = {
-  ...project,
-  skus: [{
-    ...project.skus[0],
-    outputs: [
-      { ...project.skus[0].outputs[0], id: "generation-detail-old", slot: "详情图", slotId: "detail", slotOrder: 2, attempt: 1 },
-      { ...project.skus[0].outputs[0], id: "generation-main", slot: "主图", slotId: "main", slotOrder: 1, attempt: 1 },
-      { ...project.skus[0].outputs[0], id: "generation-detail-current", slot: "详情图", slotId: "detail", slotOrder: 2, attempt: 2 },
-    ],
+    preparationStatus: "ready",
+    prompts: slotNames.map((slot, index) => ({ slotOrder: index + 1, slot, text: `${slot} prompt` })),
+    outputs,
   }],
 };
 
@@ -72,9 +72,7 @@ function response(status: number, body: unknown) {
 }
 
 function renderApp(path = "/") {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
@@ -84,101 +82,238 @@ function renderApp(path = "/") {
   );
 }
 
+function stubFetch(handler?: (url: string, init?: RequestInit) => Promise<unknown>) {
+  const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+    if (handler) return handler(url, init);
+    if (url.includes("/csrf/")) return Promise.resolve(response(200, { csrf_token: "csrf-for-test" }));
+    if (url.includes("/workspace/")) return Promise.resolve(response(200, { projects: [project] }));
+    return Promise.resolve(response(200, project));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 beforeEach(() => {
   vi.stubEnv("VITE_DEMO_MODE", "false");
-  vi.stubGlobal("fetch", vi.fn((url: string) => Promise.resolve(
-    response(200, url.includes("/workspace/") ? { projects: [project] } : project),
-  )));
+  stubFetch();
 });
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
-test("shows the operator dashboard from the Django workspace snapshot", async () => {
+test("shows the operator dashboard without the old review center", async () => {
   renderApp();
 
   expect(await screen.findByRole("heading", { name: "工作台" })).toBeInTheDocument();
-  expect(await screen.findByText("夏日家居上新")).toBeInTheDocument();
+  expect(screen.getByText("夏日家居上新")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "新建出图项目" })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "审核中心" })).not.toBeInTheDocument();
 });
 
-test("marks the upload chooser as a native folder picker", async () => {
+test("opens a unified project workspace from the dashboard", async () => {
+  renderApp("/projects/project-demo");
+
+  expect(await screen.findByRole("heading", { name: "夏日家居上新" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "生产与结果" })).toHaveAttribute("href", "/projects/project-demo/results");
+});
+
+test("shows two explicit import choices for both upload and ERP SKU entry", async () => {
+  renderApp("/projects/project-demo");
+
+  expect(await screen.findAllByRole("button", { name: "导入并自动出图" })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "导入后整理" })).toHaveLength(2);
+  expect(screen.getByLabelText("选择图片或文件夹")).toHaveAttribute("webkitdirectory");
+  expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
+});
+
+test("posts uploaded files in automatic mode and immediately requests generation", async () => {
+  const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
   const input = await screen.findByLabelText("选择图片或文件夹");
-  expect(input).toHaveAttribute("webkitdirectory");
+  const file = new File(["image"], "front.png", { type: "image/png" });
+  fireEvent.change(input, { target: { files: [file] } });
+  fireEvent.click(screen.getAllByRole("button", { name: "导入并自动出图" })[0]);
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/assets/"))).toBe(true));
+  const uploadCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/assets/"));
+  expect((uploadCall?.[1]?.body as FormData).get("mode")).toBe("auto");
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(true));
 });
 
-test.each(["US", "BR"])("accepts the global market code %s when creating a project", async (market) => {
-  const fetchMock = vi.fn((url: string, _init?: RequestInit) => Promise.resolve(
-    url.includes("/csrf/")
-      ? response(200, { csrf_token: "csrf-for-test" })
-      : response(201, { ...project, id: `project-${market}`, market }),
-  ));
-  vi.stubGlobal("fetch", fetchMock);
-  renderApp("/projects/new");
-
-  const marketInput = await screen.findByLabelText("市场");
-  fireEvent.change(marketInput, { target: { value: market.toLowerCase() } });
-  expect(marketInput).toHaveValue(market);
-  expect(screen.getByText("通用基线")).toBeInTheDocument();
-  expect(screen.getByText("市场专属规则待确认")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "创建项目并上传素材" }));
-
-  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/projects/"))).toBe(true));
-  const createCall = fetchMock.mock.calls.find(([url]) => String(url) === "/api/projects/");
-  expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({ market });
-});
-
-test("describes an empty template as the published generic baseline", async () => {
-  renderApp("/projects/new");
-
-  expect(await screen.findByPlaceholderText("留空时使用已发布的通用基线模板")).toBeInTheDocument();
-});
-
-test("shows a product brief and output slots in the studio", async () => {
-  renderApp("/projects/project-demo/studio/sku-lamp");
-
-  expect(await screen.findByRole("heading", { name: "商品创作台" })).toBeInTheDocument();
-  expect(screen.getByLabelText("商品卖点与规格")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /主图/ })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "保存 Brief" })).toBeInTheDocument();
-});
-
-test("shows only current server-ordered output slots in the studio", async () => {
-  vi.stubGlobal("fetch", vi.fn((url: string) => Promise.resolve(
-    response(200, url.includes("/projects/project-demo/snapshot/") ? studioHistoryProject : { projects: [studioHistoryProject] }),
-  )));
-  renderApp("/projects/project-demo/studio/sku-lamp");
-
-  expect(await screen.findByRole("button", { name: "主图 第1位 v1" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "详情图 第2位 v2" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "详情图 第2位 v1" })).not.toBeInTheDocument();
-});
-
-test("requests the delivery ZIP and releases the temporary browser URL", async () => {
-  const createObjectURL = vi.fn(() => "blob:delivery");
-  const revokeObjectURL = vi.fn();
-  const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-  vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
-  const fetchMock = vi.fn((url: string, _init?: RequestInit) => Promise.resolve(
-    url.includes("/workspace/")
-      ? response(200, { projects: [project] })
-      : url.includes("/export/")
-        ? { ok: true, status: 200, blob: async () => new Blob(["zip"]) }
-        : response(200, project),
-  ));
-  vi.stubGlobal("fetch", fetchMock);
+test("posts uploaded files in organize mode without starting generation", async () => {
+  const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "导出可交付 ZIP" }));
+  fireEvent.change(await screen.findByLabelText("选择图片或文件夹"), {
+    target: { files: [new File(["image"], "front.png", { type: "image/png" })] },
+  });
+  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/assets/"))).toBe(true));
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(false);
+});
+
+test("imports ERP SKUs in organize mode", async () => {
+  const fetchMock = stubFetch();
+  renderApp("/projects/project-demo");
+
+  fireEvent.change(await screen.findByLabelText("ERP SKU"), { target: { value: "LAMP-001\nLAMP-002" } });
+  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[1]);
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sku-import/"))).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/sku-import/"));
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ skus: ["LAMP-001", "LAMP-002"], mode: "organize" });
+});
+
+test("auto ERP import enters the same generation path as upload", async () => {
+  const fetchMock = stubFetch();
+  renderApp("/projects/project-demo");
+
+  fireEvent.change(await screen.findByLabelText("ERP SKU"), { target: { value: "LAMP-001" } });
+  fireEvent.click(screen.getAllByRole("button", { name: "导入并自动出图" })[1]);
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sku-import/"))).toBe(true));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(true));
+});
+
+test("renders product cards with relation choice and prompt editing", async () => {
+  renderApp("/projects/project-demo");
+
+  expect(await screen.findByRole("heading", { name: "桌面护眼灯" })).toBeInTheDocument();
+  expect(screen.getByDisplayValue("一图一商品")).toBeInTheDocument();
+  expect(screen.getByLabelText("商品名称")).toHaveValue("桌面护眼灯");
+  expect(screen.getByLabelText("身份锁")).toHaveValue("深蓝色灯头");
+  expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("白底标准图 prompt");
+});
+
+test("saves edited product relation and prompts through the cluster endpoint", async () => {
+  const fetchMock = stubFetch();
+  renderApp("/projects/project-demo");
+
+  fireEvent.change(await screen.findByLabelText("整套要求"), { target: { value: "更明亮的书桌场景" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/clusters/sku-lamp/"))).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/clusters/sku-lamp/"));
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ prompt_override: "更明亮的书桌场景" });
+});
+
+test("starts generation for selected products and shows product and image counts", async () => {
+  const fetchMock = stubFetch();
+  renderApp("/projects/project-demo");
+
+  const button = await screen.findByRole("button", { name: "生成选中商品（1 个商品 / 9 张图）" });
+  fireEvent.click(button);
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/generate/"));
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ cluster_ids: ["sku-lamp"], slot_orders: [1, 2, 3, 4, 5, 6, 7, 8, 9] });
+});
+
+test("offers merge and undo affordances for product grouping", async () => {
+  const fetchMock = stubFetch();
+  renderApp("/projects/project-demo");
+
+  fireEvent.click(await screen.findByRole("button", { name: "合并 desk-lamp-side.png 到桌面护眼灯" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/merge/"))).toBe(true));
+  expect(screen.getByRole("button", { name: "撤销上次合并" })).toBeInTheDocument();
+});
+
+test("shows a nine-slot result grid for the project", async () => {
+  renderApp("/projects/project-demo/results");
+
+  expect(await screen.findByRole("heading", { name: "生产与结果" })).toBeInTheDocument();
+  for (const slot of slotNames) expect(screen.getByText(slot)).toBeInTheDocument();
+});
+
+test("selects the latest successful version by default for export", async () => {
+  renderApp("/projects/project-demo/results");
+
+  const latest = await screen.findByRole("checkbox", { name: "导出 第二角度/结构图 v2" });
+  expect(latest).toBeChecked();
+  expect(screen.getByRole("button", { name: "历史版本 第二角度/结构图 v1" })).toBeInTheDocument();
+});
+
+test("lets operators cancel one result from the ZIP selection", async () => {
+  renderApp("/projects/project-demo/results");
+
+  const first = await screen.findByRole("checkbox", { name: "导出 白底标准图 v1" });
+  fireEvent.click(first);
+
+  expect(first).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "下载选中 ZIP（8 张）" })).toBeInTheDocument();
+});
+
+test("posts only selected generation IDs when downloading the ZIP", async () => {
+  const fetchMock = stubFetch((url) => {
+    if (url.includes("/csrf/")) return Promise.resolve(response(200, { csrf_token: "csrf-for-test" }));
+    if (url.includes("/export/")) return Promise.resolve({ ok: true, status: 200, blob: async () => new Blob(["zip"]) });
+    return Promise.resolve(response(200, url.includes("/workspace/") ? { projects: [project] } : project));
+  });
+  vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:zip"), revokeObjectURL: vi.fn() });
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  renderApp("/projects/project-demo/results");
+
+  fireEvent.click(await screen.findByRole("checkbox", { name: "导出 白底标准图 v1" }));
+  fireEvent.click(screen.getByRole("button", { name: "下载选中 ZIP（8 张）" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/export/"))).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/export/"));
+  expect(JSON.parse(String(call?.[1]?.body)).generation_ids).not.toContain("generation-1");
+});
+
+test("requests a new version for a successful result", async () => {
+  const fetchMock = stubFetch();
+  renderApp("/projects/project-demo/results");
+
+  fireEvent.click(await screen.findByRole("button", { name: "再生成 白底标准图" }));
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-    "/api/projects/project-demo/export/",
-    { credentials: "same-origin" },
+    "/api/generations/generation-1/regenerate/",
+    expect.objectContaining({ method: "POST" }),
   ));
-  expect(createObjectURL).toHaveBeenCalledTimes(1);
-  expect(revokeObjectURL).toHaveBeenCalledWith("blob:delivery");
-  anchorClick.mockRestore();
+});
+
+test("keeps revision submission disabled until a tag or description is present", async () => {
+  renderApp("/projects/project-demo/results");
+
+  expect(await screen.findByRole("button", { name: "提交圈选修改" })).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: "商品身份" })).toBeInTheDocument();
+});
+
+test("submits a normalized annotation to the revision endpoint", async () => {
+  const fetchMock = stubFetch();
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, x: 0, y: 0,
+    toJSON: () => ({}),
+  });
+  renderApp("/projects/project-demo/results");
+
+  const image = await screen.findByAltText("当前白底标准图 结果图");
+  Object.defineProperty(image, "naturalWidth", { configurable: true, value: 800 });
+  Object.defineProperty(image, "naturalHeight", { configurable: true, value: 400 });
+  fireEvent.click(screen.getByRole("checkbox", { name: "商品身份" }));
+  fireEvent.click(screen.getByRole("button", { name: "在结果图上添加问题圈选" }), { clientX: 0, clientY: 100 });
+  fireEvent.click(screen.getByRole("button", { name: "提交圈选修改" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/revise/"))).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/revise/"));
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+    issue_tags: ["identity"],
+    annotations: [{ kind: "circle", rect: [0, 0, 0.16, 0.16] }],
+  });
+});
+
+test("routes production links to the project result page", async () => {
+  renderApp("/production");
+
+  expect(await screen.findByRole("heading", { name: "生产队列" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "查看结果" })).toHaveAttribute("href", "/projects/project-demo/results");
 });
 
 test("shows an actionable error rather than mock content when workspace access is denied", async () => {
@@ -200,190 +335,4 @@ test("offers a login link when Django redirects an expired session to HTML", asy
 
   expect(await screen.findByRole("alert")).toHaveTextContent("登录已失效或需修改密码");
   expect(screen.getByRole("link", { name: "前往登录" })).toHaveAttribute("href", "/login/");
-});
-
-test("requires a tag or description before requesting image changes", async () => {
-  renderApp("/review");
-
-  expect(await screen.findByRole("button", { name: "请求修改" })).toBeDisabled();
-  expect(screen.getByRole("checkbox", { name: "商品身份" })).toBeInTheDocument();
-});
-
-test("runs preflight before enabling an explicit generation confirmation", async () => {
-  const fetchMock = vi.fn((url: string, _init?: RequestInit) => Promise.resolve(
-    url.includes("/projects/project-demo/snapshot/")
-      ? response(200, project)
-      : url.includes("/csrf/")
-        ? response(200, { csrf_token: "csrf-for-test" })
-      : url.includes("/preflight/")
-        ? response(200, { cluster_count: 1, slot_count: 2, generation_count: 2, blocking_errors: [] })
-        : response(200, project),
-  ));
-  vi.stubGlobal("fetch", fetchMock);
-  renderApp("/projects/project-demo/studio/sku-lamp");
-
-  const confirm = await screen.findByRole("button", { name: "确认批量生成" });
-  expect(confirm).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "运行预检" }));
-
-  expect(await screen.findByText("将生成 2 张输出图")).toBeInTheDocument();
-  expect(confirm).toBeEnabled();
-  expect(fetchMock).toHaveBeenCalledWith(
-    "/api/projects/project-demo/preflight/",
-    expect.objectContaining({ method: "POST" }),
-  );
-});
-
-test("confirms generation only after a passing preflight", async () => {
-  const fetchMock = vi.fn((url: string) => Promise.resolve(
-    url.includes("/projects/project-demo/snapshot/")
-      ? response(200, project)
-      : url.includes("/preflight/")
-        ? response(200, { cluster_count: 1, slot_count: 2, generation_count: 2, blocking_errors: [] })
-        : url.includes("/csrf/")
-          ? response(200, { csrf_token: "csrf-for-test" })
-          : response(200, project),
-  ));
-  vi.stubGlobal("fetch", fetchMock);
-  renderApp("/projects/project-demo/studio/sku-lamp");
-
-  fireEvent.click(await screen.findByRole("button", { name: "运行预检" }));
-  const confirm = await screen.findByRole("button", { name: "确认批量生成" });
-  await waitFor(() => expect(confirm).toBeEnabled());
-  fireEvent.click(confirm);
-
-  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/confirm/"))).toBe(true));
-  expect(fetchMock.mock.calls.findIndex(([url]) => String(url).includes("/api/clusters/sku-lamp/")))
-    .toBeLessThan(fetchMock.mock.calls.findIndex(([url]) => String(url).includes("/confirm/")));
-});
-
-test("shows every active or failed output slot with its own retry action", async () => {
-  vi.stubGlobal("fetch", vi.fn((url: string) => Promise.resolve(
-    response(200, url.includes("/workspace/") ? { projects: [productionProject] } : url.includes("/csrf/") ? { csrf_token: "csrf-for-test" } : productionProject),
-  )));
-  renderApp("/production");
-
-  expect(await screen.findByText("商品图 · 生成中")).toBeInTheDocument();
-  expect(screen.getByText("商品图 · 需处理")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "只重做 商品图（第2位）" }));
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith(
-    "/api/generations/generation-detail-failed/retry/",
-    expect.objectContaining({ credentials: "same-origin" }),
-  ));
-});
-
-test("keeps generation confirmation disabled when preflight reports blockers", async () => {
-  const fetchMock = vi.fn((url: string) => Promise.resolve(
-    url.includes("/projects/project-demo/snapshot/")
-      ? response(200, project)
-      : url.includes("/csrf/")
-        ? response(200, { csrf_token: "csrf-for-test" })
-      : url.includes("/preflight/")
-        ? response(200, { cluster_count: 0, slot_count: 2, generation_count: 0, blocking_errors: ["batch has no image clusters"] })
-        : response(200, project),
-  ));
-  vi.stubGlobal("fetch", fetchMock);
-  renderApp("/projects/project-demo/studio/sku-lamp");
-
-  const confirm = await screen.findByRole("button", { name: "确认批量生成" });
-  fireEvent.click(screen.getByRole("button", { name: "运行预检" }));
-
-  expect(await screen.findByText("batch has no image clusters")).toBeInTheDocument();
-  expect(confirm).toBeDisabled();
-});
-
-test("submits a letterbox-normalized annotation when an operator requests changes", async () => {
-  const fetchMock = vi.fn((url: string, _init?: RequestInit) => Promise.resolve(
-    url.includes("/workspace/")
-      ? response(200, { projects: [project] })
-      : url.includes("/csrf/")
-        ? response(200, { csrf_token: "csrf-for-test" })
-        : response(200, { generation: { id: "generation-lamp-main" } }),
-  ));
-  vi.stubGlobal("fetch", fetchMock);
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-    width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, x: 0, y: 0,
-    toJSON: () => ({}),
-  });
-  renderApp("/review");
-
-  expect(await screen.findByRole("heading", { name: "审核中心" })).toBeInTheDocument();
-  const image = await screen.findByAltText("待审核结果");
-  Object.defineProperty(image, "naturalWidth", { configurable: true, value: 800 });
-  Object.defineProperty(image, "naturalHeight", { configurable: true, value: 400 });
-  fireEvent.click(screen.getByRole("checkbox", { name: "商品身份" }));
-  fireEvent.click(screen.getByRole("button", { name: "在结果图上添加问题圈选" }), { clientX: 0, clientY: 100 });
-  fireEvent.click(screen.getByRole("button", { name: "请求修改" }));
-
-  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/review/"))).toBe(true));
-  const reviewCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/review/"));
-  expect(JSON.parse(String(reviewCall?.[1]?.body))).toMatchObject({
-    decision: "changes_requested",
-    issue_tags: ["identity"],
-    annotations: [{ kind: "circle", rect: [0, 0, 0.16, 0.16] }],
-  });
-});
-
-test("places a horizontal-letterbox review marker inside the rendered image box", async () => {
-  renderApp("/review");
-
-  const canvas = await screen.findByRole("button", { name: "在结果图上添加问题圈选" });
-  Object.defineProperty(canvas, "getBoundingClientRect", { configurable: true, value: () => ({ width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, x: 0, y: 0, toJSON: () => ({}) }) });
-  const image = await screen.findByAltText("待审核结果");
-  Object.defineProperty(image, "naturalWidth", { configurable: true, value: 800 });
-  Object.defineProperty(image, "naturalHeight", { configurable: true, value: 400 });
-  fireEvent.click(canvas, { clientX: 100, clientY: 150 });
-
-  const marker = screen.getByText("1");
-  expect(marker).toHaveStyle({ left: "100px", top: "150px" });
-});
-
-test("places a vertical-letterbox review marker inside the rendered image box", async () => {
-  renderApp("/review");
-
-  const canvas = await screen.findByRole("button", { name: "在结果图上添加问题圈选" });
-  Object.defineProperty(canvas, "getBoundingClientRect", { configurable: true, value: () => ({ width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, x: 0, y: 0, toJSON: () => ({}) }) });
-  const image = await screen.findByAltText("待审核结果");
-  Object.defineProperty(image, "naturalWidth", { configurable: true, value: 400 });
-  Object.defineProperty(image, "naturalHeight", { configurable: true, value: 800 });
-  fireEvent.click(canvas, { clientX: 150, clientY: 100 });
-
-  const marker = screen.getByText("1");
-  expect(marker).toHaveStyle({ left: "150px", top: "100px" });
-});
-
-test("adds a centered annotation from keyboard input", async () => {
-  renderApp("/review");
-
-  const canvas = await screen.findByRole("button", { name: "在结果图上添加问题圈选" });
-  fireEvent.keyDown(canvas, { key: "Enter" });
-
-  expect(screen.getByText("1")).toBeInTheDocument();
-});
-
-test("retries the original review request after the operator changes selection", async () => {
-  const reviewCalls: string[] = [];
-  const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-    if (url.includes("/workspace/")) return Promise.resolve(response(200, { projects: [reviewProject] }));
-    if (url.includes("/csrf/")) return Promise.resolve(response(200, { csrf_token: "csrf-for-test" }));
-    if (url.includes("/review/")) {
-      reviewCalls.push(url);
-      return Promise.resolve(response(reviewCalls.length === 1 ? 500 : 200, reviewCalls.length === 1 ? { error: "retry me" } : { generation: { id: "generation-lamp-main" } }));
-    }
-    return Promise.resolve(response(200, project));
-  });
-  vi.stubGlobal("fetch", fetchMock);
-  renderApp("/review");
-
-  fireEvent.click(await screen.findByRole("checkbox", { name: "商品身份" }));
-  fireEvent.click(screen.getByRole("button", { name: "请求修改" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("retry me");
-  fireEvent.click(screen.getByRole("button", { name: /第二个商品/ }));
-  fireEvent.click(screen.getByRole("button", { name: "重试" }));
-
-  await waitFor(() => expect(reviewCalls).toHaveLength(2));
-  expect(reviewCalls).toEqual([
-    "/api/generations/generation-lamp-main/review/",
-    "/api/generations/generation-lamp-main/review/",
-  ]);
 });

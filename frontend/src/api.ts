@@ -1,5 +1,5 @@
 import { developmentWorkspace } from "./mock-data";
-import type { PreflightResult, Project, ProjectInput, ReviewInput, WorkspaceSnapshot } from "./types";
+import type { ImportMode, PreflightResult, Project, ProjectInput, ReviewInput, RevisionInput, WorkspaceSnapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public authRequired = false) {
@@ -99,8 +99,9 @@ export async function createProject(input: ProjectInput): Promise<Project> {
   }
 }
 
-export async function uploadAssets(projectId: string, files: File[]) {
+export async function uploadAssets(projectId: string, files: File[], mode: ImportMode = "organize") {
   const body = new FormData();
+  body.append("mode", mode);
   files.forEach((file) => {
     const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
     body.append("files", file, relativePath || file.name);
@@ -109,6 +110,13 @@ export async function uploadAssets(projectId: string, files: File[]) {
   const headers = new Headers({ "X-CSRFToken": await csrfToken() });
   const response = await fetch(`/api/projects/${projectId}/assets/`, { method: "POST", body, headers, credentials: "same-origin" });
   return jsonFor<{ asset_count: number }>(response);
+}
+
+export function importSkus(projectId: string, skus: string[], mode: ImportMode) {
+  return jsonRequest(`/api/projects/${projectId}/sku-import/`, {
+    method: "POST",
+    body: JSON.stringify({ skus, mode }),
+  });
 }
 
 export function updateCluster(clusterId: string, expectedVersion: number, payload: Record<string, string>) {
@@ -129,6 +137,13 @@ export function confirmProject(projectId: string) {
   return jsonRequest(`/api/projects/${projectId}/confirm/`, { method: "POST", body: "{}" });
 }
 
+export function generateProject(projectId: string, input: { clusterIds: string[]; slotOrders: number[] }) {
+  return jsonRequest(`/api/projects/${projectId}/generate/`, {
+    method: "POST",
+    body: JSON.stringify({ cluster_ids: input.clusterIds, slot_orders: input.slotOrders }),
+  });
+}
+
 export async function preflightProject(projectId: string): Promise<PreflightResult> {
   const result = await jsonRequest<PreflightResult>(`/api/projects/${projectId}/preflight/`, { method: "POST", body: "{}" });
   return {
@@ -143,12 +158,26 @@ export function retryGeneration(generationId: string) {
   return jsonRequest(`/api/generations/${generationId}/retry/`, { method: "POST", body: "{}" });
 }
 
+export function regenerateGeneration(generationId: string) {
+  return jsonRequest(`/api/generations/${generationId}/regenerate/`, { method: "POST", body: "{}" });
+}
+
 export function submitReview(generationId: string, input: ReviewInput) {
   return jsonRequest(`/api/generations/${generationId}/review/`, { method: "POST", body: JSON.stringify(input) });
 }
 
-export async function exportProject(projectId: string) {
-  const response = await fetch(`/api/projects/${projectId}/export/`, { credentials: "same-origin" });
+export function reviseGeneration(generationId: string, input: RevisionInput) {
+  return jsonRequest(`/api/generations/${generationId}/revise/`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function exportProject(projectId: string, generationIds: string[] = []) {
+  const headers = new Headers({ "Content-Type": "application/json", "X-CSRFToken": await csrfToken() });
+  const response = await fetch(`/api/projects/${projectId}/export/`, {
+    method: "POST",
+    body: JSON.stringify({ generation_ids: generationIds }),
+    headers,
+    credentials: "same-origin",
+  });
   if (!response.ok || isLoginResponse(response)) throw await errorFor(response);
   return response.blob();
 }

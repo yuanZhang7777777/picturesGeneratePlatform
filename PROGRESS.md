@@ -33,3 +33,10 @@
 - QA/release local Task 6-7 slice: platform admins from `PLATFORM_ADMIN_ERP_USERS` now become Django staff; admin-only template/rule/model/usage controls are hidden from ordinary staff users; non-global rule publishing in admin requires source URL, site, checked date, and version. Global seed is now the 1+8 nine-slot baseline, with legacy eight-slot templates preserved for historical batches.
 - APIMart smoke: added `python manage.py smoke_apimart_nodes`, which creates a local Pillow test image and exercises vision, prompt, and image nodes through fake mode or the configured APIMart client. Output is limited to node status, elapsed milliseconds, and SHA-256 hash; fake/empty/replacement keys are rejected in real mode without echoing the key.
 - Verification: focused auth/template/APIMart tests passed locally; Django check, migration dry-run, and final diff checks are recorded in the committing task output.
+
+# Dual-speed frontend workspace
+
+- Status: completed frontend Task 5 on 2026-07-30. The React app now uses a unified project workspace at `/projects/:id` and project results at `/projects/:id/results`; `/review` is no longer routed.
+- Contract: upload and ERP SKU import both send explicit `mode: auto|organize`; project generation sends selected cluster IDs and slot orders 1–9; result export posts selected generation IDs; revise/regenerate use generation-scoped endpoints.
+- Remaining dependency: backend Tasks 2–4 must provide the new `/generate/`, `/regenerate/`, `/revise/`, and selected `/export/` contracts before full end-to-end smoke.
+- Verification: `npm --prefix frontend test` passed with 41 tests; `npm --prefix frontend run build` passed on 2026-07-30.

@@ -31,4 +31,7 @@
   .review-canvas { @apply relative grid min-h-96 w-full place-items-center overflow-hidden rounded-2xl bg-slate-100; }
   .review-canvas img { @apply h-full max-h-130 w-full object-contain; }
   .review-mark { @apply absolute grid size-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white bg-rose-600 text-xs not-italic font-bold text-white shadow-lg; }
+  .result-card { @apply rounded-lg border border-slate-200 bg-white p-3; }
+  .result-preview { @apply grid aspect-square w-full place-items-center overflow-hidden rounded-lg bg-slate-100 text-sm text-slate-400; }
+  .result-preview img { @apply h-full w-full object-cover; }
 }

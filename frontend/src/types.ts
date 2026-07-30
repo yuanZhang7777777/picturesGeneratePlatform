@@ -1,6 +1,8 @@
 export type GenerationStatus = "draft" | "queued" | "running" | "completed" | "failed";
 export type ReviewStatus = "pending" | "accepted" | "changes_requested" | "rejected";
 export type ReviewDecision = "accept" | "changes_requested";
+export type ImportMode = "auto" | "organize";
+export type RelationType = "single_product" | "same_product" | "variant_group";
 
 export interface ProductAsset {
   id: string;
@@ -21,17 +23,28 @@ export interface OutputImage {
   reviewStatus: ReviewStatus;
   imageUrl?: string;
   failureReason?: string;
+  prompt?: string;
+}
+
+export interface ProductPrompt {
+  slotOrder: number;
+  slot: string;
+  text: string;
 }
 
 export interface ProductSku {
   id: string;
   name: string;
+  sku?: string;
+  relationType?: RelationType;
   assetIds: string[];
   assets?: ProductAsset[];
   facts: string;
   identityLock: string;
   brief: string;
+  preparationStatus?: string;
   version: number;
+  prompts?: ProductPrompt[];
   outputs: OutputImage[];
 }
 
@@ -42,6 +55,7 @@ export interface Project {
   market: string;
   template: string;
   size: string;
+  resolution?: string;
   status: GenerationStatus;
   assets: ProductAsset[];
   skus: ProductSku[];
@@ -72,6 +86,12 @@ export interface ReviewAnnotation {
 
 export interface ReviewInput {
   decision: ReviewDecision;
+  issue_tags: string[];
+  description: string;
+  annotations: ReviewAnnotation[];
+}
+
+export interface RevisionInput {
   issue_tags: string[];
   description: string;
   annotations: ReviewAnnotation[];

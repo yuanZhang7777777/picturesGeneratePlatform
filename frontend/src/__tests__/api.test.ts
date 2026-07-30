@@ -1,6 +1,18 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { createProject, loadWorkspace, mergeAsset, preflightProject, submitReview, uploadAssets } from "../api";
+import {
+  createProject,
+  exportProject,
+  generateProject,
+  importSkus,
+  loadWorkspace,
+  mergeAsset,
+  preflightProject,
+  regenerateGeneration,
+  reviseGeneration,
+  submitReview,
+  uploadAssets,
+} from "../api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -126,7 +138,7 @@ test("posts preflight with CSRF and discards quota fields returned by the server
   expect(fetchMock.mock.calls[1][1].headers.get("X-CSRFToken")).toBe("csrf-for-test");
 });
 
-test("posts a parallel relative_paths entry for each selected upload", async () => {
+test("posts a parallel relative_paths entry and explicit import mode for each selected upload", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
     .mockResolvedValueOnce(response(200, { asset_count: 1 }));
@@ -135,11 +147,99 @@ test("posts a parallel relative_paths entry for each selected upload", async () 
   const secondFile = new File(["image"], "side.png", { type: "image/png" });
   Object.defineProperty(file, "webkitRelativePath", { value: "lamp/angles/front.png" });
 
-  await uploadAssets("project-1", [file, secondFile]);
+  await uploadAssets("project-1", [file, secondFile], "organize");
 
   const form = fetchMock.mock.calls[1][1].body as FormData;
+  expect(form.get("mode")).toBe("organize");
   expect((form.get("files") as File).name).toBe("lamp/angles/front.png");
   expect(form.getAll("relative_paths")).toEqual(["lamp/angles/front.png", "side.png"]);
+});
+
+test("imports ERP SKUs with the chosen dual-speed mode", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(200, { imported: 2, failed: 0, items: [] }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await importSkus("project-1", ["SKU-1", "SKU-2"], "auto");
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/projects/project-1/sku-import/",
+    expect.objectContaining({ credentials: "same-origin", method: "POST" }),
+  );
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ skus: ["SKU-1", "SKU-2"], mode: "auto" });
+});
+
+test("starts generation for explicit product and slot selections", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(200, { created: 9 }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await generateProject("project-1", { clusterIds: ["cluster-1"], slotOrders: [1, 2, 3] });
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/projects/project-1/generate/",
+    expect.objectContaining({ credentials: "same-origin", method: "POST" }),
+  );
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ cluster_ids: ["cluster-1"], slot_orders: [1, 2, 3] });
+});
+
+test("requests a fresh generation version through the regenerate endpoint", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(200, { generation: { id: "generation-2" } }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await regenerateGeneration("generation-1");
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/generations/generation-1/regenerate/",
+    expect.objectContaining({ credentials: "same-origin", method: "POST" }),
+  );
+});
+
+test("submits revision annotations without using the old review decision contract", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(200, { generation: { id: "generation-2" } }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await reviseGeneration("generation-1", {
+    issue_tags: ["identity"],
+    description: "Keep the lamp head shape",
+    annotations: [{ kind: "circle", rect: [0.1, 0.2, 0.3, 0.4], color: "#ff0000", width: 2 }],
+  });
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/generations/generation-1/revise/",
+    expect.objectContaining({ credentials: "same-origin", method: "POST" }),
+  );
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+    issue_tags: ["identity"],
+    description: "Keep the lamp head shape",
+    annotations: [{ kind: "circle", rect: [0.1, 0.2, 0.3, 0.4], color: "#ff0000", width: 2 }],
+  });
+});
+
+test("exports only explicitly selected generations through a POST body", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce({ ok: true, status: 200, blob: async () => new Blob(["zip"]) });
+  vi.stubGlobal("fetch", fetchMock);
+
+  await exportProject("project-1", ["generation-1", "generation-2"]);
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/projects/project-1/export/",
+    expect.objectContaining({ credentials: "same-origin", method: "POST" }),
+  );
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ generation_ids: ["generation-1", "generation-2"] });
 });
 
 test("merges an asset through the versioned Django cluster endpoint", async () => {
