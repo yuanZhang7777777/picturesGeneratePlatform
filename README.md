@@ -27,11 +27,11 @@ SKU 是一级后端入口：`POST /api/projects/{id}/sku-import/` 接受最多 5
 
 - 部署目录：`/opt/independent-image-platform`。
 - Compose 项目名：`independent-image-platform`。
-- 当前为 `APIMART_FAKE_MODE=1`，不会产生真实 APIMart 费用。
+- 服务器已配置真实 ERP、OSS 与 APIMart Secret；OSS smoke 已通过。ERP 与 APIMart smoke 因 2 号服务器出站网络阻断未通过，尚无服务器侧成功付费生图证据。
 - 已生成临时 `admin` 账号；密码保存在服务器 root-only 文件 `/opt/independent-image-platform/.admin_password`。
 - APIMart、OSS 与 ERP 凭据只写入服务器 root-only `.env` 或 Secret；不进入仓库、文档、前端、数据库、日志、Prompt 或导出包。
 - 模型名称、端点、参数、响应和限流以 [APIMart 中文文档](https://docs.apimart.ai/cn) 与受限账户契约测试为准；不以模型原厂文档直接推断可接入性。
-- `APIMART_FAKE_MODE=1` 是唯一允许的默认预览模式。切换到真实付费调用、真实 OSS 或员工真实素材前，必须完成服务器 Secret 配置、供应商契约测试、HTTPS 和主 Agent 发布签核。
+- `APIMART_FAKE_MODE=1` 仍是本地和新环境的唯一安全默认值。2 号服务器切到真实 APIMart 前，必须先修复出站网络、完成供应商契约测试、限流验收、HTTPS 和主 Agent 发布签核。
 - HTTP 的 IP:端口入口只允许测试账号与非敏感素材；正式入口不做来源 IP 白名单，但在域名 HTTPS 与账号安全就绪前，不得面向 100 名员工开放。
 
 ## 本地运行与静态验证

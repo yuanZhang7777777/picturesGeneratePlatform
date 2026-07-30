@@ -33,6 +33,27 @@ SKU 商品资料导入使用当前登录用户的 ERP Token 调用 `CATALOG_QUER
 
 APIMart 中文文档与受限账户的最小契约测试是唯一接入事实来源：测试精确模型 ID、`/v1/responses` 图片输入、结构化输出封装、错误语义、限流和账务。上游模型文档仅帮助判断能力方向，不能代替 APIMart 参数或可用性结论。
 
+## 出站网络放行申请
+
+2 号服务器当前公网出口 IP 为 `139.224.2.166`，内网 IP 为 `192.168.0.138`。发布 smoke 已确认服务器能访问常见国内 HTTPS 站点，但到 ERP 与 APIMart 超时；同一目标从开发机可连通，因此这是服务器出口策略或目标侧白名单问题。
+
+向 IT 或网络负责人申请时，不要申请“开放全部海外访问”，而是按最小范围放行：
+
+- 源：2 号服务器公网出口 `139.224.2.166`，如按 VPC/安全组管理则同时标注内网 `192.168.0.138`。
+- 目的 1：`api.apimart.ai`，TCP `443`，方向为出站；用于 APIMart OpenAI 兼容 API，Base URL 为 `https://api.apimart.ai/v1`。优先按域名/FQDN 放行，不要固定单个解析 IP。
+- 目的 2：`103.198.125.5`，TCP `16777`，方向为出站；用于 ERP open login 与 SKU 商品资料查询。
+- 目的 3：`103.198.125.5`，TCP `8077`，方向为出站；用于历史 ERP 业务 API 兼容检查。
+- DNS/路由：确保服务器可解析 `api.apimart.ai` 的 IPv4 A 记录并通过 IPv4 出口访问；当前服务器无公网 IPv6，不能只返回或优先使用 IPv6。
+- 若公司统一走 HTTP/HTTPS 代理，需提供代理地址、端口和认证方式，再把代理配置注入 Docker Compose 的 Web、Generation Worker 和 Prompt Worker 环境。
+
+验收命令只输出连通状态，不得打印 `.env` 或密钥：
+
+```bash
+curl -4 -I --max-time 10 https://api.apimart.ai/v1
+timeout 8 bash -lc '</dev/tcp/103.198.125.5/16777'
+timeout 8 bash -lc '</dev/tcp/103.198.125.5/8077'
+```
+
 在启动真实环境前检查替换标记，但不要打印 `.env` 内容：
 
 ```bash
