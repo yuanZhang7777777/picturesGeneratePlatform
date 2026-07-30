@@ -1931,13 +1931,32 @@ def process_prompt_once(client=None, storage=None):
             "Plan one distinct purchase-decision scene for every supplied marketing slot. Do not repeat scene families.",
             marketing_input,
         )
-        plans = {
-            int(item.get("slot_order")): item
-            for item in marketing_plan.get("plans", [])
-            if isinstance(item, dict) and str(item.get("slot_order", "")).isdigit()
-        }
+        raw_plans = marketing_plan.get("plans")
+        if not isinstance(raw_plans, list):
+            raw_plans = marketing_plan.get("slot_plans", [])
+        plans = {}
+        for item in raw_plans:
+            if not isinstance(item, dict):
+                continue
+            raw_order = item.get("slot_order", item.get("slot_id"))
+            if not str(raw_order or "").isdigit():
+                continue
+            order = int(raw_order)
+            normalized = dict(item)
+            normalized["slot_order"] = order
+            normalized.setdefault(
+                "scene_family",
+                normalized.get("role")
+                or normalized.get("decision_task")
+                or normalized.get("main_scene")
+                or f"slot-{order}",
+            )
+            normalized.setdefault("conversion_goal", normalized.get("decision_task", ""))
+            normalized.setdefault("visible_text_lines", [])
+            plans[order] = normalized
         if set(plans) != {slot.order for slot in marketing_slots}:
             raise ValueError("marketing plan missing slot plans")
+        marketing_plan["plans"] = [plans[slot.order] for slot in marketing_slots]
         scene_families = [str(plans[slot.order].get("scene_family") or "") for slot in marketing_slots]
         if len(scene_families) != len(set(scene_families)):
             raise ValueError("marketing plan repeats scene families")

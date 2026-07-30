@@ -520,6 +520,25 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                     ),
                     "raw": {},
                 }
+            if "NODE N5" in payload["text"]:
+                return {
+                    "output_text": json.dumps(
+                        {
+                            "strategy_summary": "Distinct purchase decisions",
+                            "slot_plans": [
+                                {
+                                    "slot_id": f"{order:02d}",
+                                    "role": f"role-{order}",
+                                    "decision_task": f"decision-{order}",
+                                    "main_scene": f"scene-{order}",
+                                    "main_action": "none",
+                                }
+                                for order in range(2, 10)
+                            ],
+                        }
+                    ),
+                    "raw": {},
+                }
             return super().optimize_prompt(payload)
 
     assert process_prompt_once(LowConfidenceClient(), LocalStorage(tmp_path)) == 1
