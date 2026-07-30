@@ -116,7 +116,7 @@ curl -fsS http://127.0.0.1:18083/health/ready
 docker compose logs --tail=100 web generation-worker prompt-worker proxy
 ```
 
-`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认每次只领取一个待准备商品，保存 N1–N7 节点快照、推断台账和 9 槽 PromptVersion。
+`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认每次只领取一个待准备商品，保存 N1–N7 节点快照、推断台账和 9 槽 PromptVersion。N5 的 APIMart 实测包络可能使用 `plans`、`slot_plans` 或 `slots`；运行时必须归一化为实际槽位编号，缺槽时只修复一次 Schema，禁止无限付费重试。
 
 不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 尚未实现跨进程任务原子认领；并发 one-shot 调试可能在真实付费模式重复提交。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 

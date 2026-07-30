@@ -837,6 +837,8 @@ competitor_style 模式：
 ### 7.5 失败处理
 
 - 槽位缺失、重复或越界：Schema 拒绝并修复一次。
+- 运行时以 `slot_order` 为规范字段，同时兼容文档型 `slot_plans/slot_id` 和 APIMart 实测的 `slots/slot_name/primary_scene/primary_action` 包络；先按槽位编号或名称归一化，只有数组数量与输入槽位完全一致时才可按输入顺序回退。
+- 归一化后仍缺槽时，只允许向 DeepSeek 发起一次固定 `plans` Schema 修复；第二次仍不合格立即失败，不循环重试或静默丢槽。
 - 多槽位主场景与决策任务高度重复：一次重排；仍重复则暂停 Prompt 生成并显示可编辑草稿。
 - 某槽缺少事实：改为外观、结构或低风险场景，不编造数字和性能。
 - Style DNA 含可识别竞品元素：删除污染字段并记录警告。

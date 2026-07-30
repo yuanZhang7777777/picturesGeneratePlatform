@@ -75,3 +75,12 @@
 - Real prompt smoke: DeepSeek accepted the published N3 system instruction (`562` characters) and returned a non-empty response recorded only by SHA-256.
 - Backup: `/opt/independent-image-platform-backups/20260730_192014`; the deployment lock was released.
 - Remaining: browser real folder upload, real ERP employee login/SKU import, and six-category 54-image quality benchmark.
+
+# Real upload, product confirmation and N1-N7 preparation
+
+- Status: runtime Git `3966773` deployed to `hermes-remote:/opt/independent-image-platform` on 2026-07-30 under `global.lock`.
+- Upload smoke: authenticated multipart PNG/WebP/TXT import passed; WebP normalized to PNG, TXT seed applied, two clusters created, OSS objects read back and permission-checked preview returned.
+- Product flow: second image merged into the first cluster; `name` and `same_product` now persist, PostgreSQL row locking no longer joins the nullable template, and editing a blocked product requeues preparation.
+- Prompt flow: confirmed product names override N2 low-confidence blocking; N5 accepts documented and APIMart-observed envelopes and performs at most one schema repair. The real two-reference project reached `ready` with 23 N1-N7 snapshots and 9 PromptVersion rows without starting image generation.
+- Verification: backend 193 passed, frontend 45 passed, Vite build, Django check, migration drift, migration 0012, five running services and `/health/ready` passed.
+- Remaining: browser-native folder picker E2E, real ERP employee login/SKU import, six-category 54-image benchmark, HTTPS and staged concurrency.
