@@ -19,7 +19,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.http import require_POST
 
-from .forms import BatchForm, ERPAuthenticationForm, FirstPasswordChangeForm
+from .forms import ERPAuthenticationForm, FirstPasswordChangeForm
 from .models import Asset, AuditEvent, Batch, Generation, ResultAsset
 from .services import (
     CatalogAuthExpired,
@@ -82,7 +82,7 @@ def password_change(request):
             request.user.must_change_password = False
             request.user.save(update_fields=["must_change_password"])
             update_session_auth_hash(request, request.user)
-            return redirect("batch_list")
+            return redirect("/")
     else:
         form = FirstPasswordChangeForm(request.user)
     return render(request, "platform_app/password_change.html", {"form": form})
@@ -90,37 +90,23 @@ def password_change(request):
 
 @login_required
 @password_change_required
-def batch_list(request):
-    if request.user.is_platform_admin:
-        batches = Batch.objects.select_related("owner").order_by("-created_at")
-    else:
-        batches = request.user.batches.order_by("-created_at")
-    return render(request, "platform_app/batch_list.html", {"batches": batches})
+def legacy_batch_list_redirect(request):
+    return redirect("/")
 
 
 @login_required
 @password_change_required
-@require_http_methods(["GET", "POST"])
-def batch_new(request):
-    if request.method == "POST":
-        form = BatchForm(request.POST)
-        if form.is_valid():
-            batch = form.save(commit=False)
-            batch.owner = request.user
-            batch.save()
-            return redirect("batch_detail", batch_id=batch.id)
-    else:
-        form = BatchForm()
-    return render(request, "platform_app/batch_form.html", {"form": form})
+@require_http_methods(["GET"])
+def legacy_batch_new_redirect(request):
+    return redirect("/projects/new")
 
 
 @login_required
 @password_change_required
-def batch_detail(request, batch_id):
+def legacy_batch_detail_redirect(request, batch_id):
     batch = get_object_or_404(Batch.objects.select_related("owner"), id=batch_id)
     require_owner_or_admin(request.user, batch)
-    clusters = batch.clusters.prefetch_related("cluster_assets__asset", "generations__output_slot")
-    return render(request, "platform_app/batch_detail.html", {"batch": batch, "clusters": clusters})
+    return redirect(f"/projects/{batch.id}")
 
 
 def health_live(request):

@@ -25,7 +25,7 @@ def make_user(username, role="operator", must_change_password=False, is_superuse
 
 
 def test_anonymous_user_is_redirected_to_login(client):
-    response = client.get(reverse("batch_list"))
+    response = client.get("/batches/")
 
     assert response.status_code == 302
     assert response["Location"].startswith(reverse("login"))
@@ -45,7 +45,7 @@ def test_first_login_user_must_change_password_before_batch_list(client):
     user = make_user("first-login", must_change_password=True)
     client.force_login(user)
 
-    response = client.get(reverse("batch_list"))
+    response = client.get("/batches/")
 
     assert response.status_code == 302
     assert response["Location"] == reverse("password_change")
@@ -59,7 +59,7 @@ def test_operator_cannot_read_other_users_batch(client):
     batch = Batch.objects.create(owner=owner, name="Private batch")
     client.force_login(other)
 
-    response = client.get(reverse("batch_detail", args=[batch.id]))
+    response = client.get(f"/batches/{batch.id}/")
 
     assert response.status_code == 404
 
@@ -72,10 +72,10 @@ def test_admin_can_read_other_users_batch(client):
     batch = Batch.objects.create(owner=owner, name="Private batch")
     client.force_login(admin)
 
-    response = client.get(reverse("batch_detail", args=[batch.id]))
+    response = client.get(f"/batches/{batch.id}/")
 
-    assert response.status_code == 200
-    assert b"Private batch" in response.content
+    assert response.status_code == 302
+    assert response["Location"] == f"/projects/{batch.id}"
 
 
 def test_erp_login_creates_shadow_user_and_stores_session_token(client, monkeypatch, settings):
@@ -101,6 +101,7 @@ def test_erp_login_creates_shadow_user_and_stores_session_token(client, monkeypa
     )
 
     assert response.status_code == 302
+    assert response["Location"] == "/"
     assert client.session["erp_access_token"] == "erp-token"
     user = get_user_model().objects.get(username="liuxuecheng")
     assert user.role == get_user_model().Role.ADMIN

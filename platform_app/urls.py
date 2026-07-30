@@ -5,13 +5,12 @@ from . import views
 
 
 urlpatterns = [
-    path("", views.batch_list, name="batch_list"),
     path("login/", views.PlatformLoginView.as_view(), name="login"),
     path("logout/", LogoutView.as_view(), name="logout"),
     path("password/change/", views.password_change, name="password_change"),
-    path("batches/", views.batch_list, name="batch_list"),
-    path("batches/new/", views.batch_new, name="batch_new"),
-    path("batches/<uuid:batch_id>/", views.batch_detail, name="batch_detail"),
+    path("batches/", views.legacy_batch_list_redirect, name="legacy_batch_list_redirect"),
+    path("batches/new/", views.legacy_batch_new_redirect, name="legacy_batch_new_redirect"),
+    path("batches/<uuid:batch_id>/", views.legacy_batch_detail_redirect, name="legacy_batch_detail_redirect"),
     path("api/csrf/", views.api_csrf, name="api_csrf"),
     path("api/workspace/snapshot/", views.api_workspace_snapshot, name="api_workspace_snapshot"),
     path("api/projects/", views.api_project_create, name="api_project_create"),

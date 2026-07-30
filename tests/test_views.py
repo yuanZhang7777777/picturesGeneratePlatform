@@ -31,18 +31,30 @@ def make_global_baseline():
     OutputSlot.objects.create(template=template, name="main", order=1)
 
 
-def test_batch_detail_page_renders_workspace(client):
+def test_legacy_batch_detail_redirects_to_react_workspace(client):
     from platform_app.models import Batch
 
     user = make_user()
     batch = Batch.objects.create(owner=user, name="Workspace batch")
     client.force_login(user)
 
-    response = client.get(reverse("batch_detail", args=[batch.id]))
+    response = client.get(f"/batches/{batch.id}/")
 
-    assert response.status_code == 200
-    assert b"Workspace batch" in response.content
-    assert b"Upload source files" in response.content
+    assert response.status_code == 302
+    assert response["Location"] == f"/projects/{batch.id}"
+
+
+def test_legacy_batch_list_and_new_redirect_to_react(client):
+    user = make_user()
+    client.force_login(user)
+
+    list_response = client.get("/batches/")
+    new_response = client.get("/batches/new/")
+
+    assert list_response.status_code == 302
+    assert list_response["Location"] == "/"
+    assert new_response.status_code == 302
+    assert new_response["Location"] == "/projects/new"
 
 
 def test_upload_api_creates_assets_and_default_clusters(client, tmp_path, settings):

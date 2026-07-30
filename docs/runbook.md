@@ -2,7 +2,7 @@
 
 ## 架构与入口
 
-Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worker 和 Caddy。Caddy 是唯一对浏览器开放的同源入口：它在镜像构建时把 `frontend/dist` 写入 `/srv/frontend`，提供 React 静态资源，并将 `/api/`、`/auth/`、`/admin/`、登录/退出/改密、迁移期 `/batches/`、健康检查和 Django 静态资源反向代理到 Web 服务。
+Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worker 和 Caddy。Caddy 是唯一对浏览器开放的同源入口：它在镜像构建时把 `frontend/dist` 写入 `/srv/frontend`，提供 React 静态资源，并将 `/api/`、`/auth/`、`/admin/`、登录/退出/改密、旧 `/batches/` 重定向、健康检查和 Django 静态资源反向代理到 Web 服务。
 
 浏览器只持有 Django session Cookie 与 CSRF，不持有供应商或 OSS 凭据。生产容器不运行 Node 前端服务器。
 
@@ -97,11 +97,11 @@ npm --prefix frontend run dev
 docker compose --env-file .env.example config --quiet
 ```
 
-同时保留 Django `/batches/` 页面，避免 React 根路由的 SPA 回退遮挡旧工作流。以下静态检查应通过：
+旧 Django `/batches/` 页面不再对运营展示；`/batches/`、`/batches/new/` 和 `/batches/<uuid>/` 只作为兼容入口重定向到 React 工作台。以下静态检查应通过，确保这些旧链接仍由 Django 做权限校验后再跳转：
 
 ```powershell
 $content = Get-Content -Raw 'docker/Caddyfile'
-if ($content -notmatch '(?m)^\s*@django path .*\/batches \/batches\/\*') { throw 'Caddy does not preserve Django /batches/ routes' }
+if ($content -notmatch '(?m)^\s*@django path .*\/batches \/batches\/\*') { throw 'Caddy does not preserve Django /batches/ redirects' }
 ```
 
 完成 `.env` 的本地安全值替换后，构建并启动预览：

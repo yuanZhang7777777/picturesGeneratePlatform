@@ -133,7 +133,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "platform_app.User"
 
 LOGIN_URL = "login"
-LOGIN_REDIRECT_URL = "batch_list"
+LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "login"
 SESSION_COOKIE_AGE = 12 * 60 * 60
 SESSION_COOKIE_HTTPONLY = True
