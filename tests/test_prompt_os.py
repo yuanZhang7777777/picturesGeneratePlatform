@@ -524,14 +524,13 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                 return {
                     "output_text": json.dumps(
                         {
-                            "strategy_summary": "Distinct purchase decisions",
-                            "slot_plans": [
+                            "slots": [
                                 {
-                                    "slot_id": f"{order:02d}",
-                                    "role": f"role-{order}",
-                                    "decision_task": f"decision-{order}",
-                                    "main_scene": f"scene-{order}",
-                                    "main_action": "none",
+                                    "slot_name": GLOBAL_SLOTS[order - 1][1],
+                                    "scene_title": f"family-{order}",
+                                    "primary_scene": f"scene-{order}",
+                                    "primary_action": "none",
+                                    "copy_intent": f"decision-{order}",
                                 }
                                 for order in range(2, 10)
                             ],

@@ -1933,25 +1933,39 @@ def process_prompt_once(client=None, storage=None):
         )
         raw_plans = marketing_plan.get("plans")
         if not isinstance(raw_plans, list):
-            raw_plans = marketing_plan.get("slot_plans", [])
+            raw_plans = marketing_plan.get("slot_plans")
+        if not isinstance(raw_plans, list):
+            raw_plans = marketing_plan.get("slots", [])
+        slot_orders_by_name = {slot.name: slot.order for slot in marketing_slots}
         plans = {}
-        for item in raw_plans:
+        for index, item in enumerate(raw_plans):
             if not isinstance(item, dict):
                 continue
             raw_order = item.get("slot_order", item.get("slot_id"))
-            if not str(raw_order or "").isdigit():
+            if str(raw_order or "").isdigit():
+                order = int(raw_order)
+            else:
+                order = slot_orders_by_name.get(str(item.get("slot_name") or ""))
+            if order is None and len(raw_plans) == len(marketing_slots):
+                order = marketing_slots[index].order
+            if order is None:
                 continue
-            order = int(raw_order)
             normalized = dict(item)
             normalized["slot_order"] = order
+            normalized.setdefault("main_scene", normalized.get("primary_scene", ""))
+            normalized.setdefault("main_action", normalized.get("primary_action", "none"))
             normalized.setdefault(
                 "scene_family",
-                normalized.get("role")
+                normalized.get("scene_title")
+                or normalized.get("role")
                 or normalized.get("decision_task")
                 or normalized.get("main_scene")
                 or f"slot-{order}",
             )
-            normalized.setdefault("conversion_goal", normalized.get("decision_task", ""))
+            normalized.setdefault(
+                "conversion_goal",
+                normalized.get("decision_task") or normalized.get("copy_intent", ""),
+            )
             normalized.setdefault("visible_text_lines", [])
             plans[order] = normalized
         if set(plans) != {slot.order for slot in marketing_slots}:
