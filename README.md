@@ -27,7 +27,7 @@ SKU 是一级后端入口：`POST /api/projects/{id}/sku-import/` 接受最多 5
 
 - 部署目录：`/opt/independent-image-platform`。
 - Compose 项目名：`independent-image-platform`。
-- 服务器已配置真实 ERP、OSS 与 APIMart Secret；OSS smoke 已通过。ERP 与 APIMart smoke 因 2 号服务器出站网络阻断未通过，尚无服务器侧成功付费生图证据。
+- 服务器已配置真实 ERP、OSS 与 APIMart Secret；OSS 写读删、ERP 登录和 SKU 查询 smoke 已通过。APIMart 因 2 号服务器出站访问 `api.apimart.ai:443` 超时，尚无服务器侧成功付费生图证据。
 - 已生成临时 `admin` 账号；密码保存在服务器 root-only 文件 `/opt/independent-image-platform/.admin_password`。
 - APIMart、OSS 与 ERP 凭据只写入服务器 root-only `.env` 或 Secret；不进入仓库、文档、前端、数据库、日志、Prompt 或导出包。
 - 模型名称、端点、参数、响应和限流以 [APIMart 中文文档](https://docs.apimart.ai/cn) 与受限账户契约测试为准；不以模型原厂文档直接推断可接入性。
