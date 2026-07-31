@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ClusterUpdateInput, ProductPrompt, ProductSku, RelationType, RuleGateMessage } from "../types";
 
 const defaultPrompts = [
@@ -15,6 +15,26 @@ const defaultPrompts = [
 
 const riskLabels: Record<string, string> = { low: "低风险", medium: "中风险", high: "高风险" };
 
+type PromptDraft = {
+  relationType: RelationType;
+  identityLock: string;
+  brief: string;
+  prompts: ProductPrompt[];
+};
+
+function promptsFromSku(sku: ProductSku) {
+  return (sku.prompts?.length ? sku.prompts : defaultPrompts).map((prompt) => ({ ...prompt }));
+}
+
+function draftFromSku(sku: ProductSku): PromptDraft {
+  return {
+    relationType: sku.relationType ?? "single_product",
+    identityLock: sku.identityLock,
+    brief: sku.brief,
+    prompts: promptsFromSku(sku),
+  };
+}
+
 function ruleMessage(value: RuleGateMessage) {
   if (typeof value === "string") return value;
   return value.message ?? value.reason ?? value.statement ?? value.rule_id ?? "需人工复核";
@@ -26,23 +46,42 @@ export function PromptEditor({
   disabled,
 }: {
   sku: ProductSku;
-  onSave: (payload: ClusterUpdateInput) => void;
+  onSave: (payload: ClusterUpdateInput) => Promise<unknown> | void;
   disabled?: boolean;
 }) {
-  const [relationType, setRelationType] = useState<RelationType>(sku.relationType ?? "single_product");
-  const [identityLock, setIdentityLock] = useState(sku.identityLock);
-  const [brief, setBrief] = useState(sku.brief);
-  const [prompts, setPrompts] = useState<ProductPrompt[]>(sku.prompts?.length ? sku.prompts : defaultPrompts);
+  const [draft, setDraft] = useState(() => draftFromSku(sku));
+  const [savedDraft, setSavedDraft] = useState(() => draftFromSku(sku));
+  const currentSkuId = useRef(sku.id);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
 
   useEffect(() => {
-    setRelationType(sku.relationType ?? "single_product");
-    setIdentityLock(sku.identityLock);
-    setBrief(sku.brief);
-    setPrompts(sku.prompts?.length ? sku.prompts : defaultPrompts);
-  }, [sku]);
+    const next = draftFromSku(sku);
+    const skuChanged = currentSkuId.current !== sku.id;
+    currentSkuId.current = sku.id;
+    if (skuChanged || !dirty) {
+      setDraft(next);
+      setSavedDraft(next);
+    }
+  }, [sku.id, sku.relationType, sku.identityLock, sku.brief, sku.prompts, dirty]);
 
   const updatePrompt = (slotOrder: number, text: string) => {
-    setPrompts((current) => current.map((prompt) => prompt.slotOrder === slotOrder ? { ...prompt, text } : prompt));
+    setDraft((current) => ({ ...current, prompts: current.prompts.map((prompt) => prompt.slotOrder === slotOrder ? { ...prompt, text } : prompt) }));
+  };
+  const save = async () => {
+    const next = draft;
+    try {
+      await onSave({
+        relation_type: next.relationType,
+        identity_lock: next.identityLock,
+        prompt_override: next.brief,
+        prompts: next.prompts
+          .filter((prompt) => !prompt.readOnly && prompt.text.trim())
+          .map((prompt) => ({ slot_order: prompt.slotOrder, prompt: prompt.text })),
+      });
+      setSavedDraft(next);
+    } catch {
+      // ProductCard shows the save error and keeps this local draft dirty for retry.
+    }
   };
   const ledger = sku.analysisSnapshot?.fact_ledger;
   const gate = sku.analysisSnapshot?.rule_gate;
@@ -94,7 +133,7 @@ export function PromptEditor({
       )}
       <label className="block text-sm font-medium text-slate-700">
         <span className="mb-2 block">多图关系</span>
-        <select value={relationType} onChange={(event) => setRelationType(event.target.value as RelationType)}>
+        <select value={draft.relationType} onChange={(event) => setDraft((current) => ({ ...current, relationType: event.target.value as RelationType }))}>
           <option value="single_product">一图一商品</option>
           <option value="same_product">同商品参考</option>
           <option value="variant_group">多色/多款组合</option>
@@ -102,16 +141,16 @@ export function PromptEditor({
       </label>
       <label className="block text-sm font-medium text-slate-700">
         <span className="mb-2 block">身份锁</span>
-        <textarea value={identityLock} onChange={(event) => setIdentityLock(event.target.value)} />
+        <textarea value={draft.identityLock} onChange={(event) => setDraft((current) => ({ ...current, identityLock: event.target.value }))} />
       </label>
       <label className="block text-sm font-medium text-slate-700">
         <span className="mb-2 block">整套要求</span>
-        <textarea value={brief} onChange={(event) => setBrief(event.target.value)} />
+        <textarea value={draft.brief} onChange={(event) => setDraft((current) => ({ ...current, brief: event.target.value }))} />
       </label>
       <details className="rounded-lg bg-slate-50 p-3">
         <summary className="cursor-pointer text-sm font-semibold text-slate-700">9 槽 Prompt</summary>
         <div className="mt-3 grid gap-3">
-          {prompts.map((prompt) => (
+          {draft.prompts.map((prompt) => (
             <label className="block text-sm font-medium text-slate-700" key={prompt.slotOrder}>
               <span className="mb-2 block">{String(prompt.slotOrder).padStart(2, "0")} {prompt.slot} Prompt</span>
               <textarea
@@ -126,14 +165,7 @@ export function PromptEditor({
       <button
         className="secondary-button"
         disabled={disabled}
-        onClick={() => onSave({
-          relation_type: relationType,
-          identity_lock: identityLock,
-          prompt_override: brief,
-          prompts: prompts
-            .filter((prompt) => !prompt.readOnly && prompt.text.trim())
-            .map((prompt) => ({ slot_order: prompt.slotOrder, prompt: prompt.text })),
-        })}
+        onClick={() => void save()}
       >
         保存 Prompt
       </button>

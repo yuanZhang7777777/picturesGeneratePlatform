@@ -103,3 +103,40 @@ test("posts edited prompts as a structured snake-case array", async () => {
     prompts: [{ slot_order: 1, prompt: "纯白背景，保留绿色杯盖" }],
   });
 });
+
+test("keeps dirty relation, identity, brief, and prompt drafts across a polling snapshot", () => {
+  const view = render(<PromptEditor sku={sku} onSave={() => undefined} />);
+
+  fireEvent.change(screen.getByLabelText("多图关系"), { target: { value: "same_product" } });
+  fireEvent.change(screen.getByLabelText("身份锁"), { target: { value: "保留本地身份锁" } });
+  fireEvent.change(screen.getByLabelText("整套要求"), { target: { value: "保留本地 Brief" } });
+  fireEvent.click(screen.getByText("9 槽 Prompt"));
+  fireEvent.change(screen.getByLabelText("01 白底标准图 Prompt"), { target: { value: "保留本地白底 Prompt" } });
+
+  view.rerender(<PromptEditor sku={{
+    ...sku,
+    relationType: "variant_group",
+    identityLock: "服务器身份锁",
+    brief: "服务器 Brief",
+    prompts: [{ slotOrder: 1, slot: "白底标准图", text: "服务器 Prompt" }],
+  }} onSave={() => undefined} />);
+
+  expect(screen.getByLabelText("多图关系")).toHaveValue("same_product");
+  expect(screen.getByLabelText("身份锁")).toHaveValue("保留本地身份锁");
+  expect(screen.getByLabelText("整套要求")).toHaveValue("保留本地 Brief");
+  expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("保留本地白底 Prompt");
+});
+
+test("updates the prompt baseline after a successful save before later snapshots", async () => {
+  const onSave = vi.fn().mockResolvedValue(undefined);
+  const view = render(<PromptEditor sku={sku} onSave={onSave} />);
+
+  fireEvent.change(screen.getByLabelText("身份锁"), { target: { value: "已保存身份锁" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
+  await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+  expect(screen.getByLabelText("身份锁")).toHaveValue("已保存身份锁");
+
+  view.rerender(<PromptEditor sku={{ ...sku, identityLock: "服务器刷新身份锁" }} onSave={onSave} />);
+
+  expect(screen.getByLabelText("身份锁")).toHaveValue("服务器刷新身份锁");
+});

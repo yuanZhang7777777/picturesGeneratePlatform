@@ -77,6 +77,7 @@ export function ProductCard({ sku, assets, mergeableAssets, selected, onSelect, 
     try {
       const result = await onSave(payload, currentVersion);
       setCurrentVersion(result.version);
+      return result;
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setSaveError("商品信息已更新，请保留修改后重试");
@@ -84,6 +85,7 @@ export function ProductCard({ sku, assets, mergeableAssets, selected, onSelect, 
       } else {
         setSaveError(error instanceof Error ? error.message : "保存失败，请重试");
       }
+      throw error;
     } finally {
       setSaving(false);
     }
@@ -101,16 +103,17 @@ export function ProductCard({ sku, assets, mergeableAssets, selected, onSelect, 
       <p className="truncate text-xs text-slate-500">{effective?.platform || "未设置平台"} · {effective?.market || "未设置国家"} · {effective?.sellerTier === "mall" ? "Mall" : "普通店"}</p>
       <div className="mt-auto flex items-center justify-between gap-2 text-xs"><span className={status === "blocked" ? "font-semibold text-amber-700" : "text-slate-500"}>{status === "blocked" ? blockedText[blocked ?? ""] ?? "请查看商品详情后处理" : statusText[status] ?? status}</span><button className="text-sm font-semibold text-indigo-700" type="button" onClick={() => setDetailsOpen(true)}>更多设置</button></div>
     </div>
-    {detailsOpen && <ProductDetails closeButton={closeButton} label={label} sku={sku} assets={assets} mergeableAssets={mergeableAssets} draft={draft} effective={effective} saving={saving || disabled} saveError={saveError} onDraft={setDraft} onSave={() => void submit()} onReset={resetOverrides} onPromptSave={(payload) => void savePrompt(payload)} onMerge={onMerge} onDeleteAsset={onDeleteAsset} onDelete={onDelete} onClose={() => setDetailsOpen(false)} source={source} />}
+    {detailsOpen && <ProductDetails closeButton={closeButton} label={label} sku={sku} assets={assets} mergeableAssets={mergeableAssets} draft={draft} effective={effective} saving={saving || disabled} saveError={saveError} onDraft={setDraft} onSave={() => void submit()} onReset={resetOverrides} onPromptSave={savePrompt} onMerge={onMerge} onDeleteAsset={onDeleteAsset} onDelete={onDelete} onClose={() => setDetailsOpen(false)} source={source} />}
   </article>;
 }
 
-function ProductDetails({ closeButton, label, sku, assets, mergeableAssets, draft, effective, saving, saveError, onDraft, onSave, onReset, onPromptSave, onMerge, onDeleteAsset, onDelete, onClose, source }: { closeButton: React.RefObject<HTMLButtonElement | null>; label: string; sku: ProductSku; assets: ProductAsset[]; mergeableAssets: ProductAsset[]; draft: Draft; effective?: ProductSku["effectiveConfig"]; saving?: boolean; saveError: string; onDraft: (next: Draft) => void; onSave: () => void; onReset: () => void; onPromptSave: (payload: ClusterUpdateInput) => void; onMerge: (assetId: string) => void; onDeleteAsset: (assetId: string) => void; onDelete: () => void; onClose: () => void; source: (value: string | null | undefined) => string }) {
+function ProductDetails({ closeButton, label, sku, assets, mergeableAssets, draft, effective, saving, saveError, onDraft, onSave, onReset, onPromptSave, onMerge, onDeleteAsset, onDelete, onClose, source }: { closeButton: React.RefObject<HTMLButtonElement | null>; label: string; sku: ProductSku; assets: ProductAsset[]; mergeableAssets: ProductAsset[]; draft: Draft; effective?: ProductSku["effectiveConfig"]; saving?: boolean; saveError: string; onDraft: (next: Draft) => void; onSave: () => void; onReset: () => void; onPromptSave: (payload: ClusterUpdateInput) => Promise<unknown>; onMerge: (assetId: string) => void; onDeleteAsset: (assetId: string) => void; onDelete: () => void; onClose: () => void; source: (value: string | null | undefined) => string }) {
   useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; document.addEventListener("keydown", close); return () => document.removeEventListener("keydown", close); }, [onClose]);
   const sellerText = effective?.sellerTier === "mall" ? "Mall" : "普通店";
+  const sellerSource = effective?.platform === "tiktok" ? "平台规则固定" : source(sku.overrides?.sellerTier);
   return <div className="fixed inset-0 z-40 bg-slate-950/20" role="presentation" onMouseDown={onClose}><aside aria-label={`${label} 商品详情`} aria-modal="true" className="absolute inset-y-0 right-0 w-full max-w-lg overflow-y-auto bg-white p-6 shadow-2xl" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
     <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品详情与 Prompt</p><h2 className="mt-1 text-xl font-semibold text-slate-950">{label}</h2></div><button ref={closeButton} className="secondary-button" type="button" onClick={onClose}>关闭</button></div>
-    <div className="mt-5 rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><p>平台：{effective?.platform || "未设置"}（{source(sku.overrides?.platform)}）</p><p className="mt-1">国家：{effective?.market || "未设置"}（{source(sku.overrides?.market)}）</p><p className="mt-1">店铺类型：{sellerText}（{source(sku.overrides?.sellerTier)}）</p></div>
+    <div className="mt-5 rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><p>平台：{effective?.platform || "未设置"}（{source(sku.overrides?.platform)}）</p><p className="mt-1">国家：{effective?.market || "未设置"}（{source(sku.overrides?.market)}）</p><p className="mt-1">店铺类型：{sellerText}（{sellerSource}）</p></div>
     <label className="mt-5 block text-sm font-medium text-slate-700">平台<select aria-label="商品平台" className="mt-2" value={draft.platform} onChange={(event) => onDraft({ ...draft, platform: event.target.value })}><option value="">跟随项目</option><option value="shopee">Shopee</option><option value="tiktok">TikTok Shop</option></select></label>
     <label className="mt-4 block text-sm font-medium text-slate-700">国家/站点<input aria-label="商品国家" className="mt-2" value={draft.market} placeholder={effective?.market || "跟随项目"} onChange={(event) => onDraft({ ...draft, market: event.target.value.toUpperCase() })} /></label>
     <label className="mt-4 block text-sm font-medium text-slate-700">补充信息<textarea aria-label="商品补充信息" className="mt-2" value={draft.brief} placeholder="材质、功能、消费者或特别要求" onChange={(event) => onDraft({ ...draft, brief: event.target.value })} /></label>

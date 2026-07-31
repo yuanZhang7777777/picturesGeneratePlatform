@@ -88,12 +88,12 @@ test("shows seller tier override and a precise blocked action", async () => {
   await waitFor(() => expect(onSave).toHaveBeenLastCalledWith({ platform_override: null, market_override: null, seller_tier_override: null }, 2));
 });
 
-test("uses the server effective seller tier even if a TikTok override says mall", () => {
+test("shows TikTok as a platform-fixed ordinary store even if a raw override says mall", () => {
   const tiktokSku = { ...sku, overrides: { platform: "tiktok", market: "US", sellerTier: "mall" as const }, effectiveConfig: { ...sku.effectiveConfig!, platform: "tiktok", market: "US", sellerTier: "general" as const } };
   render(<ProductCard sku={tiktokSku} assets={tiktokSku.assets!} mergeableAssets={[]} selected onSelect={() => undefined} onMerge={() => undefined} onSave={vi.fn()} onReload={vi.fn()} onDeleteAsset={() => undefined} onDelete={() => undefined} />);
 
   fireEvent.click(screen.getByRole("button", { name: "更多设置" }));
-  expect(screen.getByText("店铺类型：普通店（已单独设置）")).toBeInTheDocument();
+  expect(screen.getByText("店铺类型：普通店（平台规则固定）")).toBeInTheDocument();
 });
 
 test("keeps the card square and hides detailed fields until its drawer opens", () => {

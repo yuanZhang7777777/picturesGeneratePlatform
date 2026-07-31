@@ -27,8 +27,12 @@ test("polls active snapshots every 3 seconds in foreground and 15 seconds in bac
   expect(snapshotPollInterval(false, false)).toBe(false);
 });
 
-test("continues polling while an imported product is awaiting preparation", () => {
+test("polls only real active project, product, or output states", () => {
+  expect(projectHasActiveWork({ status: "queued", skus: [{ preparationStatus: "ready", outputs: [] }] })).toBe(true);
+  expect(projectHasActiveWork({ status: "running", skus: [{ preparationStatus: "ready", outputs: [] }] })).toBe(true);
+  expect(projectHasActiveWork({ status: "draft", skus: [{ preparationStatus: "pending", outputs: [] }] })).toBe(true);
   expect(projectHasActiveWork({ status: "draft", skus: [{ preparationStatus: "preparing", outputs: [] }] })).toBe(true);
-  expect(projectHasActiveWork({ status: "organizing", skus: [{ preparationStatus: "pending", outputs: [] }] })).toBe(true);
-  expect(projectHasActiveWork({ status: "completed", skus: [{ preparationStatus: "ready", outputs: [] }] })).toBe(false);
+  expect(projectHasActiveWork({ status: "draft", skus: [{ preparationStatus: "ready", outputs: [] }] })).toBe(false);
+  expect(projectHasActiveWork({ status: "blocked", skus: [{ preparationStatus: "blocked", outputs: [] }] })).toBe(false);
+  expect(projectHasActiveWork({ status: "draft", skus: [{ preparationStatus: "ready", outputs: [{ status: "running" }] }] })).toBe(true);
 });
