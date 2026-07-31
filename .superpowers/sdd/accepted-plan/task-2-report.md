@@ -86,3 +86,38 @@ Final command results (2026-07-31):
 
 - No project authority document changed. The existing Prompt OS specification already requires N7 before every paid image execution, immutable PromptVersion/Generation history, final-reference traceability, and per-product isolation.
 - This append-only task report is the review-fix handoff required by the accepted task boundary.
+
+## Fix round 2 (2026-07-31)
+
+### Review findings closed
+
+- **C1 exact reference authorization:** submission now resolves the current N2 primary and at most three current N2 supporting image relations from the same product. White generations require that exact ordered set; marketing generations require the exact current completed white result followed by the current N2 primary. Cross-product, competitor, historical, missing, reordered, or additional paths fail closed, and same-slot N7 is bound to the same exact references and current white generation.
+- **C2 TOCTOU sealing:** the worker claims and then locks Batch → Cluster → Generation, revalidates the complete paid request, and persists an immutable content-addressed submission fingerprint. It repeats the same locked validation immediately before the provider POST, while supported preparation/configuration and node-publication mutation paths reject changes during an active sealed submission. Database locks are released before network I/O.
+- **I1 N9 transactionality:** N9 provider optimization remains outside the database lock, while its N7 record, Cluster analysis update, PromptVersion, and follow-up Generation are created together inside the Batch → Cluster → Generation transaction. A competing/newer attempt causes the whole local write set to roll back.
+- **I2 terminal regenerate source:** follow-up generation accepts only completed, failed, or canceled source attempts. Queued, preparing, submitting, submitted, processing, archiving, and submit-unknown sources are rejected.
+- **I3 strict N1/N2 schema:** N1 now enforces the owned-image role, integer visibility/quality bounds, string category candidates, and non-empty observed shape. Continuing N2 output now requires typed `must_not_change`, category, and primary appearance fields in addition to current owned primary/supporting assets.
+- **I4 complete bindings:** template/rule snapshots now include publication status and execution defaults/source metadata. PromptNodeTemplate bindings include node/version/status plus a hash of the exact instruction and output schema and must remain published. N7 and PromptVersion snapshots bind the actual image model, size, resolution, and fixed generation parameters used by the request.
+- **M1 created-count ownership:** `ensure_cluster_generations(..., include_created=True)` returns the exact IDs created by that locked service call, and the API derives `generation_count` only from those IDs rather than a before/after query race.
+- Generation model/queryset guards prevent an existing sealed submission fingerprint from being replaced or removed while allowing later provider status fields to be merged.
+
+### RED / GREEN evidence
+
+- Added 25 directed review tests spanning exact white/marketing reference rejection, template/rule/node/request mutation, sealed interleaving, supported configuration invalidation, fingerprint immutability, terminal-source enforcement, N9 rollback, strict N1/N2 types, and current-call creation ownership.
+- RED: all 25 new directed tests failed against the round-1 implementation.
+- GREEN: all 25 directed tests passed after the minimal backend changes.
+- Focused backend regression:
+  `pytest -q tests/test_prompt_os.py tests/test_generation_queue.py tests/test_views.py tests/test_upload_clusters.py tests/test_project_configuration.py tests/test_review_delivery.py`
+  — 165 passed.
+
+### Final verification
+
+- `pytest -q`: 280 passed; warnings only.
+- `python manage.py check`: exit 0, no issues.
+- `python manage.py makemigrations --check --dry-run`: exit 0, no changes detected; only the expected local PostgreSQL-unavailable migration-history warning.
+- `git diff --check -- platform_app/models.py platform_app/services.py platform_app/views.py tests/test_generation_queue.py tests/test_prompt_os.py`: exit 0; line-ending notices only.
+
+### Documentation impact and remaining risk
+
+- No product authority document or frontend file changed in this backend review fix. The current requirements boundary, phased roadmap, dual-speed design, and Prompt OS node contract already require exact N2 references, request-bound same-slot N7 evidence, immutable snapshots, and revalidation immediately before every paid POST.
+- This append-only task report and the weekly work log are the durable handoff artifacts for round 2.
+- Verification used fake/local provider and storage paths only. No production call, deployment, credential, OSS, ERP, or external data write was performed.

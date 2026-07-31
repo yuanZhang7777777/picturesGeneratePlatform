@@ -37,7 +37,16 @@ def make_batch_with_images(tmp_path, settings, count=1):
     return user, batch
 
 
-def approve_prompt(cluster, user, slot, *, revision=1, config_signature=None, node_name=None):
+def approve_prompt(
+    cluster,
+    user,
+    slot,
+    *,
+    revision=1,
+    config_signature=None,
+    node_name=None,
+    template_version="test-v1",
+):
     from platform_app.models import Cluster
     from platform_app.services import _create_gated_prompt_version
     from platform_app.template_policy import (
@@ -80,7 +89,7 @@ def approve_prompt(cluster, user, slot, *, revision=1, config_signature=None, no
         slot=slot,
         user=user,
         node_name=resolved_node,
-        template_version="test-v1",
+        template_version=template_version,
         provider_model="none" if source else "gpt-image-2",
         prompt_text=(
             "Preserve the original seller product photo without AI modification."
@@ -247,7 +256,9 @@ def test_ensure_cluster_generations_requires_current_n4_and_passing_n7(
     from platform_app.models import Cluster, Generation, OutputTemplate, PromptVersion
     from platform_app.services import (
         _effective_config_signature,
+        _image_request_snapshot,
         _preparation_lineage,
+        _prompt_node_template_binding,
         ensure_cluster_generations,
     )
 
@@ -296,7 +307,9 @@ def test_generation_gate_rejects_forged_n7_snapshot_id_without_same_slot_record(
     from platform_app.models import Cluster, OutputTemplate, PromptVersion
     from platform_app.services import (
         _effective_config_signature,
+        _image_request_snapshot,
         _preparation_lineage,
+        _prompt_node_template_binding,
         ensure_cluster_generations,
     )
 
@@ -320,6 +333,11 @@ def test_generation_gate_rejects_forged_n7_snapshot_id_without_same_slot_record(
         "_preparation_revision": 1,
         "_effective_config_signature": signature,
         "_preparation_lineage": _preparation_lineage(cluster, batch, slot),
+        "_prompt_node_template": _prompt_node_template_binding("N4", "builtin-v1"),
+        "_image_request": _image_request_snapshot(
+            size=batch.size or template.default_size,
+            resolution=batch.resolution or template.default_resolution,
+        ),
     }
     PromptVersion.objects.create(
         cluster=cluster,
@@ -515,6 +533,513 @@ def test_generation_references_follow_n2_white_and_marketing_order(
         detail.prompt_version.evaluation["rule_gate"]["snapshot_id"]
     ]
     assert detail_n7["input_snapshot"]["hero_generation_id"] == str(hero.id)
+
+
+def test_submission_rejects_white_reference_outside_current_n2_assets(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import Generation
+    from platform_app.services import (
+        _claim_generation_for_submission,
+        _create_gated_prompt_version,
+        _current_rule_bundle_snapshot,
+        _template_snapshot,
+        _validate_generation_submission,
+    )
+
+    user, batch, cluster, valid = queue_approved_hero(
+        tmp_path,
+        settings,
+        username="forged-white-reference",
+    )
+    forged_references = ["originals/other-product/competitor.png"]
+    prompt_version = _create_gated_prompt_version(
+        cluster=cluster,
+        batch=batch,
+        slot=valid.output_slot,
+        user=user,
+        node_name="N4",
+        template_version="test-v1",
+        provider_model="gpt-image-2",
+        prompt_text="Forged but N7-gated prompt",
+        input_snapshot={},
+        structured_output={"visible_text_lines": []},
+        source_snapshot={},
+        references=forged_references,
+    )
+    forged = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=valid.output_slot,
+        prompt_version=prompt_version,
+        created_by=user,
+        attempt=2,
+        prompt_text=prompt_version.prompt_text,
+        size=valid.size,
+        resolution=valid.resolution,
+        reference_snapshot=forged_references,
+        template_snapshot=_template_snapshot(batch.output_template, valid.output_slot),
+        rule_snapshot=_current_rule_bundle_snapshot(batch, valid.output_slot),
+    )
+
+    claimed = _claim_generation_for_submission(forged.id)
+    with pytest.raises(ValueError, match="N2|reference"):
+        _validate_generation_submission(claimed)
+
+
+def test_submission_rejects_marketing_structural_reference_from_other_product(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate, ResultAsset
+    from platform_app.services import (
+        _claim_generation_for_submission,
+        _create_gated_prompt_version,
+        _current_rule_bundle_snapshot,
+        _template_snapshot,
+        _validate_generation_submission,
+        ensure_cluster_generations,
+    )
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    hero_slot = template.slots.get(order=1)
+    detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
+    approve_prompt(cluster, user, hero_slot)
+    approve_prompt(cluster, user, detail_slot)
+    hero = ensure_cluster_generations(cluster, user)[0]
+    hero.status = Generation.Status.COMPLETED
+    hero.save(update_fields=["status", "updated_at"])
+    hero_path = f"results/{batch.id}/{cluster.id}/{hero_slot.id}/1/hero.png"
+    ResultAsset.objects.create(
+        generation=hero,
+        storage_path=hero_path,
+        sha256="8" * 64,
+        file_size=10,
+    )
+    valid_detail = next(
+        item
+        for item in ensure_cluster_generations(cluster, user)
+        if item.output_slot_id == detail_slot.id
+    )
+    cluster.refresh_from_db()
+    forged_references = [hero_path, "originals/other-product/history.png"]
+    prompt_version = _create_gated_prompt_version(
+        cluster=cluster,
+        batch=batch,
+        slot=detail_slot,
+        user=user,
+        node_name="N6",
+        template_version="test-v1",
+        provider_model="gpt-image-2",
+        prompt_text=valid_detail.prompt_text,
+        input_snapshot={},
+        structured_output={"visible_text_lines": []},
+        source_snapshot={},
+        references=forged_references,
+        hero_generation=hero,
+    )
+    forged = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=detail_slot,
+        prompt_version=prompt_version,
+        created_by=user,
+        attempt=2,
+        prompt_text=prompt_version.prompt_text,
+        size=valid_detail.size,
+        resolution=valid_detail.resolution,
+        reference_snapshot=forged_references,
+        template_snapshot=_template_snapshot(template, detail_slot),
+        rule_snapshot=_current_rule_bundle_snapshot(batch, detail_slot),
+    )
+
+    claimed = _claim_generation_for_submission(forged.id)
+    with pytest.raises(ValueError, match="N2|structural|reference"):
+        _validate_generation_submission(claimed)
+
+
+@pytest.mark.parametrize("mutation", ["status", "default_size"])
+def test_worker_rechecks_published_template_and_default_request_parameters(
+    tmp_path,
+    settings,
+    mutation,
+):
+    from platform_app.models import Generation, OutputTemplate
+    from platform_app.services import LocalStorage, process_generation_once
+
+    class CapturingClient:
+        def __init__(self):
+            self.calls = 0
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.calls += 1
+            return "must-not-submit"
+
+    _, batch, _, generation = queue_approved_hero(
+        tmp_path,
+        settings,
+        username=f"template-{mutation}",
+    )
+    template = OutputTemplate.objects.get(id=batch.output_template_id)
+    if mutation == "status":
+        template.status = OutputTemplate.Status.RETIRED
+        template.save(update_fields=["status"])
+    else:
+        template.default_size = "3:4"
+        template.save(update_fields=["default_size"])
+
+    client = CapturingClient()
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+    assert client.calls == 0
+    assert generation.status == Generation.Status.FAILED
+
+
+@pytest.mark.parametrize("mutation", ["status", "instruction", "output_schema"])
+def test_worker_rechecks_exact_prompt_node_template_content(
+    tmp_path,
+    settings,
+    mutation,
+):
+    from platform_app.models import Generation, OutputTemplate, PromptNodeTemplate
+    from platform_app.services import (
+        LocalStorage,
+        ensure_cluster_generations,
+        process_generation_once,
+    )
+
+    class CapturingClient:
+        def __init__(self):
+            self.calls = 0
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.calls += 1
+            return "must-not-submit"
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    slot = template.slots.get(order=1)
+    node_template = PromptNodeTemplate.objects.create(
+        node_name="N4",
+        version="2.1.0",
+        status=PromptNodeTemplate.Status.PUBLISHED,
+        instruction="Complete N4 instruction.",
+        output_schema={"type": "object"},
+    )
+    approve_prompt(
+        cluster,
+        user,
+        slot,
+        template_version=node_template.version,
+    )
+    generation = ensure_cluster_generations(cluster, user)[0]
+    if mutation == "status":
+        node_template.status = PromptNodeTemplate.Status.RETIRED
+        node_template.save(update_fields=["status"])
+    elif mutation == "instruction":
+        node_template.instruction = "Changed instruction."
+        node_template.save(update_fields=["instruction"])
+    else:
+        node_template.output_schema = {"type": "array"}
+        node_template.save(update_fields=["output_schema"])
+
+    client = CapturingClient()
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    generation.refresh_from_db()
+    assert client.calls == 0
+    assert generation.status == Generation.Status.FAILED
+
+
+@pytest.mark.parametrize("mutation", ["model", "size"])
+def test_submission_rechecks_actual_image_request_bound_by_n7(
+    tmp_path,
+    settings,
+    mutation,
+):
+    from platform_app.models import Generation
+    from platform_app.services import (
+        _claim_generation_for_submission,
+        _current_rule_bundle_snapshot,
+        _template_snapshot,
+        _validate_generation_submission,
+    )
+
+    user, batch, cluster, valid = queue_approved_hero(
+        tmp_path,
+        settings,
+        username=f"request-{mutation}",
+    )
+    candidate = valid
+    if mutation == "model":
+        settings.APIMART_IMAGE_MODEL = "different-image-model"
+    else:
+        candidate = Generation.objects.create(
+            batch=batch,
+            cluster=cluster,
+            output_slot=valid.output_slot,
+            prompt_version=valid.prompt_version,
+            created_by=user,
+            attempt=2,
+            prompt_text=valid.prompt_text,
+            size="3:4",
+            resolution=valid.resolution,
+            reference_snapshot=valid.reference_snapshot,
+            template_snapshot=_template_snapshot(
+                batch.output_template,
+                valid.output_slot,
+            ),
+            rule_snapshot=_current_rule_bundle_snapshot(
+                batch,
+                valid.output_slot,
+            ),
+        )
+
+    claimed = _claim_generation_for_submission(candidate.id)
+    with pytest.raises(ValueError, match="request|model|size"):
+        _validate_generation_submission(claimed)
+
+
+def test_worker_rechecks_submission_fingerprint_after_interleaved_config_change(
+    tmp_path,
+    settings,
+):
+    from contextlib import contextmanager
+
+    from platform_app.models import Batch, Generation
+    from platform_app.services import LocalStorage, process_generation_once
+
+    class CapturingClient:
+        def __init__(self):
+            self.calls = 0
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.calls += 1
+            return "must-not-submit-stale-request"
+
+    class InterleavingStorage:
+        @contextmanager
+        def reference_paths(self, storage_paths):
+            Batch.objects.filter(id=batch.id).update(size="3:4")
+            with LocalStorage(tmp_path).reference_paths(storage_paths) as paths:
+                yield paths
+
+    _, batch, _, generation = queue_approved_hero(
+        tmp_path,
+        settings,
+        username="submission-interleaving",
+    )
+    client = CapturingClient()
+
+    assert process_generation_once(client, InterleavingStorage()) == 1
+    generation.refresh_from_db()
+    assert client.calls == 0
+    assert generation.status == Generation.Status.FAILED
+    assert generation.provider_payload["submission"]["fingerprint"]
+
+
+def test_project_settings_reject_change_while_sealed_submission_is_active(
+    tmp_path,
+    settings,
+):
+    from platform_app.services import (
+        _claim_generation_for_submission,
+        _seal_generation_submission,
+        update_project_settings,
+    )
+
+    _, batch, _, generation = queue_approved_hero(
+        tmp_path,
+        settings,
+        username="sealed-settings",
+    )
+    claimed = _claim_generation_for_submission(generation.id)
+    sealed = _seal_generation_submission(claimed.id)
+
+    with pytest.raises(ValueError, match="active submission"):
+        update_project_settings(
+            batch,
+            {
+                "platform": batch.platform,
+                "market": batch.market or batch.site,
+                "seller_tier": batch.seller_tier,
+                "size": "3:4",
+                "resolution": batch.resolution,
+                "global_prompt": batch.global_prompt,
+            },
+        )
+
+    sealed.refresh_from_db()
+    assert sealed.provider_payload["submission"]["fingerprint"]
+
+
+def test_sealed_submission_fingerprint_cannot_be_overwritten(
+    tmp_path,
+    settings,
+):
+    from django.core.exceptions import ValidationError
+
+    from platform_app.models import Generation
+    from platform_app.services import (
+        _claim_generation_for_submission,
+        _seal_generation_submission,
+    )
+
+    _, _, _, generation = queue_approved_hero(
+        tmp_path,
+        settings,
+        username="immutable-submission",
+    )
+    claimed = _claim_generation_for_submission(generation.id)
+    sealed = _seal_generation_submission(claimed.id)
+    original = sealed.provider_payload["submission"]
+
+    sealed.provider_payload = {
+        "submission": {**original, "fingerprint": "forged"},
+    }
+    with pytest.raises(ValidationError, match="submission"):
+        sealed.save(update_fields=["provider_payload", "updated_at"])
+
+    with pytest.raises(ValidationError, match="submission"):
+        Generation.objects.filter(id=sealed.id).update(
+            provider_payload={
+                "submission": {**original, "fingerprint": "forged"},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "queued",
+        "submitting",
+        "processing",
+    ],
+)
+def test_regenerate_rejects_active_source_generation(
+    tmp_path,
+    settings,
+    status,
+):
+    from platform_app.models import Generation
+    from platform_app.services import regenerate_generation
+
+    user, _, cluster, source = queue_approved_hero(
+        tmp_path,
+        settings,
+        username=f"active-regenerate-{status}",
+    )
+    source.status = status
+    source.save(update_fields=["status", "updated_at"])
+
+    with pytest.raises(ValueError, match="terminal|active|status"):
+        regenerate_generation(source, user)
+
+    assert Generation.objects.filter(cluster=cluster).count() == 1
+
+
+def test_duplicate_n9_retry_rolls_back_orphan_prompt_and_n7(
+    tmp_path,
+    settings,
+):
+    import json
+
+    from platform_app.models import Generation, PromptVersion
+    from platform_app.services import _create_simplified_failure_retry
+
+    class ComplexityClient:
+        def optimize_prompt(self, payload):
+            return {
+                "output_text": json.dumps(
+                    {
+                        "decision": "retry_with_simplified_prompt",
+                        "simplified_prompt": "Exact.",
+                        "visible_text_lines": [],
+                    }
+                )
+            }
+
+    _, _, cluster, source = queue_approved_hero(
+        tmp_path,
+        settings,
+        username="n9-atomicity",
+    )
+    source.status = Generation.Status.FAILED
+    source.failure_reason = "prompt too complex"
+    source.provider_payload = {
+        "status": "failed",
+        "error_code": "prompt_complexity",
+    }
+    source.save(
+        update_fields=[
+            "status",
+            "failure_reason",
+            "provider_payload",
+            "updated_at",
+        ]
+    )
+    client = ComplexityClient()
+    first = _create_simplified_failure_retry(source, client)
+    cluster.refresh_from_db()
+    n7_count = len(
+        [
+            snapshot
+            for snapshot in cluster.analysis_snapshot["prompt_os"]
+            if snapshot["node_id"] == "N7"
+        ]
+    )
+
+    with pytest.raises(ValueError, match="newer generation"):
+        _create_simplified_failure_retry(source, client)
+
+    cluster.refresh_from_db()
+    assert PromptVersion.objects.filter(cluster=cluster, node_name="N9").count() == 1
+    assert len(
+        [
+            snapshot
+            for snapshot in cluster.analysis_snapshot["prompt_os"]
+            if snapshot["node_id"] == "N7"
+        ]
+    ) == n7_count
+    assert cluster.generations.exclude(id=source.id).get().id == first.id
+
+
+def test_generation_creation_reports_only_ids_created_by_that_call(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import OutputTemplate
+    from platform_app.services import ensure_cluster_generations
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    slot = template.slots.get(order=1)
+    approve_prompt(cluster, user, slot)
+
+    first_items, first_created_ids = ensure_cluster_generations(
+        cluster,
+        user,
+        include_created=True,
+    )
+    second_items, second_created_ids = ensure_cluster_generations(
+        cluster,
+        user,
+        include_created=True,
+    )
+
+    assert first_created_ids == [first_items[0].id]
+    assert second_created_ids == []
+    assert [item.id for item in second_items] == [item.id for item in first_items]
 
 
 def test_stale_completed_hero_is_not_used_after_product_revision_changes(

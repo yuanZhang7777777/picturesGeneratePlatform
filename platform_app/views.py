@@ -533,21 +533,13 @@ def api_project_generate(request, batch_id):
                         }
                     )
                     continue
-                existing_ids = set(
-                    cluster.generations.values_list("id", flat=True)
-                )
-                generations = ensure_cluster_generations(
+                generations, created_ids = ensure_cluster_generations(
                     cluster,
                     request.user,
                     slot_orders=slot_orders,
+                    include_created=True,
                 )
-                new_ids = [
-                    generation.id
-                    for generation in generations
-                    if generation.id not in existing_ids
-                    and generation.status == Generation.Status.QUEUED
-                ]
-                generation_count += len(new_ids)
+                generation_count += len(created_ids)
                 items.append({"cluster_id": str(cluster.id), "status": "queued"})
             except Exception as exc:
                 items.append(

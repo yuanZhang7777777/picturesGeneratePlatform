@@ -112,11 +112,14 @@ def test_confirm_generation_snapshots_selected_market_template_rule_and_prompt_a
         "id": str(rule.id),
         "name": "US rules",
         "version": "2026-07",
-            "platform": "shopee",
-            "site": "US",
-            "rules": {"no_text_overlay": True},
-            "resolved_rules": [],
-        }
+        "status": "published",
+        "platform": "shopee",
+        "site": "US",
+        "source_url": "",
+        "checked_at": None,
+        "rules": {"no_text_overlay": True},
+        "resolved_rules": [],
+    }
 
 
 def test_compile_slot_prompt_uses_only_product_references_and_sanitized_style_dna():
@@ -464,7 +467,11 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                         "asset_id": observed_asset_id,
                         "image_role": "clean_product",
                         "contains_target_product": True,
-                        "observed_identity": {"category_candidates": ["silicone cup"]},
+                        "target_visibility": 91,
+                        "observed_identity": {
+                            "category_candidates": ["silicone cup"],
+                            "overall_shape": "round cup with two handles",
+                        },
                         "reference_quality": 91,
                         "candidate_product_name": "Silicone cup",
                         "candidate_product_name_confidence": 0.91,
@@ -548,7 +555,10 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                             "confidence": 0.1,
                             "product_name": "Confirmed ceramic mug",
                             "conflict_state": "unknown",
-                            "product_profile": {"category": "ceramic mug"},
+                            "product_profile": {
+                                "category": "ceramic mug",
+                                "primary_appearance": "visible ceramic mug",
+                            },
                             "identity_lock": {"must_not_change": ["visible mug"]},
                             "primary_asset_id": str(confirmed_asset.id),
                             "supporting_asset_ids": [],
@@ -614,7 +624,11 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
                         "asset_id": str(asset.id),
                         "image_role": "clean_product",
                         "contains_target_product": True,
-                        "observed_identity": {"category_candidates": ["storage box"]},
+                        "target_visibility": 90,
+                        "observed_identity": {
+                            "category_candidates": ["storage box"],
+                            "overall_shape": "rectangular storage box",
+                        },
                         "reference_quality": 90,
                         "candidate_product_name": "Storage box",
                         "candidate_product_name_confidence": 0.9,
@@ -740,10 +754,12 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                         "asset_id": str(asset.id),
                         "image_role": "clean_product",
                         "contains_target_product": True,
+                        "target_visibility": 95,
                         "target_complete": True,
                         "reference_quality": 95,
                         "observed_identity": {
                             "category_candidates": ["storage container"],
+                            "overall_shape": "rectangular container with two handles",
                             "dominant_colors": ["sage green"],
                             "distinctive_parts": ["two handles"],
                         },
@@ -1150,7 +1166,11 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
             "asset_id": asset_id,
             "image_role": "clean_product",
             "contains_target_product": True,
-            "observed_identity": {"category_candidates": ["travel mug"]},
+            "target_visibility": 92,
+            "observed_identity": {
+                "category_candidates": ["travel mug"],
+                "overall_shape": "cylindrical mug with lid",
+            },
             "reference_quality": 92,
             "candidate_product_name": "Travel mug",
             "candidate_product_name_confidence": 87,
@@ -1170,7 +1190,10 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
             "primary_asset_id": asset_id,
             "supporting_asset_ids": [],
             "identity_lock": {"must_not_change": ["lid"]},
-            "product_profile": {"category": "travel mug"},
+            "product_profile": {
+                "category": "travel mug",
+                "primary_appearance": "visible travel mug",
+            },
         },
         {asset_id},
     )
@@ -1184,7 +1207,11 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
                     "asset_id": asset_id,
                     "image_role": "clean_product",
                     "contains_target_product": True,
-                    "observed_identity": {"category_candidates": ["travel mug"]},
+                    "target_visibility": 92,
+                    "observed_identity": {
+                        "category_candidates": ["travel mug"],
+                        "overall_shape": "cylindrical mug with lid",
+                    },
                     "reference_quality": 92,
                 },
             asset_id,
@@ -1407,7 +1434,11 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
                         "asset_id": str(asset.id),
                         "image_role": "clean_product",
                         "contains_target_product": True,
-                        "observed_identity": {"category_candidates": ["travel mug"]},
+                        "target_visibility": 95,
+                        "observed_identity": {
+                            "category_candidates": ["travel mug"],
+                            "overall_shape": "cylindrical mug with lid",
+                        },
                         "reference_quality": 95,
                         "candidate_product_name": "Travel mug",
                         "candidate_product_name_confidence": 94,
@@ -1427,7 +1458,10 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
                     "primary_asset_id": str(asset.id),
                     "supporting_asset_ids": [],
                     "identity_lock": {"must_not_change": ["lid"]},
-                    "product_profile": {"category": "travel mug"},
+                    "product_profile": {
+                        "category": "travel mug",
+                        "primary_appearance": "visible travel mug",
+                    },
                 }
             elif "NODE N3" in text:
                 self.later_calls.append("N3")
@@ -1574,7 +1608,11 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
                         "asset_id": str(asset.id),
                         "image_role": "clean_product",
                         "contains_target_product": True,
-                        "observed_identity": {"category_candidates": ["shoe"]},
+                        "target_visibility": 90,
+                        "observed_identity": {
+                            "category_candidates": ["shoe"],
+                            "overall_shape": "running shoe upper and sole",
+                        },
                         "reference_quality": 90,
                         "candidate_product_name": "Running shoe",
                         "candidate_product_name_confidence": 95,
@@ -1595,7 +1633,10 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
                         "primary_asset_id": str(asset.id),
                         "supporting_asset_ids": [],
                         "identity_lock": {"must_not_change": ["shoe upper"]},
-                        "product_profile": {"category": "shoe"},
+                        "product_profile": {
+                            "category": "shoe",
+                            "primary_appearance": "visible running shoe",
+                        },
                     }
                 )
             }
@@ -1650,6 +1691,94 @@ def test_n2_continue_requires_nonempty_identity_lock_and_product_profile():
 
     payload["identity_lock"] = {"must_not_change": ["Keep the visible handle"]}
     with pytest.raises(ValueError, match="product_profile"):
+        _normalize_n2_identity(payload, {asset_id})
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("image_role", "unrecognized_role", "image_role"),
+        (
+            "observed_identity",
+            {"category_candidates": [123], "overall_shape": "round"},
+            "category_candidates",
+        ),
+        (
+            "observed_identity",
+            {"category_candidates": ["travel mug"], "overall_shape": ""},
+            "overall_shape",
+        ),
+        ("target_visibility", 91.5, "target_visibility"),
+    ],
+)
+def test_n1_requires_real_owned_product_identity_schema(field, value, message):
+    from platform_app.services import _normalize_n1_observation
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    payload = {
+        "asset_id": asset_id,
+        "image_role": "clean_product",
+        "contains_target_product": True,
+        "target_visibility": 92,
+        "observed_identity": {
+            "category_candidates": ["travel mug"],
+            "overall_shape": "cylindrical body with a handle",
+        },
+        "reference_quality": 92,
+        "candidate_product_name": "Travel mug",
+        "candidate_product_name_confidence": 0.9,
+    }
+    payload[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        _normalize_n1_observation(payload, asset_id)
+
+
+@pytest.mark.parametrize(
+    ("product_profile", "identity_lock", "message"),
+    [
+        (
+            {"unrelated": "text"},
+            {"must_not_change": ["visible handle"]},
+            "category",
+        ),
+        (
+            {"category": True, "primary_appearance": 3},
+            {"must_not_change": ["visible handle"]},
+            "category",
+        ),
+        (
+            {"category": "travel mug", "primary_appearance": "sage green"},
+            {"unrelated": True},
+            "must_not_change",
+        ),
+        (
+            {"category": "travel mug", "primary_appearance": "sage green"},
+            {"must_not_change": [1]},
+            "must_not_change",
+        ),
+    ],
+)
+def test_n2_continue_requires_named_string_identity_fields(
+    product_profile,
+    identity_lock,
+    message,
+):
+    from platform_app.services import _normalize_n2_identity
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    payload = {
+        "decision": "continue",
+        "product_name": "Travel mug",
+        "confidence": 0.9,
+        "conflict_state": "match",
+        "primary_asset_id": asset_id,
+        "supporting_asset_ids": [],
+        "identity_lock": identity_lock,
+        "product_profile": product_profile,
+    }
+
+    with pytest.raises(ValueError, match=message):
         _normalize_n2_identity(payload, {asset_id})
 
 

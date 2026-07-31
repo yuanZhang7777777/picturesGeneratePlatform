@@ -68,6 +68,26 @@ class ProtectedGenerationQuerySet(models.QuerySet):
     def update(self, **kwargs):
         if GENERATION_IMMUTABLE_UPDATE_FIELDS & kwargs.keys():
             raise ValidationError("Generation identity and snapshot are immutable")
+        if "provider_payload" in kwargs:
+            requested = kwargs["provider_payload"]
+            requested_submission = (
+                requested.get("submission")
+                if isinstance(requested, dict)
+                else None
+            )
+            for current in self.values_list("provider_payload", flat=True):
+                current_submission = (
+                    current.get("submission")
+                    if isinstance(current, dict)
+                    else None
+                )
+                if (
+                    current_submission is not None
+                    and current_submission != requested_submission
+                ):
+                    raise ValidationError(
+                        "Generation submission fingerprint is immutable"
+                    )
         return super().update(**kwargs)
 
     def delete(self, *args, **kwargs):
@@ -554,9 +574,30 @@ class Generation(models.Model):
 
     def save(self, *args, **kwargs):
         if not self._state.adding:
-            current = type(self).objects.filter(pk=self.pk).values(*self.IMMUTABLE_SNAPSHOT_FIELDS).first()
+            current = type(self).objects.filter(pk=self.pk).values(
+                *self.IMMUTABLE_SNAPSHOT_FIELDS,
+                "provider_payload",
+            ).first()
             if current and any(current[field] != getattr(self, field) for field in self.IMMUTABLE_SNAPSHOT_FIELDS):
                 raise ValidationError("Generation identity and snapshot are immutable")
+            current_payload = current.get("provider_payload") if current else {}
+            current_submission = (
+                current_payload.get("submission")
+                if isinstance(current_payload, dict)
+                else None
+            )
+            next_submission = (
+                self.provider_payload.get("submission")
+                if isinstance(self.provider_payload, dict)
+                else None
+            )
+            if (
+                current_submission is not None
+                and current_submission != next_submission
+            ):
+                raise ValidationError(
+                    "Generation submission fingerprint is immutable"
+                )
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
