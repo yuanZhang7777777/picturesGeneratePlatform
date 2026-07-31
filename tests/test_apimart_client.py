@@ -132,7 +132,7 @@ def test_rate_limit_error_is_sanitized():
     APIMART_API_KEY="secret-key",
     APIMART_BASE_URL="https://api.apimart.ai",
     APIMART_PROMPT_MODEL="deepseek-v4-pro",
-    APIMART_PROMPT_TEMPERATURE=1.2,
+    APIMART_PROMPT_TEMPERATURE=1.6,
 )
 def test_optimize_prompt_posts_deepseek_chat_completions_payload():
     from platform_app.services import APIMartClient
@@ -163,7 +163,7 @@ def test_optimize_prompt_posts_deepseek_chat_completions_payload():
     assert url == "https://api.apimart.ai/api/v1/chat/completions"
     assert kwargs["json"]["model"] == "deepseek-v4-pro"
     assert kwargs["json"]["stream"] is False
-    assert kwargs["json"]["temperature"] == 1.2
+    assert kwargs["json"]["temperature"] == 1.6
     assert kwargs["json"]["messages"][0] == {
         "role": "system",
         "content": "You are the complete production node instruction.",

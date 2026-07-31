@@ -112,7 +112,7 @@ Shopee VN 普通店的白底门禁位于槽位 2，后续生成范围为槽位 3
 
 九节点严格 JSON 契约、版本快照、失败分类和审核门禁以 [`节点prompt设定初稿.md`](节点prompt设定初稿.md) 为准。整理模式只有点击“预备生成”才运行 N1–N7；自动模式运行同一链路并在 N7 通过后继续。N2 批准的主图和参考图是唯一可进入后续生成数组的源素材；营销图优先使用已完成白底图，按需最多增加一张结构参考，避免复刻源图构图。N5 对决策任务、场景、环境、镜头、动作与构图做五维差异检查。合理推断可用于策划或待审核文案，但必须标记 `inferred`、置信度、风险和证据；价格、认证、疗效、减重、美容前后对比与站外导流等高风险内容不得仅靠推断进入图片。
 
-DeepSeek 使用非流式 Chat Completions。`temperature` 默认 `1.2`，配置范围 `0–2`；严格 JSON 解析失败时使用同一输入做一次修复重试，仍失败则只暂停该商品。该参数依据 [APIMart 通用对话接口](https://docs.apimart.ai/cn/api-reference/texts/general/chat-completions-nostream) 的公开范围，具体模型仍以服务器账户契约测试为准。
+DeepSeek 使用非流式 Chat Completions。`temperature` 默认 `1.6`，配置范围 `0–2`；严格 JSON 解析失败时使用同一输入做一次修复重试，仍失败则只暂停该商品。该参数依据 [APIMart 通用对话接口](https://docs.apimart.ai/cn/api-reference/texts/general/chat-completions-nostream) 的公开范围，具体模型仍以服务器账户契约测试为准。市场/国家只限定消费者可见语言和已验证硬规则，不限定营销场景；给 `gpt-image-2` 的图片控制指令保持英文，目标市场可见文案由 N6 先固定为对应语言并由 N7 检查流畅度、歧义和场景适配。
 
 ## 6. 数据与后台状态
 

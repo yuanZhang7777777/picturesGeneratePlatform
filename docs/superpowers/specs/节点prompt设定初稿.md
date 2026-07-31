@@ -18,7 +18,7 @@ Shopee VN 普通店是唯一已发布的顺序例外：槽位 01 为真实上传
 | 能力 | 固定模型或执行器 | 约束 |
 | --- | --- | --- |
 | 视觉观察 | `gpt-5-nano-2025-08-07` | APIMart Responses；只解析 `output[].content[].text` |
-| 文本分析、策划、编译、修改和简化 | `deepseek-v4-pro` | APIMart 非流式 Chat Completions；默认 `temperature=1.2`；严格 JSON |
+| 文本分析、策划、编译、修改和简化 | `deepseek-v4-pro` | APIMart 非流式 Chat Completions；默认 `temperature=1.6`；严格 JSON |
 | 图片生成与圈选修订 | `gpt-image-2` | 参考图先上传；`image_urls` 为 URL 字符串数组；`n=1` |
 | 硬规则执行 | 后端确定性规则引擎 | 模型不得覆盖确定性硬阻断 |
 
@@ -978,11 +978,15 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
 
 `N6.generic` 是独立 Generic/SEA 生产变体，消费者可见文字固定使用自然电商英语，不因 SEA 国家切换语言，也不回退到 Shopee/TikTok 模板。`N6.shopee` 使用上表八站映射；`N6.tiktok` 使用 US/SG/PH 英语、MY 马来语、TH 泰语、VN 越南语、ID 印尼语，并执行当前规则包的禁字或禁止数字渲染要求。
 
+`market_context` 只限定消费者可见语言、禁字和已验证硬规则，不再限定国家场景、房间类型、配色、人种或生活方式。营销场景由商品事实、真实使用关系、槽位购买问题、项目/单品风格和 Style DNA 决定；不得输出国旗、地标、民族服饰、宗教符号、刻板人物或平台徽标，除非商品事实和规则明确要求且允许。
+
 三个变体都必须把 identity_lock 中的精确数量写成 `exactly + count + component`，对重复部件补充主体连接位与部件的一对一拓扑；真实场景必须写清人物/身体/手/宠物/安装点、接触点、朝向和受力关系。资料不足时使用不暗示用途的中性展示，不能依据外形猜测使用方式。
 
 N6 编译发生在白底结果归档前时，`completed_white_result_id` 可以为 `null`；营销图调度必须等待白底归档。最终提交 `gpt-image-2` 的参考数组固定为“已完成白底图 + 零或最多一张 N2 批准的互补结构图”，不能回传或提交全部 `supporting_asset_ids`。`reference_plan.supporting_asset_ids` 的严格 Schema 因此设置 `maxItems=1`；`primary_asset_id` 只保留身份来源追踪。
 
 员工关闭图片文字或规则禁止新增文字时，`visible_text_lines=[]`，不得为了营销完整度强行补字。
+
+给 `gpt-image-2` 的最终 `prompt` 控制指令必须是英文。消费者可见文字先由 N6 生成并自检为目标市场语言，要求流畅、无歧义、符合当前场景和商品事实；这些 `localized_copy.lines` 是冻结文本，最终 Prompt 只能逐字引用，不允许图像模型再翻译、改写、增删或自由生成额外文字。N7 必须再次检查本地化文字质量，机器直译、语义歧义、场景不合或可能误导消费者时进入 `semantic_risks`，严重误导时 `block`。
 
 ### 8.5 最终 Prompt 固定结构
 
@@ -1016,11 +1020,11 @@ N6 编译发生在白底结果归档前时，`completed_white_result_id` 可以�
 6. 不可见内部结构、配件、承重关系和工作原理不得推断。
 
 文字：
-7. 根据 market_context 生成母语级电商短文案，不逐字翻译。
-8. visible_text_lines 最多三行，每行必须短、自然、只出现一次。
+7. 根据 market_context 生成母语级电商短文案，不逐字翻译，并自检流畅、无歧义、符合场景。
+8. visible_text_lines 最多三行，每行必须短、自然、只出现一次；localized_copy.lines 是冻结文本。
 9. text_enabled=false 或规则禁字时输出零行。
 10. 图片控制指令用英文；需要显示的消费者文字保持目标语言，不翻回英文。
-11. Prompt 必须明确只允许显示列出的文字和商品自身真实品牌/型号，不得生成字段名、站点代码或额外文字。
+11. Prompt 必须明确只允许逐字显示列出的文字和商品自身真实品牌/型号，不得翻译、改写、增删、生成字段名、站点代码或额外文字。
 
 长度与输出：
 12. 最终 Prompt 按 Unicode 字符计数不超过 3500。

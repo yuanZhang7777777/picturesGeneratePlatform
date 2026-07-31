@@ -425,7 +425,14 @@ N5_CORE = """
 1. identity_lock 是商品身份、精确数量、关键部件拓扑和真实使用关系的最高约束。fact_refs 与 inference_refs 只能引用 N3 已存在的 ID，不得创建事实。
 2. confirmed/允许 consumer_copy 的事实可进入 copy_intent；observed 与 inferred 只能按 allowed_uses 使用。高风险或 blocked 推断不得进入 copy_intent。
 3. 内部结构、包装包含物、精确尺寸、配件、性能、认证和效果只有存在对应证据时才能安排；证据不足时改做外观、结构或低风险场景，不凑参数。
-4. seed_style 与 Style DNA 只影响抽象色彩、光线、构图密度和节奏；不得复刻竞品品牌、原文、人物身份、插画、包装、独特版式或商品外观。
+4. seed_style 可能是自由文本，也可能是结构化 Style DNA。先把它拆成可迁移的视觉框架，再适配当前商品；不得把风格文本当成商品事实或平台规则。
+5. 若输入含 style_fidelity_anchors、source_content_to_avoid、visual_deconstruction、composition、typography、color_palette、photographic_direction、design_rules、do、avoid、negative_prompt，必须分别使用：
+   - style_fidelity_anchors：保留抽象视觉锚点，例如光线、层次、版式密度、材质质感、图文节奏；
+   - source_content_to_avoid：硬性排除源风格中的原商品、品牌、人物、原文案、布局和故事设定；
+   - visual_deconstruction：提炼画面层级、主体落点、镜头关系和商业心理，不复制具体场景；
+   - composition / typography / color_palette / photographic_direction：分别转译为构图、文字层级、色彩和摄影方向；
+   - design_rules / do / avoid / negative_prompt：转译为每槽 must_show、must_avoid 和风险提示。
+6. 不把 market_context 当成固定国家场景模板。market_context 只决定消费者可见语言和已验证硬规则；营销场景来自商品事实、槽位购买问题、真实使用关系、项目/单品风格与 Style DNA。
 
 # 八个互不重复的购买决策任务
 八个营销槽位按输入职责覆盖并保持独立：第二视角与结构确认、核心收益、事实证明、使用理解、细节信任、尺度或适配、规格包装或包含物、场景体验与购买收尾。缺少规格/包装证据时，相应槽位改为尚未覆盖的低风险购买疑问，但不得重复既有卖点或发明事实。
@@ -453,24 +460,17 @@ N5_CORE = """
 N5_PLATFORM = {
     "generic": """
 # Generic / SEA 策略
-这是独立可生产的 Generic/SEA 英语 1+8 策略，不是任何平台的简写或兜底。八张营销图的消费者可见文字统一规划为自然、简短、手机端易读的 English；场景采用东南亚现代城市住宅、工作、收纳、通勤或轻户外环境的中性组合，避免国旗、地标、民族服饰、宗教符号和刻板人物。八个购买决策任务必须全部具体落到当前商品证据，不能输出空泛兜底句子。
+这是独立可生产的 Generic/SEA 英语 1+8 策略，不是任何平台的简写或短兜底。八张营销图的消费者可见文字统一规划为自然、简短、手机端易读的 English。不要把“东南亚通用”理解成固定住宅、街景或国家场景；场景应由商品事实、真实使用关系、槽位购买问题、项目/单品风格与 Style DNA 共同决定。避免国旗、地标、民族服饰、宗教符号、刻板人物和平台徽标。八个购买决策任务必须全部具体落到当前商品证据，不能输出空泛兜底句子。
 """.strip(),
     "shopee": """
 # Shopee 策略
-面向 Shopee SG/MY/TH/VN/PH/ID/TW/BR 的方形 Listing 套图。按 market_context 使用以下正向视觉映射：
-- SG：现代都市公寓、HDB 风格住宅或整洁办公环境；浅灰、米白、冷调浅木；多元成年消费者；高效、克制、精致。
-- MY：现代热带公寓或排屋；暖灰、米白、浅咖、绿植与自然日光；多元成年消费者；舒适、亲切、轻奢但不浮夸。
-- TH：温暖明亮现代住宅或城市生活空间；暖白、浅木、浅草绿、奶油黄；自然成年消费者；轻盈、亲和、有生活感。
-- VN：紧凑整洁的现代城市公寓、家庭工作区或通勤生活；暖白、浅木、柔和米灰；清透、实用、年轻。
-- PH：明亮通风的现代热带住宅或轻户外空间；纯白、浅青、暖米、浅橙；自然成年消费者；友好、阳光、轻快。
-- ID：温暖实用的现代住宅、工作区或收纳空间；暖浅灰、奶油白、浅木；自然得体的成年消费者；可靠、大众、温暖。
-- TW：现代小户型、公寓、书桌或城市生活空间；莫兰迪灰、奶白、浅木、雾霾绿；自然成年消费者；细腻、安静、有质感。
-- BR：明亮现代公寓、阳台、庭院或相关轻户外环境；燕麦白、暖米灰、浅木，低饱和绿、珊瑚或蓝点缀；多元成年消费者；亲和、有活力但不杂乱。
-禁止国旗、地标、民族服饰、宗教符号、刻板面孔和无关文化道具。第一张营销图承担白底之后的第一购买问题；Shopee VN 普通店的原图直通与白底槽位由输入模板预占，本节点只处理实际传入的七个或八个营销槽位，不改槽序。消费者语言交给 N6 做 SG/PH 英语、MY 马来语、TH 泰语、VN 越南语、ID 印尼语、TW 台湾繁体、BR 巴西葡萄牙语本地化。
+面向 Shopee SG/MY/TH/VN/PH/ID/TW/BR 的方形 Listing 套图。market_context 只决定消费者可见语言和已验证硬规则，不决定房间、街景、配色、人种、生活方式或国家符号。不要按国家套用固定场景；每张图的画面应从商品事实、真实使用关系、购买决策、项目/单品风格和 Style DNA 中生成。
+
+允许有创意的广告化场景、摄影角度、道具层次、色彩和版式，但必须保持商品身份、事实边界和平台硬规则。禁止国旗、地标、民族服饰、宗教符号、刻板面孔和无关文化道具。第一张营销图承担白底之后的第一购买问题；Shopee VN 普通店的原图直通与白底槽位由输入模板预占，本节点只处理实际传入的七个或八个营销槽位，不改槽序。消费者语言交给 N6 做 SG/PH 英语、MY 马来语、TH 泰语、VN 越南语、ID 印尼语、TW 台湾繁体、BR 巴西葡萄牙语本地化。
 """.strip(),
     "tiktok": """
 # TikTok Shop 策略
-面向 TikTok Shop 的商品信息图与生活方式图，保持移动端第一眼清楚、主体占比明确、节奏轻快但不制造视频帧、界面按钮、达人背书或平台徽标。若当前已验证规则禁止数字渲染或新增文字，必须通过 text_mode=none 和 must_avoid 传递，不能用营销需求绕过。US 使用自然电商英语；SEA 站点语言由 N6 按市场映射。本节点不虚构 TikTok 官方规则，也不把 ADVICE 当硬规则。
+面向 TikTok Shop 的商品信息图与生活方式图，保持移动端第一眼清楚、主体占比明确、节奏轻快，但不制造视频帧、界面按钮、达人背书或平台徽标。market_context 只用于语言和已验证硬规则，不把 US 或 SEA 站点变成固定国家场景。场景、构图、色彩和道具由商品事实、槽位任务、项目/单品风格与 Style DNA 决定。若当前已验证规则禁止数字渲染或新增文字，必须通过 text_mode=none 和 must_avoid 传递，不能用营销需求绕过。US 使用自然电商英语；SEA 站点语言由 N6 按市场映射。本节点不虚构 TikTok 官方规则，也不把 ADVICE 当硬规则。
 """.strip(),
 }
 
@@ -499,9 +499,17 @@ N6_CORE = """
 # 事实、推断与消费者文案
 1. 画面与文案只能引用 fact_ledger 中 allowed_uses 匹配 visual_prompt、scene_planning、consumer_copy 或 consumer_copy_pending_review 的记录。inferred 内容必须进入 inference_trace；blocked 或高风险推断不得进入可见文字。
 2. 不得新增价格、折扣、认证、疗效、减重、美容前后对比、绝对效果、安全保证、质保、产地、精确容量、兼容保证或站外导流。包装、配件和内部结构必须有事实引用。
-3. 根据 market_context 写母语级电商短文案，不逐字翻译。visible_text_lines 最多三行，每行短、自然、只出现一次；允许零行。text_enabled=false 或规则禁字时 localized_copy.lines 与 visible_text_lines 都为空。
-4. 图片控制指令全部使用英文；只有 quoted visible_text_lines 与商品本身真实品牌/型号可使用目标语言或原文。Prompt 必须明确：Only render the quoted localized copy below; do not render field labels, site codes, language names, internal instructions, or any other text.
-5. 文案区只能有一个，保持移动端可读，不遮挡商品关键结构。不要把 Headline、Subheadline、Callouts、slot_id、role、screen、module、layout 等字段名渲染进图。
+3. 根据 market_context 先写母语级电商短文案，不逐字翻译；再自检它是否流畅、无歧义、符合当前场景和商品事实。visible_text_lines 最多三行，每行短、自然、只出现一次；允许零行。text_enabled=false 或规则禁字时 localized_copy.lines 与 visible_text_lines 都为空。
+4. localized_copy.lines 是冻结文本：最终 prompt 只能把这些行作为 quoted visible text 逐字交给 gpt-image-2，不允许模型再翻译、改写、增删、替换同义词或自动生成额外文字。
+5. 最终 prompt 的图片控制指令必须是英文；只有 quoted visible_text_lines 与商品本身真实品牌/型号可使用目标语言或原文。Prompt 必须明确：Only render the quoted localized copy below exactly as quoted; do not translate, rewrite, add, omit, or render field labels, site codes, language names, internal instructions, or any other text.
+6. 文案区只能有一个，保持移动端可读，不遮挡商品关键结构。不要把 Headline、Subheadline、Callouts、slot_id、role、screen、module、layout 等字段名渲染进图。
+
+# Style DNA 转译框架
+1. 若 slot_plan 或输入风格包含 style_fidelity_anchors、source_content_to_avoid、visual_deconstruction、composition、typography、color_palette、photographic_direction、design_rules、do、avoid、negative_prompt，最终英文 Prompt 必须把这些拆成可执行的图片语言。
+2. style_fidelity_anchors 只保留可迁移的抽象锚点：光线、层次、商业密度、材质、版式节奏、镜头和色彩关系；不得保留源图商品、品牌、具体人物、原文案、源故事或可识别布局。
+3. source_content_to_avoid 与 negative_prompt 转为明确排除项，优先阻断源内容复刻、Logo、平台标识、二维码、乱码、无关品类和未经证实的 claims。
+4. visual_deconstruction 用于说明画面层级、主体落点、购买心理和空间组织；composition 控制主体占比、前中后景、文字/道具安全区；typography 只在允许可见文字时控制文字层级和质感；color_palette 与 photographic_direction 控制色彩、光线、镜头、材质和真实商业摄影感。
+5. market_context 不提供固定国家场景。它只约束消费者可见语言、禁字和硬规则；Location、Background 和 props 应从商品用途、slot_plan、项目/单品风格与 Style DNA 中选择。
 
 # 单一场景、动作与差异化执行
 1. 第三段只写 slot_plan 的一个 main_scene、一个 main_action、环境、构图、镜头、商品占比、光线、材质、道具和商业摄影风格。静态展示 main_action=none。
@@ -526,15 +534,15 @@ N6_CORE = """
 N6_PLATFORM = {
     "generic": """
 # Generic / SEA 本地化
-消费者可见文字固定使用自然、简洁、移动端易读的 English，不因具体 SEA 市场改成其他语言。语气清楚可信，避免生硬直译、地区俚语、国别刻板印象和未经证实的最高级。画面采用中性的东南亚现代城市生活语境；不得显示平台徽标、国旗、站点代码或 fallback 字样。
+消费者可见文字固定使用自然、简洁、移动端易读的 English，不因具体 SEA 市场改成其他语言。语气清楚可信，避免生硬直译、地区俚语、国别刻板印象和未经证实的最高级。画面不绑定任何国家生活场景；按商品用途、槽位任务和 Style DNA 决定环境。不得显示平台徽标、国旗、站点代码或 fallback 字样。
 """.strip(),
     "shopee": """
 # Shopee 本地化
-严格按 market_context 映射：SG 与 PH 使用自然当地电商英语；MY 使用 Bahasa Malaysia，不混入印尼地区词；TH 使用自然现代泰语；VN 使用带完整声调的自然越南语；ID 使用标准 Bahasa Indonesia；TW 使用台湾繁体中文与当地商品表达；BR 使用巴西葡萄牙语 pt-BR。不得显示 Shopee 徽标、站点代码、语言名、页面序号或内部页面职责。站点语言无法可靠生成时阻断，不回退英语。
+严格按 market_context 映射：SG 与 PH 使用自然当地电商英语；MY 使用 Bahasa Malaysia，不混入印尼地区词；TH 使用自然现代泰语；VN 使用带完整声调的自然越南语；ID 使用标准 Bahasa Indonesia；TW 使用台湾繁体中文与当地商品表达；BR 使用巴西葡萄牙语 pt-BR。market_context 不得强制房间、街景、色彩、人种或国家场景，只控制语言与硬规则。不得显示 Shopee 徽标、站点代码、语言名、页面序号或内部页面职责。站点语言无法可靠生成时阻断，不回退英语。
 """.strip(),
     "tiktok": """
 # TikTok Shop 本地化
-US 使用自然简洁的美国电商英语；SG/PH 使用当地自然英语；MY 使用 Bahasa Malaysia；TH 使用泰语；VN 使用带完整声调的越南语；ID 使用 Bahasa Indonesia。不得显示 TikTok 徽标、界面按钮、达人身份、虚构互动数字或站点代码。规则禁字或禁止数字渲染时输出零行并采用合规静态展示，不用拼写变形绕过。
+US 使用自然简洁的美国电商英语；SG/PH 使用当地自然英语；MY 使用 Bahasa Malaysia；TH 使用泰语；VN 使用带完整声调的越南语；ID 使用 Bahasa Indonesia。market_context 不得强制国家场景，只控制语言与硬规则。不得显示 TikTok 徽标、界面按钮、达人身份、虚构互动数字或站点代码。规则禁字或禁止数字渲染时输出零行并采用合规静态展示，不用拼写变形绕过。
     """.strip(),
 }
 
@@ -555,7 +563,7 @@ N7_CORE = """
 
 # Prompt、文字与语义检查
 1. 最终 Prompt 按 Unicode 字符计数超过 3500、visible_text_lines 超过三行、存在两个以上主场景/动作、白底图新增文字、规则禁字仍有文字，均为 hard block。
-2. 可见文字必须匹配目标语言且每行只出现一次，只允许列出的本地化文案和商品真实品牌/型号。字段名、站点代码、乱码、额外促销文案或站外联系信息必须阻断。
+2. 可见文字必须匹配目标语言且每行只出现一次，只允许列出的本地化文案和商品真实品牌/型号。检查本地化文字是否流畅、无歧义、符合当前场景和商品事实；不流畅、歧义明显、语境不合或像机器直译时列入 semantic_risks，可能误导消费者时 block。字段名、站点代码、乱码、额外促销文案或站外联系信息必须阻断。
 3. 价格、虚假促销、未验证认证、疗效、减重、美容前后对比、绝对效果、站外导流、未授权 IP、危险或歧视内容不得通过。高风险 inferred 进入消费者文案必须 block。
 4. 只判断具体语义问题，结论必须引用输入 rule_id、fact_id 或 inference fact_id。不得因文案营销性强就自动违规，也不得虚构平台官方规则。
 5. ADVICE 未满足只能进入 warnings；UNVERIFIED 只提示人工复核。仅明确 HARD_PLATFORM、HARD_MALL、系统安全或 APIMart 契约可形成相应硬阻断。

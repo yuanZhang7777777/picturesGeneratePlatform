@@ -166,6 +166,21 @@ def test_v3_output_schemas_are_strict_and_match_seed_source_and_runtime():
     }
 
 
+def test_seed_refreshes_existing_published_prompt_instructions():
+    from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
+
+    call_command("seed_platform_templates")
+    template = PromptNodeTemplate.objects.get(node_name="N5.shopee", version="3.0.0")
+    template.instruction = "stale published instruction"
+    template.save(update_fields=["instruction"])
+
+    call_command("seed_platform_templates")
+
+    template.refresh_from_db()
+    assert template.status == PromptNodeTemplate.Status.PUBLISHED
+    assert template.instruction == PROMPT_TEMPLATES["N5.shopee"]["instruction"]
+
+
 def test_v3_user_message_templates_are_seeded_and_bound_exactly_at_runtime():
     from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
     from platform_app.services import _prompt_node_template_binding, _snapshot_hash
@@ -295,19 +310,68 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
     assert "最多一张" in PROMPT_TEMPLATES["N6.generic"]["instruction"]
 
 
-def test_shopee_director_keeps_all_eight_market_visual_mappings():
+def test_market_context_controls_language_not_fixed_country_scenes():
     from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
 
-    instruction = PROMPT_TEMPLATES["N5.shopee"]["instruction"]
-    for market, marker in {
-        "SG": "HDB",
-        "MY": "热带公寓",
-        "TH": "奶油黄",
-        "VN": "紧凑整洁",
-        "PH": "明亮通风",
-        "ID": "温暖实用",
-        "TW": "莫兰迪灰",
-        "BR": "珊瑚",
-    }.items():
-        assert market in instruction
-        assert marker in instruction
+    n5 = PROMPT_TEMPLATES["N5.shopee"]["instruction"]
+    n6 = PROMPT_TEMPLATES["N6.shopee"]["instruction"]
+    n7 = PROMPT_TEMPLATES["N7.shopee"]["instruction"]
+
+    assert "不把 market_context 当成固定国家场景模板" in n5
+    assert "market_context 只决定消费者可见语言和已验证硬规则" in n5
+    assert "SG 与 PH 使用自然当地电商英语" in n6
+    assert "MY 使用 Bahasa Malaysia" in n6
+    assert "TW 使用台湾繁体中文" in n6
+    assert "localized_copy.lines 是冻结文本" in n6
+    assert "最终 prompt 的图片控制指令必须是英文" in n6
+    assert "按 market_context 校验 SG/PH 英语" in n7
+    assert "流畅、无歧义、符合当前场景" in n7
+
+    forbidden_scene_markers = [
+        "HDB",
+        "热带公寓",
+        "奶油黄",
+        "紧凑整洁",
+        "明亮通风",
+        "温暖实用",
+        "莫兰迪灰",
+        "珊瑚",
+        "东南亚现代城市住宅",
+    ]
+    combined = "\n".join(
+        PROMPT_TEMPLATES[name]["instruction"]
+        for name in (
+            "N5.generic",
+            "N5.shopee",
+            "N5.tiktok",
+            "N6.generic",
+            "N6.shopee",
+            "N6.tiktok",
+            "N7.generic",
+            "N7.shopee",
+            "N7.tiktok",
+        )
+    )
+    for marker in forbidden_scene_markers:
+        assert marker not in combined
+
+
+def test_marketing_nodes_include_style_dna_framework():
+    from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
+
+    combined = "\n".join(
+        PROMPT_TEMPLATES[name]["instruction"]
+        for name in ("N5.generic", "N6.generic")
+    )
+    for marker in (
+        "Style DNA",
+        "style_fidelity_anchors",
+        "source_content_to_avoid",
+        "visual_deconstruction",
+        "composition",
+        "typography",
+        "color_palette",
+        "photographic_direction",
+        "negative_prompt",
+    ):
+        assert marker in combined

@@ -283,7 +283,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         for node_name, template_data in PROMPT_TEMPLATES.items():
-            _, created = PromptNodeTemplate.objects.get_or_create(
+            template, created = PromptNodeTemplate.objects.get_or_create(
                 node_name=node_name,
                 version=PROMPT_OS_VERSION,
                 defaults={
@@ -293,13 +293,24 @@ class Command(BaseCommand):
                     "output_schema": template_data["output_schema"],
                 },
             )
-            if created:
-                PromptNodeTemplate.objects.filter(
-                    node_name=node_name,
-                    status=PromptNodeTemplate.Status.PUBLISHED,
-                ).exclude(version=PROMPT_OS_VERSION).update(
-                    status=PromptNodeTemplate.Status.RETIRED
+            if not created:
+                template.status = PromptNodeTemplate.Status.PUBLISHED
+                template.instruction = template_data["instruction"]
+                template.user_message_template = template_data["user_message_template"]
+                template.output_schema = template_data["output_schema"]
+                template.save(
+                    update_fields=[
+                        "status",
+                        "instruction",
+                        "user_message_template",
+                        "output_schema",
+                        "updated_at",
+                    ]
                 )
+            PromptNodeTemplate.objects.filter(
+                node_name=node_name,
+                status=PromptNodeTemplate.Status.PUBLISHED,
+            ).exclude(version=PROMPT_OS_VERSION).update(status=PromptNodeTemplate.Status.RETIRED)
         PromptNodeTemplate.objects.filter(
             node_name__in=("N5", "N6", "N7"),
             status=PromptNodeTemplate.Status.PUBLISHED,

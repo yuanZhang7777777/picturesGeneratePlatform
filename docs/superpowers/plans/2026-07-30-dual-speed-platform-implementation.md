@@ -57,7 +57,7 @@
 - API: 上传与 SKU import 接受 `mode=auto|organize`；`POST /api/clusters/<id>/prompts/regenerate/`。
 
 - [ ] 写失败测试：上传和 ERP 均创建待准备商品；GPT-5 Nano 严格 JSON 填入名称/事实/身份锁；DeepSeek 为 9 槽创建 PromptVersion；低置信度只阻断当前商品；合并图片重新准备。
-- [ ] 写 APIMart payload 测试：Chat Completions 包含 `temperature=1.2`，配置只允许 `0..2`；JSON 解析失败使用同输入修复一次，第二次失败标记该商品 failed。
+- [ ] 写 APIMart payload 测试：Chat Completions 包含当前默认 `temperature=1.6`，配置只允许 `0..2`；JSON 解析失败使用同输入修复一次，第二次失败标记该商品 failed。
 - [ ] 运行上述四个测试文件，确认红灯。
 - [ ] 将 Prompt Worker 占位循环改为每次原子领取一个 `pending` Cluster；不要新建通用工作流引擎。
 - [ ] 在 `settings.py` 增加 `APIMART_PROMPT_TEMPERATURE`，默认 `1.2`；将严格 JSON 结果保存到 `analysis_snapshot` 和每槽 PromptVersion。
