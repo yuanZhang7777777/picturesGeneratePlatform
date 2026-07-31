@@ -131,13 +131,24 @@ export async function uploadAssets(projectId: string, files: File[], mode: Impor
       body.append("relative_paths", relativePath);
     });
     const headers = new Headers({ "X-CSRFToken": token });
-    const response = await fetch(`/api/projects/${projectId}/assets/`, {
-      method: "POST",
-      body,
-      headers,
-      credentials: "same-origin",
-    });
-    const chunk = await jsonFor<Partial<UploadResult>>(response);
+    let chunk: Partial<UploadResult>;
+    try {
+      const response = await fetch(`/api/projects/${projectId}/assets/`, {
+        method: "POST",
+        body,
+        headers,
+        credentials: "same-origin",
+      });
+      chunk = await jsonFor<Partial<UploadResult>>(response);
+    } catch (error) {
+      if (result.imported.length === 0) throw error;
+      result.rejected.push(...sorted.slice(index).map((file) => ({
+        filename: uploadPath(file),
+        code: "upload_interrupted",
+        message: "上传中断，请重试剩余文件",
+      })));
+      break;
+    }
     result.asset_count += chunk.asset_count ?? 0;
     result.imported.push(...(chunk.imported ?? []));
     result.rejected.push(...(chunk.rejected ?? []));
@@ -156,6 +167,18 @@ export function updateCluster(clusterId: string, expectedVersion: number, payloa
   return jsonRequest(`/api/clusters/${clusterId}/`, {
     method: "POST",
     body: JSON.stringify({ expected_version: expectedVersion, ...payload }),
+  });
+}
+
+export function deleteCluster(clusterId: string) {
+  return jsonRequest<{ status: "deleted" | "archived" }>(`/api/clusters/${clusterId}/`, {
+    method: "DELETE",
+  });
+}
+
+export function deleteAsset(assetId: string) {
+  return jsonRequest<{ status: "deleted" | "archived" }>(`/api/assets/${assetId}/`, {
+    method: "DELETE",
   });
 }
 

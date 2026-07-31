@@ -1,6 +1,6 @@
 # 独立批量出图平台
 
-状态：Prompt OS v2 P0 已部署到 2 号云服务器预览环境，入口为该服务器 IP 的 `18083` 端口；2026-07-30 已完成真实 APIMart/OSS、1+8 付费出图、人工审核、本地 ZIP 导出、真实登录态上传以及完整 N1–N7 九槽准备。当前入口仍是测试预览，不是面向 100 名员工的正式 HTTPS 发布。
+状态：预览环境保留在 2 号云服务器 `18083` 端口；阶段 1“批量整理工作台可用化”已通过本地代码、自动测试、生产构建和浏览器文件夹导入门禁，等待部署。当前入口仍是测试预览，不是面向 100 名员工的正式 HTTPS 发布。唯一执行顺序见[分阶段交付路线图](docs/superpowers/plans/2026-07-31-phased-delivery-roadmap.md)。
 
 本项目面向公司内部运营人员，提供“上传图片/文件夹”和“ERP SKU”两个并列入口。每次导入可选择“导入并自动出图”或“导入后整理”；两种模式共用逐图观察、身份归并、推断台账、营销策划、规则闸门、9 图生产、人工审核、单张修改、历史版本和本地批量导出。默认套图为 1 张白底图 + 8 张营销图；Shopee VN 普通店为真实原图 + 白底图 + 7 张营销图。Django 负责登录、权限、任务和数据；`frontend/` 中的 React + TypeScript + Vite 工作台由 Caddy 同源提供静态文件，并由 Caddy 代理 Django API、认证、后台、健康检查和旧 `/batches/` 链接重定向。
 
@@ -14,6 +14,8 @@ ERP SKU 是两个一级入口之一：`POST /api/projects/{id}/sku-import/` 接�
       └─ 输出图片任务
           └─ 重做版本
 ```
+
+整理工作台的商品与素材删除使用 `DELETE /api/clusters/{id}/` 和 `DELETE /api/assets/{id}/`。未生成商品物理删除；有 Prompt/生成历史的商品只归档隐藏；Prompt 正在准备、活跃生成或提交状态未知时拒绝删除，历史结果不会进入后续导出。
 
 首版规划容量：
 
@@ -71,8 +73,9 @@ React 开发模式与 Docker 预览是两条路径：前者运行 Django 与 `np
 设计与调研：
 
 - [精简需求边界确认表](docs/project/REQUIREMENTS-BOUNDARY-CONFIRMATION.md)
+- [当前唯一推进计划：分阶段交付路线图](docs/superpowers/plans/2026-07-31-phased-delivery-roadmap.md)
 - [双速 AI 商品出图平台最终设计](docs/superpowers/specs/2026-07-30-dual-speed-product-platform-design.md)
-- [Prompt OS v2 P0 实施计划](docs/superpowers/plans/2026-07-30-commerce-prompt-os-v2-p0-implementation.md)
+- [历史：Prompt OS v2 P0 实施计划](docs/superpowers/plans/2026-07-30-commerce-prompt-os-v2-p0-implementation.md)
 - [Prompt OS v2 九节点契约](docs/superpowers/specs/节点prompt设定初稿.md)
 - [主 Agent `/goal` 任务书](docs/project/LEADER-GOAL-DUAL-SPEED-PLATFORM.md)
 - [后端、安全与部署历史基线](docs/specs/2026-07-28-independent-image-platform-design.md)
@@ -81,7 +84,7 @@ React 开发模式与 Docker 预览是两条路径：前者运行 Django 与 `np
 - [主 Agent 协作与项目集群交付设计](docs/superpowers/specs/2026-07-29-agent-orchestrated-delivery-design.md)
 - [React 前端架构设计](docs/superpowers/specs/2026-07-29-react-frontend-architecture-design.md)
 - [项目控制板（角色、任务、决定与阻塞）](docs/project/STATUS.md)
-- [MVP 实施计划](docs/superpowers/plans/2026-07-28-independent-image-platform-mvp.md)
+- [历史：MVP 实施计划](docs/superpowers/plans/2026-07-28-independent-image-platform-mvp.md)
 - [运行与部署手册](docs/runbook.md)
 
 历史飞书/Coze 项目只作为经验来源。本项目不调用、不依赖也不复制飞书或 Coze 工作流。

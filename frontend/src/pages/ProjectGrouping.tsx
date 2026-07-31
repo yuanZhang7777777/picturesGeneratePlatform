@@ -3,7 +3,16 @@ import { DndContext, type DragEndEvent } from "@dnd-kit/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
-import { generateProject, importSkus, mergeAsset, updateCluster, uploadAssets, uploadPath, type UploadResult } from "../api";
+import {
+  deleteAsset,
+  deleteCluster,
+  generateProject,
+  importSkus,
+  mergeAsset,
+  updateCluster,
+  uploadAssets,
+  type UploadResult,
+} from "../api";
 import { ImportPanel } from "../components/ImportPanel";
 import { ProductCard } from "../components/ProductCard";
 import { EmptyState, ErrorPanel, PageHeading, Shell } from "../layout";
@@ -16,15 +25,13 @@ export default function ProjectGrouping() {
   const { projectId } = useParams();
   const projectQuery = useProjectSnapshot(projectId);
   const queryClient = useQueryClient();
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deselectedIds, setDeselectedIds] = useState<Set<string>>(new Set());
   const [undoVisible, setUndoVisible] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
-  const [rejectedFiles, setRejectedFiles] = useState<File[]>([]);
   const project = projectQuery.data;
   const selectedClusters = useMemo(() => {
-    const ids = selectedIds.size ? selectedIds : new Set(project?.skus.map((sku) => sku.id) ?? []);
-    return project?.skus.filter((sku) => ids.has(sku.id)) ?? [];
-  }, [project, selectedIds]);
+    return project?.skus.filter((sku) => !deselectedIds.has(sku.id)) ?? [];
+  }, [project, deselectedIds]);
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
@@ -32,19 +39,15 @@ export default function ProjectGrouping() {
   };
   const upload = useMutation({
     mutationFn: ({ files, mode }: { files: File[]; mode: ImportMode }) => uploadAssets(projectId!, files, mode),
-    onSuccess: async (result, input) => {
+    onSuccess: async (result) => {
       setUploadResult(result);
-      const rejectedNames = new Set(result.rejected.map((item) => item.filename));
-      setRejectedFiles(input.files.filter((file) => rejectedNames.has(uploadPath(file))));
       await invalidate();
-      if (input.mode === "auto") await generate.mutateAsync();
     },
   });
   const skuImport = useMutation({
     mutationFn: ({ skus, mode }: { skus: string[]; mode: ImportMode }) => importSkus(projectId!, skus, mode),
-    onSuccess: async (_result, input) => {
+    onSuccess: async () => {
       await invalidate();
-      if (input.mode === "auto") await generate.mutateAsync();
     },
   });
   const generate = useMutation({
@@ -60,6 +63,14 @@ export default function ProjectGrouping() {
   });
   const save = useMutation({
     mutationFn: ({ sku, payload }: { sku: ProductSku; payload: ClusterUpdateInput }) => updateCluster(sku.id, sku.version, payload),
+    onSuccess: invalidate,
+  });
+  const removeAsset = useMutation({
+    mutationFn: (assetId: string) => deleteAsset(assetId),
+    onSuccess: invalidate,
+  });
+  const removeCluster = useMutation({
+    mutationFn: (clusterId: string) => deleteCluster(clusterId),
     onSuccess: invalidate,
   });
 
@@ -86,6 +97,14 @@ export default function ProjectGrouping() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
         <p className="text-sm text-slate-600">每个商品生成 1 张白底标准图 + 8 张营销图。</p>
         <div className="flex flex-wrap gap-2">
+          <button className="secondary-button" onClick={() => setDeselectedIds(new Set())}>全选</button>
+          <button className="secondary-button" onClick={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))}>取消全选</button>
+          <button
+            className="secondary-button"
+            onClick={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))}
+          >
+            反选
+          </button>
           {undoVisible && <button className="secondary-button" onClick={() => setUndoVisible(false)}>撤销上次合并</button>}
           <button className="primary-button" disabled={!selectedCount || generate.isPending} onClick={() => generate.mutate()}>
             生成选中商品（{selectedCount} 个商品 / {imageCount} 张图）
@@ -94,32 +113,35 @@ export default function ProjectGrouping() {
       </div>
       <ImportPanel
         disabled={upload.isPending || skuImport.isPending || generate.isPending}
-        onUpload={(files, mode) => upload.mutate({ files, mode })}
+        onUpload={(files, mode) => upload.mutateAsync({ files, mode })}
         onSkuImport={(skus, mode) => skuImport.mutate({ skus, mode })}
       />
       <div className="mt-6 space-y-3">
         {uploadResult && (
           <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
             <p>成功导入 {uploadResult.asset_count} 个素材{uploadResult.rejected.length ? `，${uploadResult.rejected.length} 个未导入` : ""}。</p>
-            {uploadResult.rejected.map((item) => <p className="mt-1 text-amber-700" key={`${item.filename}:${item.code}`}>{item.filename}：{item.message}</p>)}
-            {rejectedFiles.length > 0 && upload.variables && (
-              <button className="mt-2 text-sm font-semibold text-indigo-700" onClick={() => upload.mutate({ files: rejectedFiles, mode: upload.variables!.mode })}>
-                重试失败项
-              </button>
-            )}
+            {uploadResult.rejected.map((item, index) => <p className="mt-1 text-amber-700" key={`${item.filename}:${item.code}`}>第 {index + 1} 个文件：{item.message}</p>)}
+            {uploadResult.rejected.length > 0 && <p className="mt-2 text-xs text-slate-500">失败项已保留在上传区，可直接重试。</p>}
           </div>
         )}
-        {upload.isError && <ErrorPanel error={upload.error} retry={() => upload.variables && upload.mutate(upload.variables)} />}
+        {upload.isError && (
+          <div>
+            <ErrorPanel error={upload.error} />
+            <p className="mt-2 text-sm text-slate-600">待导入文件仍保留在上传区，请在那里重新提交。</p>
+          </div>
+        )}
         {skuImport.isError && <ErrorPanel error={skuImport.error} retry={() => void projectQuery.refetch()} />}
         {generate.isError && <ErrorPanel error={generate.error} retry={() => generate.mutate()} />}
         {merge.isError && <ErrorPanel error={merge.error} retry={() => void projectQuery.refetch()} />}
         {save.isError && <ErrorPanel error={save.error} retry={() => void projectQuery.refetch()} />}
+        {removeAsset.isError && <ErrorPanel error={removeAsset.error} retry={() => void projectQuery.refetch()} />}
+        {removeCluster.isError && <ErrorPanel error={removeCluster.error} retry={() => void projectQuery.refetch()} />}
       </div>
       <DndContext onDragEnd={onDragEnd}>
-        <section className="mt-6 grid gap-5 xl:grid-cols-2">
+        <section className="mt-6 space-y-3">
           {project.skus.map((sku) => {
             const assets = sku.assets ?? project.assets.filter((asset) => sku.assetIds.includes(asset.id));
-            const checked = selectedIds.size === 0 || selectedIds.has(sku.id);
+            const checked = !deselectedIds.has(sku.id);
             return (
               <ProductCard
                 key={sku.id}
@@ -127,13 +149,15 @@ export default function ProjectGrouping() {
                 assets={assets}
                 mergeableAssets={mergeableAssets}
                 selected={checked}
-                disabled={merge.isPending || save.isPending}
+                disabled={merge.isPending || save.isPending || removeAsset.isPending || removeCluster.isPending}
                 onMerge={(assetId) => merge.mutate({ sku, assetId })}
                 onSave={(payload) => save.mutate({ sku, payload })}
-                onSelect={(next) => setSelectedIds((current) => {
-                  const copy = new Set(current.size ? current : project.skus.map((item) => item.id));
-                  if (next) copy.add(sku.id);
-                  else copy.delete(sku.id);
+                onDeleteAsset={(assetId) => removeAsset.mutate(assetId)}
+                onDelete={() => removeCluster.mutate(sku.id)}
+                onSelect={(next) => setDeselectedIds((current) => {
+                  const copy = new Set(current);
+                  if (next) copy.delete(sku.id);
+                  else copy.add(sku.id);
                   return copy;
                 })}
               />

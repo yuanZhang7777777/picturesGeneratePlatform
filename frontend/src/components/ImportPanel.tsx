@@ -1,4 +1,5 @@
-import { useRef, useState, type DragEvent, type InputHTMLAttributes, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type InputHTMLAttributes, type KeyboardEvent } from "react";
+import { uploadPath, type UploadResult } from "../api";
 import type { ImportMode } from "../types";
 
 const folderInputProps = { webkitdirectory: "" } as InputHTMLAttributes<HTMLInputElement>;
@@ -46,7 +47,7 @@ export function ImportPanel({
   onSkuImport,
   disabled,
 }: {
-  onUpload: (files: File[], mode: ImportMode) => void;
+  onUpload: (files: File[], mode: ImportMode) => Promise<UploadResult>;
   onSkuImport: (skus: string[], mode: ImportMode) => void;
   disabled?: boolean;
 }) {
@@ -79,6 +80,17 @@ export function ImportPanel({
     const skus = skuLines().slice(0, 50);
     if (skus.length) onSkuImport(skus, mode);
   };
+  const uploadFiles = async (mode: ImportMode) => {
+    try {
+      const result = await onUpload(files, mode);
+      const rejected = new Set(result.rejected.map((item) => item.filename));
+      setFiles((current) => current.filter((file) => rejected.has(uploadPath(file))));
+    } catch {
+      // The parent mutation renders the actionable error; keep every pending file for retry.
+    }
+  };
+  const imageFiles = files.filter((file) => !uploadPath(file).toLowerCase().endsWith(".txt"));
+  const txtCount = files.length - imageFiles.length;
 
   return (
     <section className="grid gap-4 lg:grid-cols-2">
@@ -107,7 +119,10 @@ export function ImportPanel({
           type="file"
           multiple
           accept={acceptedTypes}
-          onChange={(event) => addFiles(Array.from(event.target.files ?? []))}
+          onChange={(event) => {
+            addFiles(Array.from(event.target.files ?? []));
+            event.currentTarget.value = "";
+          }}
         />
         <input
           ref={folderPicker}
@@ -117,12 +132,26 @@ export function ImportPanel({
           multiple
           accept={acceptedTypes}
           {...folderInputProps}
-          onChange={(event) => addFiles(Array.from(event.target.files ?? []))}
+          onChange={(event) => {
+            addFiles(Array.from(event.target.files ?? []));
+            event.currentTarget.value = "";
+          }}
         />
-        <p className="mt-4 text-sm text-slate-500">{files.length ? `已选择 ${files.length} 个文件` : "尚未选择文件"}</p>
+        {imageFiles.length > 0 && (
+          <div className="mt-4 grid grid-cols-5 gap-2 sm:grid-cols-8">
+            {imageFiles.map((file, index) => (
+              <PendingImage key={`${uploadPath(file)}:${file.size}:${file.lastModified}`} file={file} index={index} />
+            ))}
+          </div>
+        )}
+        <p className="mt-4 text-sm text-slate-500">
+          {files.length
+            ? `已选择 ${imageFiles.length} 张图片${txtCount ? `、${txtCount} 个 TXT` : ""}`
+            : "尚未选择图片"}
+        </p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button className="primary-button" disabled={disabled || !files.length} onClick={() => onUpload(files, "auto")}>导入并自动出图</button>
-          <button className="secondary-button" disabled={disabled || !files.length} onClick={() => onUpload(files, "organize")}>导入后整理</button>
+          <button className="primary-button" disabled={disabled || !files.length} onClick={() => void uploadFiles("auto")}>导入并自动出图</button>
+          <button className="secondary-button" disabled={disabled || !files.length} onClick={() => void uploadFiles("organize")}>导入后整理</button>
           {files.length > 0 && <button className="text-sm font-semibold text-slate-600" type="button" onClick={() => setFiles([])}>清空</button>}
         </div>
       </article>
@@ -139,4 +168,14 @@ export function ImportPanel({
       </article>
     </section>
   );
+}
+
+function PendingImage({ file, index }: { file: File; index: number }) {
+  const [source] = useState(() => (
+    typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : "data:image/gif;base64,R0lGODlhAQABAAAAACw="
+  ));
+  useEffect(() => () => {
+    if (source.startsWith("blob:") && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(source);
+  }, [source]);
+  return <img className="aspect-square w-full rounded-lg border border-slate-200 object-cover" src={source} alt={`待导入商品图 ${index + 1}`} />;
 }

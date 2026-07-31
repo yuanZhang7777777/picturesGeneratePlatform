@@ -29,14 +29,12 @@ export function PromptEditor({
   onSave: (payload: ClusterUpdateInput) => void;
   disabled?: boolean;
 }) {
-  const [name, setName] = useState(sku.name);
   const [relationType, setRelationType] = useState<RelationType>(sku.relationType ?? "single_product");
   const [identityLock, setIdentityLock] = useState(sku.identityLock);
   const [brief, setBrief] = useState(sku.brief);
   const [prompts, setPrompts] = useState<ProductPrompt[]>(sku.prompts?.length ? sku.prompts : defaultPrompts);
 
   useEffect(() => {
-    setName(sku.name);
     setRelationType(sku.relationType ?? "single_product");
     setIdentityLock(sku.identityLock);
     setBrief(sku.brief);
@@ -95,10 +93,6 @@ export function PromptEditor({
         </section>
       )}
       <label className="block text-sm font-medium text-slate-700">
-        <span className="mb-2 block">商品名称</span>
-        <input value={name} onChange={(event) => setName(event.target.value)} />
-      </label>
-      <label className="block text-sm font-medium text-slate-700">
         <span className="mb-2 block">多图关系</span>
         <select value={relationType} onChange={(event) => setRelationType(event.target.value as RelationType)}>
           <option value="single_product">一图一商品</option>
@@ -133,7 +127,6 @@ export function PromptEditor({
         className="secondary-button"
         disabled={disabled}
         onClick={() => onSave({
-          name,
           relation_type: relationType,
           identity_lock: identityLock,
           prompt_override: brief,

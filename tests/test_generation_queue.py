@@ -125,6 +125,20 @@ def test_ensure_cluster_generations_creates_detail_slots_only_after_completed_he
     assert hero_path in detail_refs
 
 
+def test_archived_product_cannot_create_generations(tmp_path, settings):
+    from django.utils import timezone
+
+    from platform_app.services import ensure_cluster_generations
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    cluster.archived_at = timezone.now()
+    cluster.save(update_fields=["archived_at"])
+
+    with pytest.raises(ValueError, match="archived"):
+        ensure_cluster_generations(cluster, user)
+
+
 @override_settings(USER_DAILY_GENERATION_LIMIT=1, GENERATION_QUOTAS_ENABLED=True)
 def test_confirm_generation_rejects_user_quota(tmp_path, settings):
     from platform_app.services import confirm_generation

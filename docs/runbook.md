@@ -122,6 +122,8 @@ docker compose logs --tail=100 web generation-worker prompt-worker proxy
 
 前端工作台已切到双速项目工作区和项目结果页；后端已提供生成、再生成、修订和选择式导出接口。双速手工验收路径为：登录测试账号 → 创建项目 → 上传图片/文件夹或输入 ERP SKU → 分别验证自动模式与整理模式 → 拖拽合并 → 查看推断台账和 9 槽 Prompt → 白底图完成后生成营销图 → 结果进入待审核 → 人工通过需要导出的版本 → 圈选修改单张或重做失败项 → 下载本地 ZIP。Shopee VN 普通店还须验证槽位 1 为真实来源图直通、槽位 2 白底完成后才提交槽位 3–9。未审核通过的结果不得导出。
 
+阶段 1 的整理接口保持同源 Session/CSRF 与项目对象权限：`DELETE /api/assets/<asset_id>/` 删除单张参考图，`DELETE /api/clusters/<cluster_id>/` 删除商品。没有生成历史时返回 `{"status":"deleted"}` 并异步清理私有素材；存在历史时返回 `{"status":"archived"}` 并保留 Prompt、结果和审核记录；Prompt 正在准备、活跃生成或 `submit_unknown` 返回 `409`。发布 smoke 必须确认归档商品不会再次进入 Prompt Worker、Generation Worker、审核或 ZIP。
+
 ## 管理员规则、模板与发布
 
 管理员通过同源 `/admin/` 登录后维护平台规则、输出模板、槽位和 N1–N9 Prompt 节点模板。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。`seed_platform_templates` 发布全局 9 图模板、Prompt OS v2 节点、Shopee/TikTok 官网主规则包，以及已有官方证据的站点覆盖；没有覆盖的国家复用对应平台官网主规则包并标记 fallback。草稿、未核对项或 fallback 不得被描述成该国家的完整自动合规。

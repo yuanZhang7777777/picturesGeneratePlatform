@@ -168,6 +168,33 @@ test("chunks uploads at 50 files and combines per-file results", async () => {
   expect(result.rejected).toEqual([{ filename: "image-49.png", code: "unsupported_format", message: "不支持" }]);
 });
 
+test("keeps successful upload chunks when a later chunk is interrupted", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(200, {
+      asset_count: 50,
+      imported: Array.from({ length: 50 }, (_, index) => ({
+        filename: `image-${String(index).padStart(2, "0")}.png`,
+        asset_id: `asset-${index}`,
+        cluster_id: `cluster-${index}`,
+      })),
+      rejected: [],
+    }))
+    .mockRejectedValueOnce(new Error("network down"));
+  vi.stubGlobal("fetch", fetchMock);
+  const files = Array.from({ length: 51 }, (_, index) => new File(["image"], `image-${String(index).padStart(2, "0")}.png`, { type: "image/png" }));
+
+  const result = await uploadAssets("project-1", files, "organize");
+
+  expect(result.asset_count).toBe(50);
+  expect(result.imported).toHaveLength(50);
+  expect(result.rejected).toEqual([{
+    filename: "image-50.png",
+    code: "upload_interrupted",
+    message: "上传中断，请重试剩余文件",
+  }]);
+});
+
 test("posts browser relative paths and TXT files before images", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))

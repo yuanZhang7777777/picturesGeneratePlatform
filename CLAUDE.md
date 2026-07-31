@@ -23,6 +23,7 @@
 - 平台登录使用 ERP 校验并创建本地影子用户；SKU 导入必须使用当前登录用户服务端 session 中的 ERP Token，不得回退为平台固定商品资料账号。
 - 正式素材、SKU 拉取图、生成结果和历史版本写入私有 OSS 前缀；导出 ZIP 临时生成并由浏览器下载到员工本地，不在服务器或 OSS 长期保留。
 - 自动模式在识别和 Prompt 成功后直接提交；整理模式由员工点击生成选中商品。失败只重做失败项，旧版本不可覆盖。
+- 未生成商品可以删除；有 Prompt、生成或审核历史的商品只允许归档。归档商品不得再次进入 Prompt、生成、审核或导出。
 - 默认模板第 1 槽是标准白底产品主图，完成归档后才提交第 2–9 槽。Shopee VN 普通店例外为“第 1 槽真实来源图直通、第 2 槽白底、第 3–9 槽营销图”；调度必须按白底槽位语义而非固定顺序识别门禁，并把白底结果加入后续生成参考。
 - 平台规则、套图模板、Prompt 与参考图在生成时必须可追溯到快照；未验证的规则不得宣称合规。
 
@@ -48,7 +49,7 @@
 
 - 业务边界确认：`docs/project/REQUIREMENTS-BOUNDARY-CONFIRMATION.md`（A–N 已确认，是唯一产品边界）；`SYSTEM-BOUNDARY-CONFIRMATION.md` 只保留原始答题记录
 - 当前产品设计：`docs/superpowers/specs/2026-07-30-dual-speed-product-platform-design.md`
-- 当前 P0 实施计划：`docs/superpowers/plans/2026-07-30-commerce-prompt-os-v2-p0-implementation.md`
+- 当前唯一推进计划：`docs/superpowers/plans/2026-07-31-phased-delivery-roadmap.md`
 - Prompt OS v2 九节点契约：`docs/superpowers/specs/节点prompt设定初稿.md`
 - 主 Agent 任务书：`docs/project/LEADER-GOAL-DUAL-SPEED-PLATFORM.md`
 - 产品方向与调研：`docs/research/2026-07-29-top-image-platform-redesign-research.md`

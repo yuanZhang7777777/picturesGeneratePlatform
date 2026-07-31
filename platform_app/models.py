@@ -217,6 +217,7 @@ class Asset(models.Model):
     width = models.PositiveIntegerField(null=True, blank=True)
     height = models.PositiveIntegerField(null=True, blank=True)
     text_content = models.TextField(blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -259,6 +260,7 @@ class Cluster(models.Model):
     analysis_snapshot = models.JSONField(default=dict, blank=True)
     auto_generate = models.BooleanField(default=False)
     version = models.PositiveIntegerField(default=1)
+    archived_at = models.DateTimeField(null=True, blank=True)
     assets = models.ManyToManyField(Asset, through="ClusterAsset", related_name="clusters")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -424,3 +424,89 @@ def test_optimize_prompt_returns_draft_without_saving(client, tmp_path, settings
     assert "Desk lamp" in response.json()["suggested_prompt"]
     cluster.refresh_from_db()
     assert cluster.prompt_override == ""
+
+
+def test_delete_asset_requires_the_project_owner(client, tmp_path, settings):
+    from platform_app.models import Asset, Batch, Cluster
+    from platform_app.services import register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("owner")
+    other_user = make_user("other")
+    batch = Batch.objects.create(owner=owner, name="Private project")
+    asset = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
+    client.force_login(other_user)
+
+    response = client.delete(reverse("api_delete_asset", args=[asset.id]))
+
+    assert response.status_code == 404
+    assert Asset.objects.filter(id=asset.id).exists()
+    assert Cluster.objects.filter(batch=batch).exists()
+
+
+def test_delete_asset_removes_an_unused_product_and_its_image(client, tmp_path, settings):
+    from platform_app.models import Asset, Batch, Cluster
+    from platform_app.services import register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Disposable project")
+    asset = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
+    client.force_login(user)
+
+    response = client.delete(reverse("api_delete_asset", args=[asset.id]))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted"}
+    assert not Asset.objects.filter(id=asset.id).exists()
+    assert not Cluster.objects.filter(batch=batch).exists()
+
+
+def test_delete_cluster_archives_product_with_generation_history(client, tmp_path, settings):
+    from platform_app.models import Batch, Generation, OutputSlot, OutputTemplate
+    from platform_app.services import register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Archive template")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = Batch.objects.create(owner=user, name="Historical project")
+    asset = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
+    cluster = asset.clusters.get()
+    Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        status=Generation.Status.COMPLETED,
+    )
+    client.force_login(user)
+
+    response = client.delete(reverse("api_update_cluster", args=[cluster.id]))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "archived"}
+    cluster.refresh_from_db()
+    asset.refresh_from_db()
+    assert cluster.archived_at is not None
+    assert asset.archived_at is not None
+    assert cluster.generations.count() == 1
+
+
+def test_delete_asset_rejects_a_product_with_an_active_generation(client, tmp_path, settings):
+    from platform_app.models import Batch, Generation, OutputSlot, OutputTemplate
+    from platform_app.services import register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Active template")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = Batch.objects.create(owner=user, name="Active project")
+    asset = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
+    cluster = asset.clusters.get()
+    Generation.objects.create(batch=batch, cluster=cluster, output_slot=slot, status=Generation.Status.PROCESSING)
+    client.force_login(user)
+
+    response = client.delete(reverse("api_delete_asset", args=[asset.id]))
+
+    assert response.status_code == 409
+    assert response.json() == {"error": "Product has an active generation"}

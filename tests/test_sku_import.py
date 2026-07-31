@@ -326,6 +326,37 @@ def test_sku_reimport_does_not_duplicate_cluster_or_image(tmp_path, settings):
     assert SkuImportItem.objects.filter(batch=batch, sku="OK-1").count() == 2
 
 
+def test_sku_reimport_does_not_reactivate_an_archived_product(tmp_path, settings):
+    from django.utils import timezone
+
+    settings.MEDIA_ROOT = tmp_path
+    _, batch = make_batch()
+    cluster = Cluster.objects.create(
+        batch=batch,
+        sku="OK-1",
+        name="Archived product",
+        archived_at=timezone.now(),
+        preparation_status=Cluster.PreparationStatus.READY,
+    )
+
+    result = import_skus(
+        batch,
+        ["OK-1"],
+        catalog_client=FakeCatalogClient(),
+        image_downloader=lambda url: pytest.fail("archived SKU must not download another image"),
+        mode=Batch.ImportMode.AUTO,
+    )
+
+    cluster.refresh_from_db()
+    assert result["imported"] == 0
+    assert result["failed"] == 1
+    assert result["items"][0]["errorCode"] == "import_failed"
+    assert cluster.archived_at is not None
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY
+    assert cluster.auto_generate is False
+    assert Asset.objects.filter(batch=batch).count() == 0
+
+
 def test_snapshot_uses_attempt_order_when_reimports_share_created_at(client, tmp_path, settings):
     settings.MEDIA_ROOT = tmp_path
     settings.CATALOG_ALLOWED_IMAGE_HOSTS = ("8.8.8.8",)

@@ -23,6 +23,7 @@ from .forms import ERPAuthenticationForm, FirstPasswordChangeForm
 from .models import Asset, AuditEvent, Batch, Generation, ResultAsset
 from .services import (
     CatalogAuthExpired,
+    archive_or_delete_cluster,
     confirm_generation,
     create_project,
     ensure_cluster_generations,
@@ -35,6 +36,7 @@ from .services import (
     preflight_batch,
     register_uploaded_asset,
     regenerate_generation,
+    remove_asset_from_cluster,
     optimize_cluster_prompt,
     request_generation_revision,
     safe_storage_path,
@@ -148,7 +150,7 @@ def _serialize_project(batch):
     payload = serialize_project(batch)
     versions = {
         str(cluster_id): version
-        for cluster_id, version in batch.clusters.values_list("id", "version")
+        for cluster_id, version in batch.clusters.filter(archived_at__isnull=True).values_list("id", "version")
     }
     for sku in payload["skus"]:
         sku["version"] = versions[sku["id"]]
@@ -298,12 +300,17 @@ def api_sku_import(request, batch_id):
 
 @login_required
 @password_change_required
-@require_POST
+@require_http_methods(["POST", "DELETE"])
 def api_update_cluster(request, cluster_id):
     from .models import Cluster
 
-    cluster = get_object_or_404(Cluster, id=cluster_id)
+    cluster = get_object_or_404(Cluster, id=cluster_id, archived_at__isnull=True)
     require_owner_or_admin(request.user, cluster.batch)
+    if request.method == "DELETE":
+        try:
+            return JsonResponse({"status": archive_or_delete_cluster(cluster)})
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=409)
     try:
         payload = json.loads(request.body or "{}")
         if not isinstance(payload, dict):
@@ -321,11 +328,31 @@ def api_update_cluster(request, cluster_id):
 
 @login_required
 @password_change_required
+@require_http_methods(["DELETE"])
+def api_delete_asset(request, asset_id):
+    asset = get_object_or_404(
+        Asset.objects.select_related("batch"),
+        id=asset_id,
+        archived_at__isnull=True,
+    )
+    require_owner_or_admin(request.user, asset.batch)
+    try:
+        return JsonResponse({"status": remove_asset_from_cluster(asset)})
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=409)
+
+
+@login_required
+@password_change_required
 @require_POST
 def api_optimize_prompt(request, cluster_id):
     from .models import Cluster
 
-    cluster = get_object_or_404(Cluster.objects.select_related("batch"), id=cluster_id)
+    cluster = get_object_or_404(
+        Cluster.objects.select_related("batch"),
+        id=cluster_id,
+        archived_at__isnull=True,
+    )
     require_owner_or_admin(request.user, cluster.batch)
     try:
         return JsonResponse(optimize_cluster_prompt(cluster))
@@ -339,10 +366,15 @@ def api_optimize_prompt(request, cluster_id):
 def api_merge_asset(request, cluster_id):
     from .models import Asset, Cluster
 
-    cluster = get_object_or_404(Cluster, id=cluster_id)
+    cluster = get_object_or_404(Cluster, id=cluster_id, archived_at__isnull=True)
     require_owner_or_admin(request.user, cluster.batch)
     payload = json.loads(request.body or "{}")
-    asset = get_object_or_404(Asset, id=payload.get("asset_id"), batch=cluster.batch)
+    asset = get_object_or_404(
+        Asset,
+        id=payload.get("asset_id"),
+        batch=cluster.batch,
+        archived_at__isnull=True,
+    )
     try:
         relation = merge_asset_into_cluster(asset, cluster, expected_version=payload.get("expected_version"))
     except ValueError as exc:
@@ -356,7 +388,7 @@ def api_merge_asset(request, cluster_id):
 def api_split_asset(request, asset_id):
     from .models import Asset
 
-    asset = get_object_or_404(Asset, id=asset_id)
+    asset = get_object_or_404(Asset, id=asset_id, archived_at__isnull=True)
     require_owner_or_admin(request.user, asset.batch)
     cluster = move_asset_to_new_cluster(asset)
     return JsonResponse({"cluster_id": str(cluster.id), "asset_id": str(asset.id)})
@@ -368,7 +400,9 @@ def api_split_asset(request, asset_id):
 def api_batch_snapshot(request, batch_id):
     batch = _batch_for_user(request.user, batch_id)
     clusters = []
-    for cluster in batch.clusters.prefetch_related("cluster_assets__asset", "generations__output_slot"):
+    for cluster in batch.clusters.filter(archived_at__isnull=True).prefetch_related(
+        "cluster_assets__asset", "generations__output_slot"
+    ):
         clusters.append(
             {
                 "id": str(cluster.id),
@@ -382,7 +416,9 @@ def api_batch_snapshot(request, batch_id):
                         "role": item.role,
                         "order": item.order,
                     }
-                    for item in cluster.cluster_assets.select_related("asset").order_by("order", "id")
+                    for item in cluster.cluster_assets.select_related("asset")
+                    .filter(asset__archived_at__isnull=True)
+                    .order_by("order", "id")
                 ],
                 "generations": [
                     {
@@ -459,9 +495,9 @@ def api_project_generate(request, batch_id):
         cluster_ids = payload.get("cluster_ids") or []
         slot_orders = payload.get("slot_orders") or None
         if cluster_ids:
-            clusters = batch.clusters.filter(id__in=cluster_ids)
+            clusters = batch.clusters.filter(id__in=cluster_ids, archived_at__isnull=True)
         else:
-            clusters = batch.clusters.all()
+            clusters = batch.clusters.filter(archived_at__isnull=True)
         generations = []
         for cluster in clusters:
             generations.extend(ensure_cluster_generations(cluster, request.user, slot_orders=slot_orders))
@@ -615,7 +651,9 @@ def _archive_name_part(value, fallback):
 
 
 def _selected_export_generations(batch, generation_ids):
-    queryset = batch.generations.select_related("cluster", "output_slot").prefetch_related("result_assets")
+    queryset = batch.generations.filter(
+        cluster__archived_at__isnull=True
+    ).select_related("cluster", "output_slot").prefetch_related("result_assets")
     if generation_ids:
         requested = [uuid.UUID(str(value)) for value in generation_ids]
         return list(

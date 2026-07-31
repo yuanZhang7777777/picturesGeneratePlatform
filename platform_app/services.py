@@ -759,9 +759,17 @@ def _normalize_import_mode(mode):
     return mode
 
 
+def _ensure_cluster_mutable(cluster):
+    if cluster.archived_at is not None:
+        raise ValueError("Product is archived")
+    if cluster.preparation_status == Cluster.PreparationStatus.PREPARING:
+        raise ValueError("Product is being prepared")
+
+
 @transaction.atomic
 def request_cluster_preparation(cluster, *, auto_generate):
     locked = Cluster.objects.select_for_update().get(id=cluster.id)
+    _ensure_cluster_mutable(locked)
     locked.auto_generate = bool(auto_generate)
     locked.preparation_status = Cluster.PreparationStatus.PENDING
     locked.preparation_error = ""
@@ -1033,7 +1041,10 @@ def import_skus(batch, skus, *, erp_token=None, catalog_client=None, image_downl
             error = "SKU could not be imported"
         else:
             error = ""
-            if not Cluster.objects.filter(batch=batch, sku=sku).exists():
+            existing_cluster = Cluster.objects.filter(batch=batch, sku=sku).only("archived_at").first()
+            if existing_cluster is not None and existing_cluster.archived_at is not None:
+                error = "Product is archived"
+            elif existing_cluster is None:
                 try:
                     image_data, content_type = image_downloader(_catalog_image_url(product.get("pic")))
                     image = _validate_catalog_image(image_data, content_type)
@@ -1054,7 +1065,15 @@ def import_skus(batch, skus, *, erp_token=None, catalog_client=None, image_downl
                     )
                 else:
                     cluster = Cluster.objects.select_for_update().filter(batch=locked_batch, sku=sku).first()
-                    if error:
+                    if cluster is not None and cluster.archived_at is not None:
+                        item = _create_sku_import_item(
+                            locked_batch,
+                            sku,
+                            product_name,
+                            SkuImportItem.Status.FAILED,
+                            error_message="Product is archived",
+                        )
+                    elif error:
                         item = _create_sku_import_item(
                             locked_batch,
                             sku,
@@ -1133,30 +1152,94 @@ def import_skus(batch, skus, *, erp_token=None, catalog_client=None, image_downl
 
 
 def _promote_primary_if_needed(cluster):
-    if not cluster.cluster_assets.exists():
+    relations = list(cluster.cluster_assets.order_by("order", "id"))
+    if not relations:
         cluster.delete()
         return
-    if cluster.cluster_assets.filter(role=ClusterAsset.Role.PRIMARY).exists():
-        cluster.version += 1
-        cluster.save(update_fields=["version", "updated_at"])
-        return
-    first = cluster.cluster_assets.order_by("order", "id").first()
-    first.role = ClusterAsset.Role.PRIMARY
-    first.order = 1
-    first.save(update_fields=["role", "order"])
+    for index, relation in enumerate(relations, start=1):
+        role = ClusterAsset.Role.PRIMARY if index == 1 else ClusterAsset.Role.REFERENCE
+        if relation.order != index or relation.role != role:
+            relation.order = index
+            relation.role = role
+            relation.save(update_fields=["role", "order"])
     cluster.version += 1
     cluster.save(update_fields=["version", "updated_at"])
+
+
+def _active_generation_exists(cluster):
+    return cluster.generations.filter(status__in=ACTIVE_GENERATION_STATUSES).exists()
+
+
+@transaction.atomic
+def archive_or_delete_cluster(cluster):
+    locked = Cluster.objects.select_for_update().get(id=cluster.id)
+    _ensure_cluster_mutable(locked)
+    if _active_generation_exists(locked):
+        raise ValueError("Product has an active generation")
+    asset_ids = list(locked.cluster_assets.order_by("asset_id").values_list("asset_id", flat=True))
+    assets = list(Asset.objects.select_for_update().filter(id__in=asset_ids).order_by("id"))
+    if locked.generations.exists():
+        archived_at = timezone.now()
+        locked.archived_at = archived_at
+        locked.save(update_fields=["archived_at", "updated_at"])
+        Asset.objects.filter(id__in=[asset.id for asset in assets]).update(archived_at=archived_at)
+        return "archived"
+    storage_paths = [asset.storage_path for asset in assets]
+    asset_ids = [asset.id for asset in assets]
+    locked.delete()
+    Asset.objects.filter(id__in=asset_ids).delete()
+    transaction.on_commit(lambda: [LocalStorage().delete(path) for path in storage_paths], robust=True)
+    return "deleted"
+
+
+@transaction.atomic
+def remove_asset_from_cluster(asset):
+    cluster_id = ClusterAsset.objects.filter(asset_id=asset.id).values_list("cluster_id", flat=True).first()
+    if cluster_id is None:
+        locked_asset = Asset.objects.select_for_update().get(id=asset.id)
+        if locked_asset.archived_at is not None:
+            raise ValueError("Asset is archived")
+        storage_path = locked_asset.storage_path
+        locked_asset.delete()
+        transaction.on_commit(lambda: LocalStorage().delete(storage_path), robust=True)
+        return "deleted"
+    cluster = Cluster.objects.select_for_update().get(id=cluster_id)
+    _ensure_cluster_mutable(cluster)
+    locked_asset = Asset.objects.select_for_update().get(id=asset.id)
+    if locked_asset.archived_at is not None:
+        raise ValueError("Asset is archived")
+    relation = ClusterAsset.objects.filter(cluster=cluster, asset=locked_asset).first()
+    if relation is None:
+        raise ValueError("Asset changed; refresh before deleting")
+    if _active_generation_exists(cluster):
+        raise ValueError("Product has an active generation")
+    if cluster.cluster_assets.count() == 1:
+        return archive_or_delete_cluster(cluster)
+    relation.delete()
+    if cluster.generations.exists():
+        locked_asset.archived_at = timezone.now()
+        locked_asset.save(update_fields=["archived_at"])
+    else:
+        storage_path = locked_asset.storage_path
+        locked_asset.delete()
+        transaction.on_commit(lambda: LocalStorage().delete(storage_path), robust=True)
+    _promote_primary_if_needed(cluster)
+    return "archived" if cluster.generations.exists() else "deleted"
 
 
 @transaction.atomic
 def merge_asset_into_cluster(asset, target_cluster, expected_version=None):
     target = Cluster.objects.select_for_update().get(id=target_cluster.id)
+    _ensure_cluster_mutable(target)
+    if asset.archived_at is not None:
+        raise ValueError("Archived products cannot be changed")
     if expected_version is not None and target.version != expected_version:
         raise ValueError("Cluster changed; refresh before saving")
     old_cluster = None
     old_relation = ClusterAsset.objects.select_related("cluster").filter(asset=asset).first()
     if old_relation is not None and old_relation.cluster_id != target.id:
         old_cluster = Cluster.objects.select_for_update().get(id=old_relation.cluster_id)
+        _ensure_cluster_mutable(old_cluster)
     relation = target.add_asset(asset)
     if old_cluster is not None:
         _promote_primary_if_needed(old_cluster)
@@ -1165,10 +1248,13 @@ def merge_asset_into_cluster(asset, target_cluster, expected_version=None):
 
 @transaction.atomic
 def move_asset_to_new_cluster(asset):
+    if asset.archived_at is not None:
+        raise ValueError("Archived assets cannot be changed")
     old_relation = ClusterAsset.objects.select_related("cluster").filter(asset=asset).first()
     old_cluster = None
     if old_relation is not None:
         old_cluster = Cluster.objects.select_for_update().get(id=old_relation.cluster_id)
+        _ensure_cluster_mutable(old_cluster)
         old_relation.delete()
     new_cluster = Cluster.create_for_asset(batch=asset.batch, asset=asset)
     if old_cluster is not None:
@@ -1810,17 +1896,23 @@ def process_prompt_once(client=None, storage=None):
     storage = storage or LocalStorage()
     cluster = (
         Cluster.objects.select_related("batch", "batch__owner", "batch__output_template")
-        .filter(preparation_status=Cluster.PreparationStatus.PENDING)
+        .filter(preparation_status=Cluster.PreparationStatus.PENDING, archived_at__isnull=True)
         .order_by("updated_at", "created_at", "id")
         .first()
     )
     if cluster is None:
         return 0
-    Cluster.objects.filter(id=cluster.id).update(
+    claimed = Cluster.objects.filter(
+        id=cluster.id,
+        preparation_status=Cluster.PreparationStatus.PENDING,
+        archived_at__isnull=True,
+    ).update(
         preparation_status=Cluster.PreparationStatus.PREPARING,
         preparation_error="",
         updated_at=timezone.now(),
     )
+    if not claimed:
+        return 0
     try:
         node_snapshots = []
         cluster_assets = list(cluster.cluster_assets.select_related("asset").order_by("order", "id"))
@@ -1899,7 +1991,7 @@ def process_prompt_once(client=None, storage=None):
         ):
             analysis = {"observations": observations, "identity": identity, "prompt_os": node_snapshots}
             Cluster.objects.filter(id=cluster.id).update(
-                product_name=product_name or "名称待确认",
+                product_name=product_name,
                 analysis_snapshot=analysis,
                 preparation_status=Cluster.PreparationStatus.BLOCKED,
                 preparation_error="product identity needs confirmation",
@@ -2171,7 +2263,7 @@ def preflight_batch(batch, user, template=None):
     generated_slots = [
         slot for slot in template.slots.order_by("order", "id") if not is_source_product_photo_slot(slot)
     ]
-    cluster_count = batch.clusters.count()
+    cluster_count = batch.clusters.filter(archived_at__isnull=True).count()
     generation_count = cluster_count * len(generated_slots)
     org_used = _used_generations_today()
     user_used = _used_generations_today(user)
@@ -2321,6 +2413,8 @@ def _prompt_for_slot(cluster, slot):
 @transaction.atomic
 def ensure_cluster_generations(cluster, user, *, slot_orders=None, force_new=False):
     locked = Cluster.objects.select_for_update().get(id=cluster.id)
+    if locked.archived_at is not None:
+        raise ValueError("Product is archived")
     batch = Batch.objects.select_for_update().get(id=locked.batch_id)
     template = batch.output_template or _global_fallback_template()
     if template.status != OutputTemplate.Status.PUBLISHED:
@@ -2470,7 +2564,7 @@ def confirm_generation(batch, user, template=None):
 
     slots = list(template.slots.order_by("order", "id"))
     clusters = list(
-        locked_batch.clusters.prefetch_related(
+        locked_batch.clusters.filter(archived_at__isnull=True).prefetch_related(
             Prefetch(
                 "cluster_assets",
                 queryset=ClusterAsset.objects.select_related("asset").order_by("order", "id"),
@@ -2664,7 +2758,7 @@ def process_generation_once(client=None, storage=None):
     rejected_queued = False
     queued_candidates = (
         Generation.objects.select_related("batch", "batch__owner", "cluster", "output_slot__template", "prompt_version")
-        .filter(status=Generation.Status.QUEUED)
+        .filter(status=Generation.Status.QUEUED, cluster__archived_at__isnull=True)
         .order_by("created_at", "id")
     )
     for candidate in queued_candidates:
@@ -2782,6 +2876,8 @@ def process_generation_once(client=None, storage=None):
 
 
 def optimize_cluster_prompt(cluster, client=None):
+    if cluster.archived_at is not None:
+        raise ValueError("Product is archived")
     source_text = "\n".join(
         part
         for part in [
@@ -2816,6 +2912,7 @@ def optimize_cluster_prompt(cluster, client=None):
 @transaction.atomic
 def update_cluster_content(cluster, user, payload):
     locked = Cluster.objects.select_for_update().select_related("batch").get(id=cluster.id)
+    _ensure_cluster_mutable(locked)
     if payload.get("expected_version") != locked.version:
         raise ValueError("Cluster changed; refresh before saving")
     prompts = payload.get("prompts", [])
@@ -2928,6 +3025,7 @@ ACTIVE_GENERATION_STATUSES = {
     Generation.Status.SUBMITTED,
     Generation.Status.PROCESSING,
     Generation.Status.ARCHIVING,
+    Generation.Status.SUBMIT_UNKNOWN,
 }
 
 
@@ -2979,6 +3077,8 @@ def _ensure_generation_prompt_policy(generation, user):
 
 
 def _create_followup_attempt(source, user, **overrides):
+    if not Cluster.objects.filter(id=source.cluster_id, archived_at__isnull=True).exists():
+        raise ValueError("Product is archived")
     siblings = Generation.objects.filter(
         cluster_id=source.cluster_id,
         output_slot_id=source.output_slot_id,
@@ -3106,7 +3206,9 @@ def _prompt_version_references(prompt_version):
 @transaction.atomic
 def review_generation(generation, reviewer, *, decision, issue_tags=None, description="", annotations=None):
     Batch.objects.select_for_update().get(id=generation.batch_id)
-    Cluster.objects.select_for_update().get(id=generation.cluster_id)
+    cluster = Cluster.objects.select_for_update().get(id=generation.cluster_id)
+    if cluster.archived_at is not None:
+        raise ValueError("Product is archived")
     locked = Generation.objects.select_for_update().get(id=generation.id)
     if locked.status != Generation.Status.COMPLETED:
         raise ValueError("Only completed generations can be reviewed")
@@ -3340,7 +3442,7 @@ def _project_status(status):
 
 
 def serialize_project(batch):
-    assets = list(batch.assets.order_by("created_at", "id"))
+    assets = list(batch.assets.filter(archived_at__isnull=True).order_by("created_at", "id"))
     serialized_assets = {
         asset.id: {
             "id": str(asset.id),
@@ -3367,9 +3469,11 @@ def serialize_project(batch):
         for sku in sorted(latest_imports)
     ]
     skus = []
-    for cluster in batch.clusters.order_by("created_at", "id"):
+    for cluster in batch.clusters.filter(archived_at__isnull=True).order_by("created_at", "id"):
         cluster_assets = list(
-            cluster.cluster_assets.select_related("asset").order_by("order", "id")
+            cluster.cluster_assets.select_related("asset")
+            .filter(asset__archived_at__isnull=True)
+            .order_by("order", "id")
         )
         latest_prompts = {}
         for prompt in cluster.prompt_versions.select_related("output_slot").order_by(
@@ -3411,8 +3515,8 @@ def serialize_project(batch):
             {
                 "id": str(cluster.id),
                 "sku": cluster.sku or "",
-                "name": cluster.product_name or cluster.name,
-                "productName": cluster.product_name or cluster.name,
+                "name": "" if cluster.product_name == "名称待确认" else cluster.product_name,
+                "productName": "" if cluster.product_name == "名称待确认" else cluster.product_name,
                 "version": cluster.version,
                 "relationType": cluster.relation_type,
                 "preparationStatus": cluster.preparation_status,

@@ -83,4 +83,12 @@
 - Product flow: second image merged into the first cluster; `name` and `same_product` now persist, PostgreSQL row locking no longer joins the nullable template, and editing a blocked product requeues preparation.
 - Prompt flow: confirmed product names override N2 low-confidence blocking; N5 accepts documented and APIMart-observed envelopes and performs at most one schema repair. The real two-reference project reached `ready` with 23 N1-N7 snapshots and 9 PromptVersion rows without starting image generation.
 - Verification: backend 193 passed, frontend 45 passed, Vite build, Django check, migration drift, migration 0012, five running services and `/health/ready` passed.
-- Remaining: browser-native folder picker E2E, real ERP employee login/SKU import, six-category 54-image benchmark, HTTPS and staged concurrency.
+- Remaining after this milestone: real ERP employee login/SKU import, six-category 54-image benchmark, HTTPS and staged concurrency.
+
+# Phase 1 batch organization workspace
+
+- Status: local gate passed on 2026-07-31; preview deployment pending.
+- Change: pending image/folder previews no longer expose filenames; successful uploads clear while failed items remain; product selection supports all/none/invert; compact rows use a right-side detail drawer; empty names stay blank; unused products/assets delete while historical ones archive.
+- Safety: archived products are excluded from preparation, generation, review and export. Prompt preparation and active/uncertain generation block structural edits or deletion. Automatic import waits for Prompt Worker completion instead of posting generation from stale frontend state.
+- Verification: backend 206 passed; frontend 51 passed; Vite build, Django check, migration drift, `git diff --check`, single-image browser E2E and native folder picker E2E passed.
+- Remaining: server migration/health smoke; real ERP employee login/SKU import; upload request idempotency for lost acknowledgements; later roadmap phases.

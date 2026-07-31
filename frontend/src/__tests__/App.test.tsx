@@ -139,7 +139,7 @@ test("shows two explicit import choices for both upload and ERP SKU entry", asyn
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
 });
 
-test("posts uploaded files in automatic mode and immediately requests generation", async () => {
+test("marks uploaded files for automatic mode without generating before Prompt preparation", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
@@ -151,7 +151,7 @@ test("posts uploaded files in automatic mode and immediately requests generation
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/assets/"))).toBe(true));
   const uploadCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/assets/"));
   expect((uploadCall?.[1]?.body as FormData).get("mode")).toBe("auto");
-  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(true));
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(false);
 });
 
 test("posts uploaded files in organize mode without starting generation", async () => {
@@ -167,6 +167,62 @@ test("posts uploaded files in organize mode without starting generation", async 
   expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(false);
 });
 
+test("previews pending images without filenames and does not resubmit successful files", async () => {
+  const fetchMock = stubFetch(async (url) => {
+    if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf-for-test" });
+    if (url.includes("/assets/")) {
+      return response(200, {
+        asset_count: 1,
+        imported: [{ filename: "front.png", asset_id: "new-asset", cluster_id: "new-cluster" }],
+        rejected: [],
+      });
+    }
+    return response(200, project);
+  });
+  renderApp("/projects/project-demo");
+
+  const input = await screen.findByLabelText("选择图片");
+  fireEvent.change(input, {
+    target: { files: [new File(["front"], "front.png", { type: "image/png" })] },
+  });
+
+  expect(screen.getByRole("img", { name: "待导入商品图 1" })).toBeInTheDocument();
+  expect(screen.queryByText("front.png")).not.toBeInTheDocument();
+  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
+  await waitFor(() => expect(screen.getByText("尚未选择图片")).toBeInTheDocument());
+
+  fireEvent.change(input, {
+    target: { files: [new File(["side"], "side.png", { type: "image/png" })] },
+  });
+  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
+  await waitFor(() => {
+    const uploads = fetchMock.mock.calls.filter(([url]) => String(url).includes("/assets/"));
+    expect(uploads).toHaveLength(2);
+  });
+  const uploads = fetchMock.mock.calls.filter(([url]) => String(url).includes("/assets/"));
+  const firstFiles = (uploads[0]![1]!.body as FormData).getAll("files") as File[];
+  const secondFiles = (uploads[1]![1]!.body as FormData).getAll("files") as File[];
+  expect(firstFiles.map((file) => file.name)).toEqual(["front.png"]);
+  expect(secondFiles.map((file) => file.name)).toEqual(["side.png"]);
+});
+
+test("keeps pending files when the first upload request fails", async () => {
+  stubFetch(async (url) => {
+    if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf-for-test" });
+    if (url.includes("/assets/")) return response(503, { error: "上传服务暂不可用" });
+    return response(200, project);
+  });
+  renderApp("/projects/project-demo");
+
+  fireEvent.change(await screen.findByLabelText("选择图片"), {
+    target: { files: [new File(["front"], "front.png", { type: "image/png" })] },
+  });
+  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
+
+  expect(await screen.findByText("上传服务暂不可用")).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "待导入商品图 1" })).toBeInTheDocument();
+});
+
 test("imports ERP SKUs in organize mode", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
@@ -179,7 +235,7 @@ test("imports ERP SKUs in organize mode", async () => {
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({ skus: ["LAMP-001", "LAMP-002"], mode: "organize" });
 });
 
-test("auto ERP import enters the same generation path as upload", async () => {
+test("marks ERP imports for automatic mode without generating before Prompt preparation", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
@@ -187,15 +243,18 @@ test("auto ERP import enters the same generation path as upload", async () => {
   fireEvent.click(screen.getAllByRole("button", { name: "导入并自动出图" })[1]);
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sku-import/"))).toBe(true));
-  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/sku-import/"));
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ skus: ["LAMP-001"], mode: "auto" });
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(false);
 });
 
 test("renders product cards with relation choice and prompt editing", async () => {
   renderApp("/projects/project-demo");
 
-  expect(await screen.findByRole("heading", { name: "桌面护眼灯" })).toBeInTheDocument();
-  expect(screen.getByDisplayValue("一图一商品")).toBeInTheDocument();
+  expect(await screen.findByRole("img", { name: "商品参考图 1" })).toBeInTheDocument();
   expect(screen.getByLabelText("商品名称")).toHaveValue("桌面护眼灯");
+  fireEvent.click(screen.getByRole("button", { name: "编辑商品详情" }));
+  expect(screen.getByDisplayValue("一图一商品")).toBeInTheDocument();
   expect(screen.getByLabelText("身份锁")).toHaveValue("深蓝色灯头");
   expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("白底标准图 prompt");
 });
@@ -204,7 +263,8 @@ test("saves edited product relation and prompts through the cluster endpoint", a
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.change(await screen.findByLabelText("整套要求"), { target: { value: "更明亮的书桌场景" } });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑商品详情" }));
+  fireEvent.change(screen.getByLabelText("整套要求"), { target: { value: "更明亮的书桌场景" } });
   fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/clusters/sku-lamp/"))).toBe(true));
@@ -224,11 +284,44 @@ test("starts generation for selected products and shows product and image counts
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({ cluster_ids: ["sku-lamp"], slot_orders: [1, 2, 3, 4, 5, 6, 7, 8, 9] });
 });
 
+test("allows the only product to be deselected", async () => {
+  renderApp("/projects/project-demo");
+
+  fireEvent.click(await screen.findByRole("checkbox", { name: "生成 桌面护眼灯" }));
+
+  expect(screen.getByRole("button", { name: "生成选中商品（0 个商品 / 0 张图）" })).toBeDisabled();
+});
+
+test("keeps product details collapsed until requested", async () => {
+  renderApp("/projects/project-demo");
+
+  await screen.findByRole("checkbox", { name: "生成 桌面护眼灯" });
+  expect(screen.queryByLabelText("身份锁")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "编辑商品详情" }));
+  expect(screen.getByLabelText("身份锁")).toHaveValue("深蓝色灯头");
+});
+
+test("keeps an unidentified product name empty instead of inserting status text", async () => {
+  const unnamed = {
+    ...project,
+    skus: [{ ...project.skus[0], name: "", sku: "" }],
+  };
+  stubFetch(async (url) => {
+    if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf-for-test" });
+    return response(200, unnamed);
+  });
+  renderApp("/projects/project-demo");
+
+  const input = await screen.findByPlaceholderText("可不填，AI 将根据图片识别");
+  expect(input).toHaveValue("");
+  expect(screen.queryByText("名称待确认")).not.toBeInTheDocument();
+});
+
 test("offers merge and undo affordances for product grouping", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "合并 desk-lamp-side.png 到桌面护眼灯" }));
+  fireEvent.click(await screen.findByRole("button", { name: "合并未分配图片 1 到桌面护眼灯" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/merge/"))).toBe(true));
   expect(screen.getByRole("button", { name: "撤销上次合并" })).toBeInTheDocument();
