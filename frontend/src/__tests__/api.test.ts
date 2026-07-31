@@ -67,6 +67,15 @@ test("logs out with a CSRF-protected same-origin POST", async () => {
   expect(fetchMock.mock.calls[1][1].headers.get("X-CSRFToken")).toBe("csrf-for-test");
 });
 
+test("rejects a logout response that did not redirect to login", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(200, {}));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(logoutUser()).rejects.toMatchObject({ status: 200 });
+});
+
 test("keeps logout failures visible to the caller", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))

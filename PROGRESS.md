@@ -19,7 +19,7 @@
 - Verification: the forced equal-`created_at` regression passed, all 16 SKU import tests and all 110 pytest cases passed, a clean database migrated through `0009`, an `0008` database with audit rows upgraded and retained them in attempt order, `manage.py check`, migration drift, and `git diff --check` all passed.
 
 - Fifth review follow-up: batches with any confirmation key or generation history now return a per-SKU `project_locked` audit without querying/downloading or creating product cards; the same Batch row lock is checked again immediately before each write, serializing safely with confirmation.
-- Catalog image URLs now accept only exact allowlisted public IPv4/IPv6 literals on the initial URL and every redirect. Hostnames, credentials, private, loopback, link-local, reserved, and unlisted addresses are rejected without DNS resolution. `CATALOG_ALLOWED_IMAGE_HOSTS` is empty by default/example until operators explicitly configure public IP literals.
+- Catalog image URLs now accept only exact allowlisted public IPv4/IPv6 literals on the initial URL and every redirect. Hostnames, credentials, private, loopback, link-local, reserved, and unlisted addresses are rejected without DNS resolution. The current `.env.example` documents the confirmed ERP login endpoint at `103.198.125.2:16777` and image allowlist `180.167.156.35`; production credentials remain outside Git.
 - Import requests default to at most 50 input entries. The catalog is queried once with `skuList`, then each SKU runs download/validation outside a transaction followed by its own short archive/audit transaction, so image bytes are not retained for the whole batch. Catalog-wide failures use sanitized `catalog_unavailable`; true empty results remain `sku_not_found`.
 - Local archive `OSError` creates a sanitized failure for only that SKU and continues. Partial writes and files whose database transaction later fails are removed.
 - Verification: all 29 SKU import tests and all 123 pytest cases passed; `manage.py check`, `manage.py makemigrations --check --dry-run`, and `git diff --check` passed on 2026-07-29.
@@ -93,3 +93,10 @@
 - Verification: backend 206 passed; frontend 51 passed; Vite build, Django check, migration drift, `git diff --check`, single-image browser E2E and native folder picker E2E passed.
 - Deployment: migration `0013` applied; Web, PostgreSQL, Prompt Worker, Generation Worker and Caddy are running; local and public `/health/ready` passed. Backup: `/opt/independent-image-platform-backups/20260731_112241`; the deployment lock was released.
 - Remaining: real ERP employee login/SKU import; upload request idempotency for lost acknowledgements; later roadmap phases.
+
+# ERP image download, logout, and explicit image pickers
+
+- Status: local Task 1 completed on 2026-07-31; no deployment was performed.
+- Change: the existing ERP image download path remains allowlisted and session-scoped; `POST /logout/` now requires a CSRF token, accepts only Django's followed redirect to `/login/`, clears the Django and ERP-token session, and surfaces logout failures without leaving the current page. Upload UI now names the native single/multiple image picker and separate whole-folder picker explicitly while retaining its existing deduplication and import path.
+- Configuration: `.env.example` now records the confirmed ERP login endpoint `http://103.198.125.2:16777/open/system/innerOpen/login`; credentials and runtime tokens remain unset and untracked.
+- Verification: focused frontend API/App tests passed with 51 tests; focused Django auth-permission tests passed with 13 tests.

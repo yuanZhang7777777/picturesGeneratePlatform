@@ -42,6 +42,7 @@
 | C0-03 | 主 Agent | 建立主 Agent 项目治理 | 产品方向 | 角色、交接和签核规则 | `CLAUDE.md`、本控制板 | 规则与软链核对 | 已完成 | 无 |
 | C0-04 | 主 Agent | 确认前端技术栈 | 交互/性能目标 | React + TypeScript + Vite、TanStack Query、dnd-kit 与同源 Django API | 前端架构文档 | 架构审阅 | 已完成 | 无 |
 | C0-05 | 主 Agent | 收口精简需求边界 | 已填写 A–N 与双速流程决定 | 唯一边界、最终设计、实施计划和 `/goal` 任务书 | 需求、设计、计划、控制板 | 编号/矛盾/范围/命令自检 | 已完成 | 无 |
+| T2-01 | 前端体验 + 后端平台 | ERP 图片入口、退出登录与单/多图选择 | 当前 ERP 登录会话、受限图片下载、Django `POST /logout/` 与现有上传入口 | ERP 图片归档、成功后跳转登录页且失败可见、单/多图和文件夹选择入口 | `platform_app` ERP 下载/认证、`frontend/src/api.ts`、`layout.tsx`、`ImportPanel.tsx`、聚焦测试 | ERP 下载回归；Django 登出会话清除；前端 API/App 聚焦测试 | 已完成（未部署） | 真实员工浏览器 SKU/OSS smoke 待验收 |
 | P0-01 | 产品与 Prompt OS | Prompt OS v2 九节点、事实与身份锁 | 九节点规格、官网规则包 | N1 逐图观察、N2–N6 分析/编译、N7 确定性闸门、N8 修改导演、N9 失败简化；完整 2.1.0 核心提示词通过实际 system/视觉指令发送；推断台账和不可变快照 | `platform_app/services.py`、节点规格、测试 | 后端全量 193 passed；线上双参考图完成 23 个 N1–N7 快照和 9 个 PromptVersion | 已部署 | 六类 54 图真实商品质量基准仍待执行 |
 | P0-02 | 前端体验 | 可用上传入口、推断台账和结构化 Prompt 编辑 | React 工作台与 Prompt OS v2 API | 图片/文件夹/拖拽、失败项重传、事实/推断/规则阻断展示、结构化 Prompt 保存 | `frontend/src/**` | 前端 45 passed、Vite build passed；登录态 multipart 图片/WebP/TXT 上传、OSS 读回与预览 passed | 已部署 | 浏览器原生文件夹选择 smoke 待人工执行 |
 | P0-03 | 后端平台 | 商品准备、9 图生成、修订与选择式导出 | Prompt OS v2 与商品资料接口 | 分文件上传结果、结构化 PromptVersion、白底门禁、Shopee VN 原图直通、人工审核后导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | 后端 193 passed；迁移 0012、商品名/关系保存、PostgreSQL 行锁和准备重试 passed | 已部署 | 真实 ERP 员工账号成功登录/SKU 导入 smoke 待验收 |

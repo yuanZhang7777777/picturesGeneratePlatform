@@ -84,7 +84,7 @@ export async function logoutUser(): Promise<void> {
     headers: new Headers({ "X-CSRFToken": await csrfToken() }),
     credentials: "same-origin",
   });
-  if (!response.ok || (isLoginResponse(response) && !isLogoutRedirect(response))) throw await errorFor(response);
+  if (!response.ok || !isLogoutRedirect(response)) throw await errorFor(response);
 }
 
 export async function loadWorkspace(): Promise<WorkspaceSnapshot> {

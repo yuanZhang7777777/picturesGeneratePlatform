@@ -41,6 +41,21 @@ def test_login_page_explains_erp_shadow_account(client):
     assert "登录 ERP 并进入平台" in content
 
 
+def test_logout_clears_django_and_erp_session_state(client):
+    user = make_user("logout-user")
+    client.force_login(user)
+    session = client.session
+    session["erp_access_token"] = "erp-token"
+    session.save()
+
+    response = client.post(reverse("logout"))
+
+    assert response.status_code == 302
+    assert response["Location"] == reverse("login")
+    assert "_auth_user_id" not in client.session
+    assert "erp_access_token" not in client.session
+
+
 def test_first_login_user_must_change_password_before_batch_list(client):
     user = make_user("first-login", must_change_password=True)
     client.force_login(user)
