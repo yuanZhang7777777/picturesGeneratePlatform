@@ -420,7 +420,7 @@ def test_prompt_node_template_publish_and_rollback_keeps_one_active_version():
 def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path, settings):
     import json
 
-    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    from platform_app.models import Asset, Batch, Cluster, Generation, OutputTemplate, PromptVersion
     from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
     from platform_app.management.commands.seed_platform_templates import GLOBAL_SLOTS
 
@@ -452,16 +452,22 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
         template.slots.create(order=order, name=name, purpose=purpose)
     batch.output_template = template
     batch.save(update_fields=["output_template"])
-    request_cluster_preparation(cluster, auto_generate=False)
+    request_cluster_preparation(cluster, auto_generate=True)
 
     class PromptClient(FakeAPIMartClient):
         def observe_images(self, instruction, image_paths):
             assert image_paths
+            observed_asset_id = instruction.split("ASSET_ID=", 1)[1].splitlines()[0]
             return {
                 "output_text": json.dumps(
                     {
-                        "product_name": "Silicone cup",
-                        "confidence": 0.91,
+                        "asset_id": observed_asset_id,
+                        "image_role": "clean_product",
+                        "contains_target_product": True,
+                        "observed_identity": {"category_candidates": ["silicone cup"]},
+                        "reference_quality": 91,
+                        "candidate_product_name": "Silicone cup",
+                        "candidate_product_name_confidence": 0.91,
                         "product_facts": ["green silicone cup", "two handles"],
                         "identity_lock": "Keep green cup and two handles",
                         "target_consumer": "adult",
@@ -480,12 +486,21 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
     assert cluster.product_name == "Silicone cup"
     assert cluster.product_facts == "green silicone cup; two handles"
     assert cluster.identity_lock == "Keep green cup and two handles"
-    assert cluster.analysis_snapshot["observations"][0]["confidence"] == 0.91
+    assert (
+        cluster.analysis_snapshot["observations"][0]["candidate_product_name_confidence"]
+        == 0.91
+    )
     assert cluster.analysis_snapshot["fact_ledger"]["review_summary"]["confirmed_count"] == 1
     prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
     assert [prompt.output_slot.order for prompt in prompts] == list(range(1, 10))
     assert all("Silicone cup" in prompt.prompt_text for prompt in prompts)
     assert all(prompt.evaluation["rule_gate"]["decision"] == "pass" for prompt in prompts)
+    assert list(
+        Generation.objects.filter(cluster=cluster).values_list(
+            "output_slot__order",
+            flat=True,
+        )
+    ) == [1]
 
     confirmed_path = f"originals/{batch.id}/confirmed.png"
     (tmp_path / confirmed_path).write_bytes(b"confirmed-bytes")
@@ -528,11 +543,12 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                 return {
                     "output_text": json.dumps(
                         {
-                            "decision": "needs_confirmation",
+                            "decision": "continue",
                             "confidence": 0.1,
-                            "product_name": "Uncertain object",
-                            "product_profile": {},
-                            "identity_lock": {},
+                            "product_name": "Confirmed ceramic mug",
+                            "conflict_state": "unknown",
+                            "product_profile": {"category": "ceramic mug"},
+                            "identity_lock": {"must_not_change": ["visible mug"]},
                             "primary_asset_id": str(confirmed_asset.id),
                             "supporting_asset_ids": [],
                         }
@@ -540,23 +556,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                     "raw": {},
                 }
             if "NODE N5" in payload["text"]:
-                return {
-                    "output_text": json.dumps(
-                        {
-                            "slots": [
-                                {
-                                    "slot_name": GLOBAL_SLOTS[order - 1][1],
-                                    "scene_title": f"family-{order}",
-                                    "primary_scene": f"scene-{order}",
-                                    "primary_action": "none",
-                                    "copy_intent": f"decision-{order}",
-                                }
-                                for order in range(2, 9)
-                            ],
-                        }
-                    ),
-                    "raw": {},
-                }
+                return super().optimize_prompt(payload)
             return super().optimize_prompt(payload)
 
     assert process_prompt_once(LowConfidenceClient(), LocalStorage(tmp_path)) == 1
@@ -610,8 +610,13 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
             return {
                 "output_text": json.dumps(
                     {
-                        "product_name": "Storage box",
-                        "confidence": 0.9,
+                        "asset_id": str(asset.id),
+                        "image_role": "clean_product",
+                        "contains_target_product": True,
+                        "observed_identity": {"category_candidates": ["storage box"]},
+                        "reference_quality": 90,
+                        "candidate_product_name": "Storage box",
+                        "candidate_product_name_confidence": 0.9,
                         "product_facts": ["blue box"],
                         "identity_lock": "Keep blue box",
                         "target_consumer": "adult",
@@ -626,11 +631,12 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
                 return {
                     "output_text": json.dumps(
                         {
-                            "decision": "continue",
-                            "confidence": 90,
-                            "product_name": "Storage box",
-                            "product_profile": {"category": "storage box", "primary_appearance": "blue"},
-                            "identity_lock": {"must_not_change": ["blue box"]},
+                                "decision": "continue",
+                                "confidence": 90,
+                                "product_name": "Storage box",
+                                "conflict_state": "unknown",
+                                "product_profile": {"category": "storage box", "primary_appearance": "blue"},
+                                "identity_lock": {"must_not_change": ["blue box"]},
                             "primary_asset_id": str(asset.id),
                             "supporting_asset_ids": [],
                         }
@@ -740,6 +746,8 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                             "dominant_colors": ["sage green"],
                             "distinctive_parts": ["two handles"],
                         },
+                        "candidate_product_name": "Sage storage container",
+                        "candidate_product_name_confidence": 93,
                         "recommended_use": "reuse",
                     }
                 ),
@@ -750,10 +758,11 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
             text = payload["text"]
             if "NODE N2" in text:
                 output = {
-                    "decision": "continue",
-                    "confidence": 93,
-                    "product_name": "Sage storage container",
-                    "product_profile": {"category": "storage container", "primary_appearance": "sage green"},
+                        "decision": "continue",
+                        "confidence": 93,
+                        "product_name": "Sage storage container",
+                        "conflict_state": "unknown",
+                        "product_profile": {"category": "storage container", "primary_appearance": "sage green"},
                     "identity_lock": {
                         "family_invariants": ["storage container"],
                         "primary_variant_attributes": ["sage green"],
@@ -798,20 +807,50 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                 }
             elif "NODE N4" in text:
                 output = {
+                    "slot_id": "1",
                     "main_scene": "pure white commercial studio",
                     "main_action": "none",
                     "visible_text_lines": [],
                     "prompt": "Front-facing complete product on pure white.",
+                    "character_count": 44,
+                    "reference_plan": {
+                        "primary_asset_id": str(asset.id),
+                        "supporting_asset_ids": [],
+                        "include_completed_white_image": False,
+                    },
+                    "fact_trace": ["fact.name.001", "fact.color.001"],
+                    "inference_trace": [],
+                    "rule_refs": [],
+                    "generation_parameters": {
+                        "model": "gpt-image-2",
+                        "n": 1,
+                        "size": "1:1",
+                        "resolution": "1k",
+                    },
+                    "review_required": True,
                 }
             elif "NODE N5" in text:
                 output = {
                     "plans": [
                         {
                             "slot_order": order,
+                            "role": f"role-{order}",
                             "scene_family": f"family-{order}",
+                            "environment": f"environment-{order}",
+                            "camera": f"camera-{order}",
+                            "decision_task": f"goal-{order}",
                             "conversion_goal": f"goal-{order}",
+                            "fact_refs": [],
+                            "inference_refs": [],
                             "main_scene": f"scene-{order}",
                             "main_action": "none",
+                            "subject_relationship": "product centered",
+                            "composition": f"composition-{order}",
+                            "copy_intent": "",
+                            "text_mode": "up_to_3_lines",
+                            "localization_notes": [],
+                            "must_show": [],
+                            "must_avoid": [],
                             "visible_text_lines": [],
                         }
                         for order in range(2, 10)
@@ -819,12 +858,35 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                 }
             elif "NODE N6" in text:
                 order = int(text.split("SLOT_ORDER=", 1)[1].splitlines()[0])
+                prompt = f"Show purchase decision scene {order}."
                 output = {
-                    "slot_order": order,
+                    "slot_id": str(order),
                     "main_scene": f"scene-{order}",
                     "main_action": "none",
                     "visible_text_lines": [],
-                    "prompt": f"Show purchase decision scene {order}.",
+                    "localized_copy": {
+                        "language": "en",
+                        "lines": [],
+                        "source_fact_refs": [],
+                        "source_inference_refs": [],
+                    },
+                    "prompt": prompt,
+                    "character_count": len(prompt),
+                    "reference_plan": {
+                        "primary_asset_id": str(asset.id),
+                        "supporting_asset_ids": [],
+                        "completed_white_result_id": None,
+                    },
+                    "fact_trace": ["fact.name.001", "fact.color.001"],
+                    "inference_trace": [],
+                    "rule_refs": [],
+                    "generation_parameters": {
+                        "model": "gpt-image-2",
+                        "n": 1,
+                        "size": "1:1",
+                        "resolution": "1k",
+                    },
+                    "review_required": True,
                 }
             else:
                 raise AssertionError(text)
@@ -1059,7 +1121,7 @@ def test_prompt_worker_stale_terminal_does_not_autogenerate_newer_claim(
 
         def optimize_prompt(self, payload):
             response = super().optimize_prompt(payload)
-            if not self.changed and "NODE N5" in payload["text"]:
+            if not self.changed and "NODE N4" in payload["text"]:
                 self.changed = True
                 Cluster.objects.filter(id=cluster.id).update(
                     preparation_status=Cluster.PreparationStatus.PREPARING,
@@ -1076,3 +1138,472 @@ def test_prompt_worker_stale_terminal_does_not_autogenerate_newer_claim(
     assert ensure_calls == []
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
     assert Generation.objects.filter(cluster=cluster).count() == 0
+
+
+def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_references():
+    from platform_app.services import _normalize_n1_observation, _normalize_n2_identity
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    observation = _normalize_n1_observation(
+        {
+            "asset_id": asset_id,
+            "image_role": "clean_product",
+            "contains_target_product": True,
+            "observed_identity": {"category_candidates": ["travel mug"]},
+            "reference_quality": 92,
+            "candidate_product_name": "Travel mug",
+            "candidate_product_name_confidence": 87,
+        },
+        asset_id,
+    )
+
+    assert observation["candidate_product_name"] == "Travel mug"
+    assert observation["candidate_product_name_confidence"] == 0.87
+
+    identity = _normalize_n2_identity(
+        {
+            "decision": "continue",
+            "product_name": "Travel mug",
+            "confidence": 91,
+            "conflict_state": "unknown",
+            "primary_asset_id": asset_id,
+            "supporting_asset_ids": [],
+            "identity_lock": {"must_not_change": ["lid"]},
+            "product_profile": {"category": "travel mug"},
+        },
+        {asset_id},
+    )
+
+    assert identity["confidence"] == 0.91
+    assert identity["primary_asset_id"] == asset_id
+
+    with pytest.raises(ValueError, match="candidate_product_name"):
+        _normalize_n1_observation(
+            {
+                "asset_id": asset_id,
+                "image_role": "clean_product",
+                "contains_target_product": True,
+                "observed_identity": {},
+                "reference_quality": 92,
+            },
+            asset_id,
+        )
+
+    with pytest.raises(ValueError, match="cluster asset"):
+        _normalize_n2_identity(
+            {
+                **identity,
+                "primary_asset_id": "22222222-2222-2222-2222-222222222222",
+            },
+            {asset_id},
+        )
+
+
+def test_n3_to_n6_normalizers_reject_unknown_refs_overlong_prompts_and_duplicate_marketing_sets():
+    from platform_app.services import (
+        _normalize_n3_ledger,
+        _normalize_n4_prompt,
+        _normalize_n5_plans,
+        _normalize_n6_prompt,
+    )
+
+    ledger = _normalize_n3_ledger(
+        {
+            "ledger_version": "2.0.0",
+            "facts": [
+                {
+                    "fact_id": "fact.name.001",
+                    "statement": "Travel mug",
+                    "fact_class": "confirmed",
+                    "confidence": 1,
+                    "evidence_refs": ["product_name"],
+                    "risk_level": "low",
+                    "allowed_uses": ["identity", "visual_prompt", "consumer_copy"],
+                    "review_note": "",
+                }
+            ],
+            "blocked_claim_topics": ["price"],
+            "unresolved_questions": [],
+            "review_summary": {
+                "confirmed_count": 1,
+                "observed_count": 0,
+                "inferred_count": 0,
+                "high_risk_count": 0,
+            },
+        }
+    )
+    identity = {
+        "primary_asset_id": "11111111-1111-1111-1111-111111111111",
+        "supporting_asset_ids": [],
+    }
+    hero = _normalize_n4_prompt(
+        {
+            "slot_id": "1",
+            "main_scene": "pure white commercial studio",
+            "main_action": "none",
+            "visible_text_lines": [],
+            "prompt": "Accurate product on pure white.",
+            "character_count": 31,
+            "reference_plan": {
+                "primary_asset_id": identity["primary_asset_id"],
+                "supporting_asset_ids": [],
+                "include_completed_white_image": False,
+            },
+            "fact_trace": ["fact.name.001"],
+            "inference_trace": [],
+            "rule_refs": ["rule.hero"],
+            "generation_parameters": {
+                "model": "gpt-image-2",
+                "n": 1,
+                "size": "1:1",
+                "resolution": "1k",
+            },
+            "review_required": True,
+        },
+        1,
+        identity,
+        ledger,
+        {"rule.hero"},
+    )
+    assert hero["character_count"] == len(hero["prompt"])
+
+    with pytest.raises(ValueError, match="3500"):
+        _normalize_n4_prompt(
+            {**hero, "prompt": "x" * 3501, "character_count": 3501},
+            1,
+            identity,
+            ledger,
+            {"rule.hero"},
+        )
+
+    slots = [
+        type("Slot", (), {"order": 2, "name": "Benefit", "purpose": "Benefit"})(),
+        type("Slot", (), {"order": 3, "name": "Usage", "purpose": "Usage"})(),
+    ]
+    duplicate_plan = {
+        "plans": [
+            {
+                "slot_order": order,
+                "role": f"role-{order}",
+                "decision_task": f"decision-{order}",
+                "fact_refs": ["fact.name.001"],
+                "inference_refs": [],
+                "main_scene": "kitchen",
+                "main_action": "none",
+                "subject_relationship": "product centered",
+                "composition": "centered",
+                "copy_intent": "",
+                "text_mode": "up_to_3_lines",
+                "localization_notes": [],
+                "must_show": [],
+                "must_avoid": [],
+                "scene_family": "home",
+                "environment": "kitchen",
+                "camera": "eye level",
+            }
+            for order in (2, 3)
+        ]
+    }
+    with pytest.raises(ValueError, match="diversity"):
+        _normalize_n5_plans(duplicate_plan, slots, {"fact.name.001"}, set())
+
+    with pytest.raises(ValueError, match="fact reference"):
+        _normalize_n6_prompt(
+            {
+                "slot_id": "2",
+                "main_scene": "kitchen",
+                "main_action": "none",
+                "visible_text_lines": [],
+                "localized_copy": {
+                    "language": "en-SG",
+                    "lines": [],
+                    "source_fact_refs": ["fact.missing"],
+                    "source_inference_refs": [],
+                },
+                "prompt": "Accurate travel mug in one kitchen scene.",
+                "character_count": 41,
+                "reference_plan": {
+                    "primary_asset_id": identity["primary_asset_id"],
+                    "supporting_asset_ids": [],
+                    "completed_white_result_id": None,
+                },
+                "fact_trace": ["fact.missing"],
+                "inference_trace": [],
+                "rule_refs": [],
+                "generation_parameters": {
+                    "model": "gpt-image-2",
+                    "n": 1,
+                    "size": "1:1",
+                    "resolution": "1k",
+                },
+                "review_required": True,
+            },
+            2,
+            identity,
+            ledger,
+            set(),
+        )
+
+
+def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
+    tmp_path,
+    settings,
+):
+    import json
+
+    from platform_app.models import Asset, Batch, Cluster, OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.services import (
+        LocalStorage,
+        process_prompt_once,
+        request_cluster_preparation,
+        update_project_settings,
+    )
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(
+        seed_key="global-marketplace-baseline-template",
+        platform="global",
+        site="",
+        name="Identity first",
+        status=OutputTemplate.Status.PUBLISHED,
+    )
+    OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = Batch.objects.create(
+        owner=user,
+        name="Needs market",
+        platform="",
+        site="",
+        market="",
+        output_template=template,
+    )
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"image")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="1" * 64,
+        file_size=5,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class IdentityClient:
+        def __init__(self):
+            self.n1_calls = 0
+            self.n2_calls = 0
+            self.later_calls = []
+
+        def observe_images(self, instruction, image_paths):
+            self.n1_calls += 1
+            return {
+                "output_text": json.dumps(
+                    {
+                        "asset_id": str(asset.id),
+                        "image_role": "clean_product",
+                        "contains_target_product": True,
+                        "observed_identity": {"category_candidates": ["travel mug"]},
+                        "reference_quality": 95,
+                        "candidate_product_name": "Travel mug",
+                        "candidate_product_name_confidence": 94,
+                    }
+                )
+            }
+
+        def optimize_prompt(self, payload):
+            text = payload.get("text", "")
+            if "NODE N2" in text:
+                self.n2_calls += 1
+                output = {
+                    "decision": "continue",
+                    "product_name": "Travel mug",
+                    "confidence": 93,
+                    "conflict_state": "unknown",
+                    "primary_asset_id": str(asset.id),
+                    "supporting_asset_ids": [],
+                    "identity_lock": {"must_not_change": ["lid"]},
+                    "product_profile": {"category": "travel mug"},
+                }
+            elif "NODE N3" in text:
+                self.later_calls.append("N3")
+                output = {
+                    "ledger_version": "2.0.0",
+                    "facts": [
+                        {
+                            "fact_id": "fact.name.001",
+                            "statement": "Travel mug",
+                            "fact_class": "confirmed",
+                            "confidence": 1,
+                            "evidence_refs": ["product_name"],
+                            "risk_level": "low",
+                            "allowed_uses": ["identity", "visual_prompt", "consumer_copy"],
+                            "review_note": "",
+                        }
+                    ],
+                    "blocked_claim_topics": ["price"],
+                    "unresolved_questions": [],
+                    "review_summary": {
+                        "confirmed_count": 1,
+                        "observed_count": 0,
+                        "inferred_count": 0,
+                        "high_risk_count": 0,
+                    },
+                }
+            elif "NODE N4" in text:
+                self.later_calls.append("N4")
+                output = {
+                    "slot_id": "1",
+                    "main_scene": "pure white commercial studio",
+                    "main_action": "none",
+                    "visible_text_lines": [],
+                    "prompt": "Accurate travel mug on pure white.",
+                    "character_count": 34,
+                    "reference_plan": {
+                        "primary_asset_id": str(asset.id),
+                        "supporting_asset_ids": [],
+                        "include_completed_white_image": False,
+                    },
+                    "fact_trace": ["fact.name.001"],
+                    "inference_trace": [],
+                    "rule_refs": [],
+                    "generation_parameters": {
+                        "model": "gpt-image-2",
+                        "n": 1,
+                        "size": "1:1",
+                        "resolution": "1k",
+                    },
+                    "review_required": True,
+                }
+            else:
+                raise AssertionError(text)
+            return {"output_text": json.dumps(output)}
+
+    provider = IdentityClient()
+    assert process_prompt_once(provider, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.BLOCKED
+    assert cluster.analysis_snapshot["readiness"]["code"] == "configuration_required"
+    assert [item["node_id"] for item in cluster.analysis_snapshot["prompt_os"]] == ["N1", "N2"]
+    assert provider.n1_calls == 1
+    assert provider.n2_calls == 1
+    assert provider.later_calls == []
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+
+    update_project_settings(
+        batch,
+        {
+            "platform": "shopee",
+            "market": "SG",
+            "seller_tier": "general",
+            "size": "1:1",
+            "resolution": "1k",
+        },
+    )
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+
+    assert process_prompt_once(provider, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY
+    assert provider.n1_calls == 1
+    assert provider.n2_calls == 1
+    assert provider.later_calls == ["N3", "N4"]
+    prompt = PromptVersion.objects.get(cluster=cluster)
+    assert prompt.input_snapshot["_preparation_revision"] == 1
+    assert prompt.input_snapshot["_effective_config_signature"]
+    assert (
+        prompt.evaluation["rule_gate"]["effective_config_signature"]
+        == prompt.input_snapshot["_effective_config_signature"]
+    )
+
+
+def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
+    tmp_path,
+    settings,
+):
+    import json
+
+    from platform_app.models import Asset, Batch, Cluster, OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(
+        platform="global",
+        site="",
+        name="Conflict",
+        status=OutputTemplate.Status.PUBLISHED,
+    )
+    OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = Batch.objects.create(
+        owner=user,
+        name="Conflict",
+        platform="shopee",
+        site="SG",
+        market="SG",
+        output_template=template,
+    )
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"image")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="2" * 64,
+        file_size=5,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    cluster.product_name = "ERP electric kettle"
+    cluster.save(update_fields=["product_name"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class ConflictClient:
+        def observe_images(self, instruction, image_paths):
+            return {
+                "output_text": json.dumps(
+                    {
+                        "asset_id": str(asset.id),
+                        "image_role": "clean_product",
+                        "contains_target_product": True,
+                        "observed_identity": {"category_candidates": ["shoe"]},
+                        "reference_quality": 90,
+                        "candidate_product_name": "Running shoe",
+                        "candidate_product_name_confidence": 95,
+                    }
+                )
+            }
+
+        def optimize_prompt(self, payload):
+            if "NODE N2" not in payload.get("text", ""):
+                raise AssertionError("N3-N7 must not run after an identity conflict")
+            return {
+                "output_text": json.dumps(
+                    {
+                        "decision": "continue",
+                        "product_name": "Running shoe",
+                        "confidence": 96,
+                        "conflict_state": "conflict",
+                        "primary_asset_id": str(asset.id),
+                        "supporting_asset_ids": [],
+                        "identity_lock": {"must_not_change": ["shoe upper"]},
+                        "product_profile": {"category": "shoe"},
+                    }
+                )
+            }
+
+    assert process_prompt_once(ConflictClient(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.BLOCKED
+    assert cluster.product_name == "ERP electric kettle"
+    assert cluster.analysis_snapshot["identity"]["conflict_state"] == "conflict"
+    assert "conflict" in cluster.preparation_error
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0

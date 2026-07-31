@@ -260,11 +260,17 @@ class FakeAPIMartClient:
         return buffer.getvalue()
 
     def observe_images(self, instruction, image_paths):
+        match = re.search(r"^ASSET_ID=(.+)$", instruction, re.MULTILINE)
         return {
             "output_text": json.dumps(
                 {
-                    "product_name": "Demo product",
-                    "confidence": 0.9,
+                    "asset_id": match.group(1).strip() if match else "",
+                    "image_role": "clean_product",
+                    "contains_target_product": True,
+                    "observed_identity": {"category_candidates": ["product"]},
+                    "reference_quality": 90,
+                    "candidate_product_name": "Demo product",
+                    "candidate_product_name_confidence": 0.9,
                     "product_facts": ["visible product reference"],
                     "identity_lock": "Preserve the visible product identity.",
                     "target_consumer": "adult",
@@ -288,6 +294,7 @@ class FakeAPIMartClient:
                 "decision": "continue",
                 "confidence": 90,
                 "product_name": node_input.get("product_name") or "Demo product",
+                "conflict_state": "unknown",
                 "product_profile": {
                     "category": "product",
                     "primary_appearance": "; ".join(observed_facts) or "visible reference",
@@ -316,23 +323,64 @@ class FakeAPIMartClient:
                 ],
                 "blocked_claim_topics": ["price", "certification", "medical_efficacy"],
                 "unresolved_questions": [],
+                "review_summary": {
+                    "confirmed_count": 1,
+                    "observed_count": 0,
+                    "inferred_count": 0,
+                    "high_risk_count": 0,
+                },
             }
         elif "NODE N4" in text:
+            fact_ids = [
+                item.get("fact_id")
+                for item in node_input.get("fact_ledger", {}).get("facts", [])
+                if item.get("fact_id")
+            ]
             output = {
+                "slot_id": str(node_input.get("slot_order")),
                 "main_scene": "pure white commercial studio",
                 "main_action": "none",
                 "visible_text_lines": [],
                 "prompt": "Show the complete accurate product on pure white.",
+                "character_count": 49,
+                "reference_plan": {
+                    "primary_asset_id": node_input.get("primary_asset_id"),
+                    "supporting_asset_ids": node_input.get("supporting_asset_ids", []),
+                    "include_completed_white_image": False,
+                },
+                "fact_trace": fact_ids,
+                "inference_trace": [],
+                "rule_refs": node_input.get("rule_refs", []),
+                "generation_parameters": {
+                    "model": "gpt-image-2",
+                    "n": 1,
+                    "size": node_input.get("size", "1:1"),
+                    "resolution": node_input.get("resolution", "1k"),
+                },
+                "review_required": True,
             }
         elif "NODE N5" in text:
             output = {
                 "plans": [
                     {
                         "slot_order": slot["slot_order"],
+                        "role": slot.get("purpose") or slot.get("name") or f"slot-{slot['slot_order']}",
                         "scene_family": f"scene-{slot['slot_order']}",
-                        "conversion_goal": slot.get("purpose", ""),
+                        "environment": f"environment-{slot['slot_order']}",
+                        "camera": f"camera-{slot['slot_order']}",
+                        "decision_task": slot.get("purpose") or f"decision-{slot['slot_order']}",
+                        "conversion_goal": slot.get("purpose") or f"decision-{slot['slot_order']}",
+                        "fact_refs": [],
+                        "inference_refs": [],
                         "main_scene": f"distinct scene {slot['slot_order']}",
                         "main_action": "none",
+                        "subject_relationship": "product is the clear subject",
+                        "composition": f"composition-{slot['slot_order']}",
+                        "copy_intent": "",
+                        "text_mode": "up_to_3_lines",
+                        "localization_notes": [],
+                        "must_show": [],
+                        "must_avoid": [],
                         "visible_text_lines": [],
                     }
                     for slot in node_input.get("slots", [])
@@ -340,12 +388,40 @@ class FakeAPIMartClient:
             }
         elif "NODE N6" in text:
             slot_order = node_input.get("slot_order")
+            fact_ids = [
+                item.get("fact_id")
+                for item in node_input.get("fact_ledger", {}).get("facts", [])
+                if item.get("fact_id")
+            ]
+            prompt = f"Create demo ecommerce product image slot {slot_order}."
             output = {
-                "slot_order": slot_order,
+                "slot_id": str(slot_order),
                 "main_scene": node_input.get("slot_plan", {}).get("main_scene", "clean ecommerce scene"),
                 "main_action": node_input.get("slot_plan", {}).get("main_action", "none"),
                 "visible_text_lines": node_input.get("slot_plan", {}).get("visible_text_lines", []),
-                "prompt": f"Create demo ecommerce product image slot {slot_order}.",
+                "localized_copy": {
+                    "language": node_input.get("market_context", {}).get("language", "en"),
+                    "lines": node_input.get("slot_plan", {}).get("visible_text_lines", []),
+                    "source_fact_refs": [],
+                    "source_inference_refs": [],
+                },
+                "prompt": prompt,
+                "character_count": len(prompt),
+                "reference_plan": {
+                    "primary_asset_id": node_input.get("primary_asset_id"),
+                    "supporting_asset_ids": node_input.get("supporting_asset_ids", []),
+                    "completed_white_result_id": None,
+                },
+                "fact_trace": fact_ids,
+                "inference_trace": [],
+                "rule_refs": node_input.get("rule_refs", []),
+                "generation_parameters": {
+                    "model": "gpt-image-2",
+                    "n": 1,
+                    "size": node_input.get("size", "1:1"),
+                    "resolution": node_input.get("resolution", "1k"),
+                },
+                "review_required": True,
             }
         else:
             output = {"suggested_prompt": text}
@@ -768,17 +844,31 @@ def _preparation_is_current(cluster_id, revision):
     )
 
 
-def _persist_prompt_terminal(cluster_id, claimed_revision, prompt_values, analysis, status, error, user):
+def _persist_prompt_terminal(
+    cluster_id,
+    claimed_revision,
+    prompt_values,
+    analysis,
+    status,
+    error,
+    user,
+    *,
+    cluster_updates=None,
+):
     with transaction.atomic():
         locked = Cluster.objects.select_for_update().get(id=cluster_id)
         if locked.preparation_status != Cluster.PreparationStatus.PREPARING or _preparation_revision(locked.analysis_snapshot) != claimed_revision:
             return False
         for values in prompt_values:
             PromptVersion.objects.create(cluster=locked, created_by=user, **values)
+        update_fields = ["analysis_snapshot", "preparation_status", "preparation_error", "updated_at"]
+        for field, value in (cluster_updates or {}).items():
+            setattr(locked, field, value)
+            update_fields.append(field)
         locked.analysis_snapshot = analysis
         locked.preparation_status = status
         locked.preparation_error = error
-        locked.save(update_fields=["analysis_snapshot", "preparation_status", "preparation_error", "updated_at"])
+        locked.save(update_fields=list(dict.fromkeys(update_fields)))
         return True
 
 
@@ -942,6 +1032,23 @@ def request_cluster_preparation(cluster, *, auto_generate):
             "updated_at",
         ]
     )
+    return locked
+
+
+@transaction.atomic
+def record_cluster_auto_generate(cluster):
+    batch = Batch.objects.select_for_update().get(id=cluster.batch_id)
+    locked = Cluster.objects.select_for_update().get(id=cluster.id, batch_id=batch.id)
+    if locked.archived_at is not None:
+        raise ValueError("Product is archived")
+    if locked.preparation_status not in {
+        Cluster.PreparationStatus.PENDING,
+        Cluster.PreparationStatus.PREPARING,
+    }:
+        raise ValueError("Product preparation is not waiting")
+    if not locked.auto_generate:
+        locked.auto_generate = True
+        locked.save(update_fields=["auto_generate", "updated_at"])
     return locked
 
 
@@ -1684,9 +1791,10 @@ def compile_slot_prompt(
 ):
     batch = batch or cluster.batch
     template = template or slot.template
-    market = batch.market or batch.site
-    size = batch.size or template.default_size
-    resolution = batch.resolution or template.default_resolution
+    effective_config = _effective_config(batch, cluster)
+    market = effective_config["market"]
+    size = effective_config["size"] or template.default_size
+    resolution = effective_config["resolution"] or template.default_resolution
     consumer = target_consumer_for_cluster(cluster)
     sanitized_style_dna = _cluster_style_dna(cluster, style_dna)
     template_snapshot = _template_snapshot(template, slot)
@@ -1698,7 +1806,7 @@ def compile_slot_prompt(
     product_name = cluster.product_name or "not provided"
     product_facts = cluster.product_facts or "not provided"
     identity_lock = _identity_text(cluster.identity_lock) or "Preserve visible product identity; do not change unprovided attributes."
-    global_requirements = batch.global_prompt or "not provided"
+    global_requirements = effective_config["globalPrompt"] or "not provided"
     creative_requirements = cluster.prompt_override or "not provided"
     scene = main_scene or sanitized_style_dna.get("scene_density") or slot.purpose or "not specified"
     composition = sanitized_style_dna.get("composition") or slot.purpose or "not specified"
@@ -1746,7 +1854,7 @@ def compile_slot_prompt(
         "product_name": cluster.product_name,
         "product_facts": cluster.product_facts,
         "identity_lock": cluster.identity_lock,
-        "global_requirements": batch.global_prompt,
+        "global_requirements": effective_config["globalPrompt"],
         "creative_requirements": cluster.prompt_override,
         "slot_purpose": slot.purpose,
         "target_consumer": consumer,
@@ -1802,6 +1910,15 @@ def _provider_json(response, repair):
         return _json_object(fixed.get("output_text", ""))
 
 
+def _validated_provider_json(response, normalize, repair):
+    text = response.get("output_text", "")
+    try:
+        return normalize(_json_object(text))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        fixed = repair(text)
+        return normalize(_json_object(fixed.get("output_text", "")))
+
+
 def _json_repair_prompt(text, schema):
     return "\n".join(
         [
@@ -1820,8 +1937,10 @@ def _repair_observation_json(client, text):
             "text": _json_repair_prompt(
                 text,
                 (
-                    'Required schema: {"product_name":"string","confidence":0.0,'
-                    '"product_facts":["string"],"identity_lock":"string","target_consumer":"string"}.'
+                    'Required schema: {"asset_id":"string","image_role":"string",'
+                    '"contains_target_product":true,"observed_identity":{},'
+                    '"reference_quality":0,"candidate_product_name":"string",'
+                    '"candidate_product_name_confidence":0.0}.'
                 ),
             )
         }
@@ -1849,6 +1968,378 @@ def _string_list(value):
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []
+
+
+def _required_string(payload, field):
+    value = payload.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} is required")
+    return value.strip()
+
+
+def _normalized_confidence(value, field="confidence"):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be numeric")
+    confidence = float(value)
+    if confidence > 1:
+        confidence /= 100
+    if not 0 <= confidence <= 1:
+        raise ValueError(f"{field} must be between 0 and 1")
+    return confidence
+
+
+def _required_string_list(payload, field):
+    value = payload.get(field)
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError(f"{field} must be an array of strings")
+    return [item.strip() for item in value if item.strip()]
+
+
+def _normalize_n1_observation(payload, expected_asset_id):
+    if not isinstance(payload, dict):
+        raise ValueError("N1 output must be an object")
+    asset_id = _required_string(payload, "asset_id")
+    if asset_id != str(expected_asset_id):
+        raise ValueError("N1 asset_id does not match the requested cluster asset")
+    image_role = _required_string(payload, "image_role")
+    contains_target = payload.get("contains_target_product")
+    if not isinstance(contains_target, bool):
+        raise ValueError("contains_target_product must be boolean")
+    observed_identity = payload.get("observed_identity")
+    if not isinstance(observed_identity, dict):
+        raise ValueError("observed_identity must be an object")
+    reference_quality = payload.get("reference_quality")
+    if (
+        isinstance(reference_quality, bool)
+        or not isinstance(reference_quality, (int, float))
+        or not 0 <= reference_quality <= 100
+    ):
+        raise ValueError("reference_quality must be between 0 and 100")
+    candidate_name = payload.get("candidate_product_name", payload.get("product_name"))
+    if not isinstance(candidate_name, str) or not candidate_name.strip():
+        raise ValueError("candidate_product_name is required")
+    candidate_confidence = payload.get(
+        "candidate_product_name_confidence",
+        payload.get("confidence"),
+    )
+    normalized = copy.deepcopy(payload)
+    normalized.update(
+        {
+            "asset_id": asset_id,
+            "image_role": image_role,
+            "contains_target_product": contains_target,
+            "observed_identity": observed_identity,
+            "reference_quality": reference_quality,
+            "candidate_product_name": candidate_name.strip(),
+            "candidate_product_name_confidence": _normalized_confidence(
+                candidate_confidence,
+                "candidate_product_name_confidence",
+            ),
+        }
+    )
+    return normalized
+
+
+def _normalize_n2_identity(payload, valid_asset_ids):
+    if not isinstance(payload, dict):
+        raise ValueError("N2 output must be an object")
+    valid_asset_ids = {str(asset_id) for asset_id in valid_asset_ids}
+    decision = _required_string(payload, "decision")
+    if decision not in {"continue", "needs_input"}:
+        raise ValueError("decision must be continue or needs_input")
+    conflict_state = _required_string(payload, "conflict_state")
+    if conflict_state not in {"match", "unknown", "conflict"}:
+        raise ValueError("conflict_state must be match, unknown, or conflict")
+    product_profile = payload.get("product_profile")
+    identity_lock = payload.get("identity_lock")
+    if not isinstance(product_profile, dict):
+        raise ValueError("product_profile must be an object")
+    if not isinstance(identity_lock, dict):
+        raise ValueError("identity_lock must be an object")
+    primary_asset_id = payload.get("primary_asset_id")
+    if primary_asset_id is not None:
+        primary_asset_id = str(primary_asset_id)
+        if primary_asset_id not in valid_asset_ids:
+            raise ValueError("primary_asset_id must identify a cluster asset")
+    if decision == "continue" and primary_asset_id is None:
+        raise ValueError("primary_asset_id is required when decision is continue")
+    supporting = payload.get("supporting_asset_ids")
+    if not isinstance(supporting, list):
+        raise ValueError("supporting_asset_ids must be an array")
+    supporting = [str(asset_id) for asset_id in supporting]
+    if len(supporting) > 3 or len(supporting) != len(set(supporting)):
+        raise ValueError("supporting_asset_ids must contain at most three unique cluster assets")
+    if any(asset_id not in valid_asset_ids or asset_id == primary_asset_id for asset_id in supporting):
+        raise ValueError("supporting_asset_ids must identify distinct cluster assets")
+    normalized = copy.deepcopy(payload)
+    normalized.update(
+        {
+            "decision": decision,
+            "product_name": _required_string(payload, "product_name"),
+            "confidence": _normalized_confidence(payload.get("confidence")),
+            "conflict_state": conflict_state,
+            "primary_asset_id": primary_asset_id,
+            "supporting_asset_ids": supporting,
+            "identity_lock": identity_lock,
+            "product_profile": product_profile,
+        }
+    )
+    return normalized
+
+
+def _normalize_n3_ledger(payload, known_evidence_refs=None):
+    if not isinstance(payload, dict):
+        raise ValueError("N3 output must be an object")
+    ledger_version = _required_string(payload, "ledger_version")
+    facts = payload.get("facts")
+    if not isinstance(facts, list):
+        raise ValueError("facts must be an array")
+    allowed_classes = {"confirmed", "observed", "inferred"}
+    allowed_uses = {
+        "identity",
+        "visual_prompt",
+        "scene_planning",
+        "consumer_copy",
+        "consumer_copy_pending_review",
+        "blocked",
+    }
+    normalized_facts = []
+    seen_ids = set()
+    for item in facts:
+        if not isinstance(item, dict):
+            raise ValueError("each fact must be an object")
+        fact_id = _required_string(item, "fact_id")
+        if fact_id in seen_ids:
+            raise ValueError("fact_id values must be unique")
+        seen_ids.add(fact_id)
+        fact_class = _required_string(item, "fact_class")
+        if fact_class not in allowed_classes:
+            raise ValueError("fact_class is invalid")
+        risk_level = _required_string(item, "risk_level")
+        evidence_refs = _required_string_list(item, "evidence_refs")
+        if known_evidence_refs is not None and any(
+            value not in known_evidence_refs for value in evidence_refs
+        ):
+            raise ValueError("evidence_refs contains an unknown evidence reference")
+        uses = _required_string_list(item, "allowed_uses")
+        if any(value not in allowed_uses for value in uses):
+            raise ValueError("allowed_uses contains an invalid value")
+        if fact_class == "inferred" and risk_level == "high":
+            uses = ["blocked"]
+        normalized_item = copy.deepcopy(item)
+        normalized_item.update(
+            {
+                "fact_id": fact_id,
+                "statement": _required_string(item, "statement"),
+                "fact_class": fact_class,
+                "confidence": _normalized_confidence(item.get("confidence")),
+                "evidence_refs": evidence_refs,
+                "risk_level": risk_level,
+                "allowed_uses": uses,
+                "review_note": str(item.get("review_note") or ""),
+            }
+        )
+        normalized_facts.append(normalized_item)
+    blocked_claim_topics = _required_string_list(payload, "blocked_claim_topics")
+    unresolved_questions = _required_string_list(payload, "unresolved_questions")
+    review_summary = payload.get("review_summary")
+    if not isinstance(review_summary, dict):
+        raise ValueError("review_summary must be an object")
+    normalized = copy.deepcopy(payload)
+    normalized.update(
+        {
+            "ledger_version": ledger_version,
+            "facts": normalized_facts,
+            "blocked_claim_topics": blocked_claim_topics,
+            "unresolved_questions": unresolved_questions,
+            "review_summary": {
+                "confirmed_count": sum(item["fact_class"] == "confirmed" for item in normalized_facts),
+                "observed_count": sum(item["fact_class"] == "observed" for item in normalized_facts),
+                "inferred_count": sum(item["fact_class"] == "inferred" for item in normalized_facts),
+                "high_risk_count": sum(item["risk_level"] == "high" for item in normalized_facts),
+            },
+        }
+    )
+    return normalized
+
+
+def _validate_known_refs(refs, known, label):
+    if any(ref not in known for ref in refs):
+        kind = {"fact_refs": "fact", "inference_refs": "inference", "rule_refs": "rule"}[label]
+        raise ValueError(f"{label} contains an unknown {kind} reference")
+
+
+def _normalize_generation_parameters(payload):
+    parameters = payload.get("generation_parameters")
+    if not isinstance(parameters, dict):
+        raise ValueError("generation_parameters must be an object")
+    if parameters.get("model") != "gpt-image-2" or parameters.get("n") != 1:
+        raise ValueError("generation_parameters must use gpt-image-2 with n=1")
+    if not isinstance(parameters.get("size"), str) or not isinstance(parameters.get("resolution"), str):
+        raise ValueError("generation_parameters size and resolution are required")
+    return copy.deepcopy(parameters)
+
+
+def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs, *, hero):
+    if not isinstance(payload, dict):
+        raise ValueError("compiled prompt output must be an object")
+    raw_slot = payload.get("slot_id", payload.get("slot_order"))
+    try:
+        normalized_slot = int(raw_slot)
+    except (TypeError, ValueError):
+        raise ValueError("slot_id must identify the requested slot") from None
+    if normalized_slot != int(slot_order):
+        raise ValueError("slot_id must identify the requested slot")
+    prompt = _required_string(payload, "prompt")
+    if len(prompt) > 3500:
+        raise ValueError("prompt must not exceed 3500 characters")
+    main_scene = _required_string(payload, "main_scene")
+    main_action = _required_string(payload, "main_action")
+    visible_text_lines = _required_string_list(payload, "visible_text_lines")
+    if len(visible_text_lines) > 3 or (hero and visible_text_lines):
+        raise ValueError("visible_text_lines violate the slot limit")
+    if hero and main_action != "none":
+        raise ValueError("standard white-background prompt main_action must be none")
+    reference_plan = payload.get("reference_plan")
+    if not isinstance(reference_plan, dict):
+        raise ValueError("reference_plan must be an object")
+    primary_asset_id = reference_plan.get("primary_asset_id")
+    if str(primary_asset_id) != str(identity.get("primary_asset_id")):
+        raise ValueError("reference_plan primary_asset_id must match N2")
+    supporting = reference_plan.get("supporting_asset_ids")
+    if not isinstance(supporting, list) or [str(item) for item in supporting] != [
+        str(item) for item in identity.get("supporting_asset_ids", [])
+    ]:
+        raise ValueError("reference_plan supporting_asset_ids must match N2")
+    fact_ids = {item["fact_id"] for item in ledger["facts"]}
+    inferred_ids = {
+        item["fact_id"] for item in ledger["facts"] if item["fact_class"] == "inferred"
+    }
+    fact_trace = _required_string_list(payload, "fact_trace")
+    inference_trace = _required_string_list(payload, "inference_trace")
+    resolved_rule_refs = _required_string_list(payload, "rule_refs")
+    _validate_known_refs(fact_trace, fact_ids, "fact_refs")
+    _validate_known_refs(inference_trace, inferred_ids, "inference_refs")
+    _validate_known_refs(resolved_rule_refs, set(rule_refs), "rule_refs")
+    if payload.get("review_required") is not True:
+        raise ValueError("review_required must be true")
+    normalized = copy.deepcopy(payload)
+    normalized.update(
+        {
+            "slot_id": str(normalized_slot),
+            "main_scene": main_scene,
+            "main_action": main_action,
+            "visible_text_lines": visible_text_lines,
+            "prompt": prompt,
+            "character_count": len(prompt),
+            "reference_plan": copy.deepcopy(reference_plan),
+            "fact_trace": fact_trace,
+            "inference_trace": inference_trace,
+            "rule_refs": resolved_rule_refs,
+            "generation_parameters": _normalize_generation_parameters(payload),
+            "review_required": True,
+        }
+    )
+    return normalized
+
+
+def _normalize_n4_prompt(payload, slot_order, identity, ledger, rule_refs):
+    return _normalize_compiled_prompt(
+        payload,
+        slot_order,
+        identity,
+        ledger,
+        rule_refs,
+        hero=True,
+    )
+
+
+def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids):
+    plans = _normalized_marketing_plans(payload, marketing_slots)
+    expected = {slot.order for slot in marketing_slots}
+    if set(plans) != expected:
+        raise ValueError("marketing plan must contain exactly one plan for every input slot")
+    required_strings = (
+        "role",
+        "decision_task",
+        "main_scene",
+        "main_action",
+        "subject_relationship",
+        "composition",
+        "text_mode",
+        "scene_family",
+        "environment",
+        "camera",
+    )
+    required_lists = (
+        "fact_refs",
+        "inference_refs",
+        "localization_notes",
+        "must_show",
+        "must_avoid",
+    )
+    signatures = set()
+    normalized = []
+    for slot in marketing_slots:
+        plan = copy.deepcopy(plans[slot.order])
+        for field in required_strings:
+            plan[field] = _required_string(plan, field)
+        if not isinstance(plan.get("copy_intent"), str):
+            raise ValueError("copy_intent must be a string")
+        for field in required_lists:
+            plan[field] = _required_string_list(plan, field)
+        _validate_known_refs(plan["fact_refs"], set(fact_ids), "fact_refs")
+        _validate_known_refs(plan["inference_refs"], set(inference_ids), "inference_refs")
+        signature = tuple(
+            plan[field].strip().casefold()
+            for field in ("scene_family", "environment", "camera", "main_action", "composition")
+        )
+        if signature in signatures:
+            raise ValueError("marketing plan diversity combination is repeated")
+        signatures.add(signature)
+        normalized.append(plan)
+    result = copy.deepcopy(payload)
+    result["plans"] = normalized
+    return result
+
+
+def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
+    normalized = _normalize_compiled_prompt(
+        payload,
+        slot_order,
+        identity,
+        ledger,
+        rule_refs,
+        hero=False,
+    )
+    localized_copy = payload.get("localized_copy")
+    if not isinstance(localized_copy, dict):
+        raise ValueError("localized_copy must be an object")
+    localized_copy = copy.deepcopy(localized_copy)
+    localized_copy["language"] = _required_string(localized_copy, "language")
+    localized_copy["lines"] = _required_string_list(localized_copy, "lines")
+    localized_copy["source_fact_refs"] = _required_string_list(
+        localized_copy,
+        "source_fact_refs",
+    )
+    localized_copy["source_inference_refs"] = _required_string_list(
+        localized_copy,
+        "source_inference_refs",
+    )
+    fact_ids = {item["fact_id"] for item in ledger["facts"]}
+    inference_ids = {
+        item["fact_id"] for item in ledger["facts"] if item["fact_class"] == "inferred"
+    }
+    _validate_known_refs(localized_copy["source_fact_refs"], fact_ids, "fact_refs")
+    _validate_known_refs(
+        localized_copy["source_inference_refs"],
+        inference_ids,
+        "inference_refs",
+    )
+    if localized_copy["lines"] != normalized["visible_text_lines"]:
+        raise ValueError("localized_copy lines must match visible_text_lines")
+    normalized["localized_copy"] = localized_copy
+    return normalized
 
 
 def _slot_prompt_map(payload):
@@ -1902,7 +2393,7 @@ def _node_snapshot(node_id, model_id, input_snapshot, output_snapshot, *, slot_i
     }
 
 
-def _prompt_node_json(client, node_id, instruction, payload):
+def _prompt_node_json(client, node_id, instruction, payload, normalize=None, repair=None):
     node_template = _published_prompt_node(node_id)
     system_instruction = node_template.instruction if node_template is not None else ""
     response = client.optimize_prompt(
@@ -1919,8 +2410,7 @@ def _prompt_node_json(client, node_id, instruction, payload):
             )
         }
     )
-    return _provider_json(
-        response,
+    repair = repair or (
         lambda text: client.optimize_prompt(
             {
                 "text": _json_repair_prompt(
@@ -1928,51 +2418,11 @@ def _prompt_node_json(client, node_id, instruction, payload):
                     f"Return the valid JSON object required by NODE {node_id}.",
                 )
             }
-        ),
-    )
-
-
-def _fact_ledger(payload):
-    facts = []
-    for index, item in enumerate(payload.get("facts", []), start=1):
-        if not isinstance(item, dict) or not str(item.get("statement") or "").strip():
-            continue
-        fact_class = str(item.get("fact_class") or "inferred").lower()
-        if fact_class not in {"confirmed", "observed", "inferred"}:
-            fact_class = "inferred"
-        try:
-            confidence = min(max(float(item.get("confidence", 0)), 0), 1)
-        except (TypeError, ValueError):
-            confidence = 0
-        risk = str(item.get("risk_level") or "medium").lower()
-        allowed = _string_list(item.get("allowed_uses"))
-        if fact_class == "inferred" and risk == "high":
-            allowed = ["blocked"]
-        facts.append(
-            {
-                "fact_id": str(item.get("fact_id") or f"fact.{index:03d}"),
-                "statement": str(item["statement"]).strip(),
-                "fact_class": fact_class,
-                "confidence": confidence,
-                "evidence_refs": _string_list(item.get("evidence_refs")),
-                "risk_level": risk,
-                "allowed_uses": allowed,
-                "review_note": str(item.get("review_note") or ""),
-            }
         )
-    counts = {kind: sum(item["fact_class"] == kind for item in facts) for kind in ("confirmed", "observed", "inferred")}
-    return {
-        "ledger_version": "2.0.0",
-        "facts": facts,
-        "blocked_claim_topics": _string_list(payload.get("blocked_claim_topics")),
-        "unresolved_questions": _string_list(payload.get("unresolved_questions")),
-        "review_summary": {
-            "confirmed_count": counts["confirmed"],
-            "observed_count": counts["observed"],
-            "inferred_count": counts["inferred"],
-            "high_risk_count": sum(item["risk_level"] == "high" for item in facts),
-        },
-    }
+    )
+    if normalize is None:
+        return _provider_json(response, repair)
+    return _validated_provider_json(response, normalize, repair)
 
 
 def _identity_facts(identity):
@@ -2052,6 +2502,95 @@ def _repair_marketing_plan_schema(client, marketing_plan, marketing_slots):
     return _json_object(response.get("output_text", ""))
 
 
+def _repair_marketing_plan_response(client, text, marketing_slots):
+    try:
+        marketing_plan = _json_object(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        marketing_plan = {}
+    return {
+        "output_text": json.dumps(
+            _repair_marketing_plan_schema(client, marketing_plan, marketing_slots),
+            ensure_ascii=False,
+        )
+    }
+
+
+def _identity_input_signature(cluster, cluster_assets):
+    return _snapshot_hash(
+        {
+            "cluster_version": cluster.version,
+            "product_name": cluster.product_name,
+            "product_facts": cluster.product_facts,
+            "relation_type": cluster.relation_type,
+            "assets": [
+                {
+                    "asset_id": str(relation.asset_id),
+                    "content_hash": relation.asset.sha256,
+                    "role": relation.role,
+                    "order": relation.order,
+                }
+                for relation in cluster_assets
+                if relation.asset.kind == Asset.Kind.IMAGE
+            ],
+        }
+    )
+
+
+def _effective_config_ready(config):
+    return (
+        config.get("platform") in SUPPORTED_PLATFORMS
+        and isinstance(config.get("market"), str)
+        and bool(config["market"].strip())
+    )
+
+
+def _effective_config_signature(batch, cluster):
+    return _snapshot_hash(_configuration_signature(batch, cluster))
+
+
+def _identity_reference_paths(cluster_assets, identity):
+    paths_by_id = {
+        str(relation.asset_id): relation.asset.storage_path
+        for relation in cluster_assets
+        if relation.asset.kind == Asset.Kind.IMAGE
+    }
+    asset_ids = [
+        identity.get("primary_asset_id"),
+        *identity.get("supporting_asset_ids", [])[:3],
+    ]
+    references = [
+        paths_by_id[str(asset_id)]
+        for asset_id in asset_ids
+        if asset_id is not None and str(asset_id) in paths_by_id
+    ]
+    if not references:
+        raise ValueError("N2 did not approve a valid product reference")
+    return list(dict.fromkeys(references))
+
+
+def _market_language(market):
+    return {
+        "MY": "ms-MY",
+        "TH": "th-TH",
+        "VN": "vi-VN",
+        "ID": "id-ID",
+        "TW": "zh-TW",
+        "BR": "pt-BR",
+    }.get(str(market or "").upper(), "en")
+
+
+def _marketing_diversity_valid(marketing_plan):
+    plans = marketing_plan.get("plans", [])
+    signatures = [
+        tuple(
+            str(plan.get(field) or "").strip().casefold()
+            for field in ("scene_family", "environment", "camera", "main_action", "composition")
+        )
+        for plan in plans
+    ]
+    return len(signatures) == len(set(signatures)) and all(all(signature) for signature in signatures)
+
+
 def process_prompt_once(client=None, storage=None):
     client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
@@ -2076,122 +2615,226 @@ def process_prompt_once(client=None, storage=None):
         return 0
     claimed_revision = _preparation_revision(cluster.analysis_snapshot)
     try:
-        node_snapshots = []
         cluster_assets = list(cluster.cluster_assets.select_related("asset").order_by("order", "id"))
-        references = [item.asset.storage_path for item in cluster_assets if item.asset.kind == Asset.Kind.IMAGE]
-        observations = []
-        observation_template = _published_prompt_node("N1")
-        observation_system = (
-            observation_template.instruction
-            if observation_template is not None
-            else "Observe only visible product evidence. Return one strict JSON object."
+        image_relations = [
+            relation for relation in cluster_assets if relation.asset.kind == Asset.Kind.IMAGE
+        ]
+        if not image_relations:
+            raise ValueError("N1 requires at least one product image")
+        previous = cluster.analysis_snapshot if isinstance(cluster.analysis_snapshot, dict) else {}
+        current_identity_signature = _identity_input_signature(cluster, cluster_assets)
+        identity_revision = previous.get("identity_revision", {})
+        reuse_identity = (
+            isinstance(identity_revision, dict)
+            and identity_revision.get("signature") == current_identity_signature
+            and isinstance(previous.get("observations"), list)
+            and isinstance(previous.get("identity"), dict)
         )
-        with storage.reference_paths(references) as image_paths:
-            for relation, image_path in zip(cluster_assets, image_paths):
-                observation_input = {
-                    "asset_id": str(relation.asset_id),
-                    "asset_kind": "owned_product",
-                    "product_name": cluster.product_name,
-                    "confirmed_points": _string_list(cluster.product_facts),
-                }
-                observation = _provider_json(
-                    client.observe_images(
-                        "\n".join(
-                            [
-                                "NODE N1",
-                                observation_system,
-                                "Observe only visible product evidence in this single owned-product image.",
-                                "Return strict JSON with image_role, product visibility, observed_identity, and recommended_use.",
-                            ]
+        if reuse_identity:
+            observations = copy.deepcopy(previous["observations"])
+            identity = copy.deepcopy(previous["identity"])
+            node_snapshots = [
+                copy.deepcopy(snapshot)
+                for snapshot in previous.get("prompt_os", [])
+                if snapshot.get("node_id") in {"N1", "N2"}
+            ]
+        else:
+            node_snapshots = []
+            observations = []
+            observation_template = _published_prompt_node("N1")
+            observation_system = (
+                observation_template.instruction
+                if observation_template is not None
+                else "Observe only visible product evidence. Return one strict JSON object."
+            )
+            references = [relation.asset.storage_path for relation in image_relations]
+            with storage.reference_paths(references) as image_paths:
+                for relation, image_path in zip(image_relations, image_paths):
+                    observation_input = {
+                        "asset_id": str(relation.asset_id),
+                        "asset_kind": "owned_product",
+                        "product_name": cluster.product_name,
+                        "confirmed_points": _string_list(cluster.product_facts),
+                    }
+                    observation = _validated_provider_json(
+                        client.observe_images(
+                            "\n".join(
+                                [
+                                    "NODE N1",
+                                    f"ASSET_ID={relation.asset_id}",
+                                    observation_system,
+                                    "Observe only visible product evidence in this single owned-product image.",
+                                    "Return strict JSON with visible identity, candidate product name, confidence, role, and reference quality.",
+                                ]
+                            ),
+                            [image_path],
                         ),
-                        [image_path],
-                    ),
-                    lambda text: _repair_observation_json(client, text),
-                )
-                observation.setdefault("asset_id", str(relation.asset_id))
-                observations.append(observation)
-                node_snapshots.append(
-                    _node_snapshot("N1", settings.APIMART_VISION_MODEL, observation_input, observation)
-                )
+                        lambda value, asset_id=relation.asset_id: _normalize_n1_observation(
+                            value,
+                            asset_id,
+                        ),
+                        lambda text: _repair_observation_json(client, text),
+                    )
+                    observations.append(observation)
+                    node_snapshots.append(
+                        _node_snapshot(
+                            "N1",
+                            settings.APIMART_VISION_MODEL,
+                            observation_input,
+                            observation,
+                        )
+                    )
 
-        observed_name = next(
-            (
-                str(item.get("product_name") or item.get("name") or "").strip()
+            observed_name = next(
+                (
+                    item["candidate_product_name"]
+                    for item in sorted(
+                        observations,
+                        key=lambda value: value["candidate_product_name_confidence"],
+                        reverse=True,
+                    )
+                    if item["contains_target_product"]
+                ),
+                "",
+            )
+            observed_facts = [
+                fact
                 for item in observations
-                if str(item.get("product_name") or item.get("name") or "").strip()
-            ),
-            "",
-        )
+                for fact in _string_list(item.get("product_facts") or item.get("facts"))
+            ]
+            confirmed_product_name = cluster.product_name.strip()
+            if confirmed_product_name == "名称待确认":
+                confirmed_product_name = ""
+            identity_input = {
+                "product_name": confirmed_product_name or observed_name,
+                "confirmed_points": _string_list(cluster.product_facts) or observed_facts,
+                "relation_type": cluster.relation_type,
+                "observations": observations,
+                "max_supporting_images": 3,
+            }
+            valid_asset_ids = {str(relation.asset_id) for relation in image_relations}
+            identity = _prompt_node_json(
+                client,
+                "N2",
+                "Merge owned observations into one product identity. Report ERP/visual conflict_state, select one primary asset, at most three supporting assets, and an identity lock.",
+                identity_input,
+                normalize=lambda value: _normalize_n2_identity(value, valid_asset_ids),
+            )
+            node_snapshots.append(
+                _node_snapshot("N2", settings.APIMART_PROMPT_MODEL, identity_input, identity)
+            )
+
+        confirmed_product_name = cluster.product_name.strip()
+        if confirmed_product_name == "名称待确认":
+            confirmed_product_name = ""
+        product_name = str(confirmed_product_name or identity.get("product_name") or "").strip()
+        identity_lock = identity["identity_lock"]
+        identity_facts = _identity_facts(identity)
         observed_facts = [
             fact
             for item in observations
             for fact in _string_list(item.get("product_facts") or item.get("facts"))
         ]
-        confirmed_product_name = cluster.product_name.strip()
-        if confirmed_product_name == "名称待确认":
-            confirmed_product_name = ""
-        identity_input = {
-            "product_name": confirmed_product_name or observed_name,
-            "confirmed_points": _string_list(cluster.product_facts) or observed_facts,
-            "relation_type": cluster.relation_type,
-            "observations": observations,
-            "max_supporting_images": 3,
+        product_facts = (
+            cluster.product_facts
+            or "; ".join(observed_facts)
+            or identity_facts
+        )
+        cluster_updates = {
+            "product_name": product_name,
+            "name": product_name or cluster.name,
+            "product_facts": product_facts,
+            "identity_lock": _identity_text(identity_lock),
         }
-        identity = _prompt_node_json(
-            client,
-            "N2",
-            "Merge owned observations into one product identity. Select one primary asset, at most three supporting assets, and an identity lock.",
-            identity_input,
-        )
-        node_snapshots.append(
-            _node_snapshot("N2", settings.APIMART_PROMPT_MODEL, identity_input, identity)
-        )
-        product_name = str(confirmed_product_name or identity.get("product_name") or "").strip()
-        confidence = float(identity.get("confidence", 0)) / (100 if float(identity.get("confidence", 0)) > 1 else 1)
-        if not confirmed_product_name and (
-            identity.get("decision") != "continue" or confidence < 0.5 or not product_name
-        ):
-            analysis = {"observations": observations, "identity": identity, "prompt_os": node_snapshots}
-            analysis["_preparation_revision"] = claimed_revision
-            with transaction.atomic():
-                locked = Cluster.objects.select_for_update().get(id=cluster.id)
-                if locked.preparation_status != Cluster.PreparationStatus.PREPARING or _preparation_revision(locked.analysis_snapshot) != claimed_revision:
-                    return 1
-                locked.product_name = product_name
-                locked.analysis_snapshot = analysis
-                locked.preparation_status = Cluster.PreparationStatus.BLOCKED
-                locked.preparation_error = "product identity needs confirmation"
-                locked.save(update_fields=["product_name", "analysis_snapshot", "preparation_status", "preparation_error", "updated_at"])
+        for field, value in cluster_updates.items():
+            setattr(cluster, field, value)
+        identity_signature = _identity_input_signature(cluster, cluster_assets)
+        analysis = {
+            "observations": observations,
+            "identity": identity,
+            "prompt_os": node_snapshots,
+            "identity_revision": {
+                "signature": identity_signature,
+                "cluster_version": cluster.version,
+                "asset_ids": [str(relation.asset_id) for relation in image_relations],
+                "preparation_revision": claimed_revision,
+            },
+            "_preparation_revision": claimed_revision,
+        }
+        if identity["decision"] != "continue" or identity["conflict_state"] == "conflict":
+            code = (
+                "identity_conflict"
+                if identity["conflict_state"] == "conflict"
+                else "identity_needs_input"
+            )
+            if identity["conflict_state"] == "conflict" and confirmed_product_name:
+                cluster_updates["product_name"] = confirmed_product_name
+                cluster_updates["name"] = cluster.name
+            analysis["readiness"] = {"status": "blocked", "code": code}
+            _persist_prompt_terminal(
+                cluster.id,
+                claimed_revision,
+                [],
+                analysis,
+                Cluster.PreparationStatus.BLOCKED,
+                f"{code}: product identity requires confirmation",
+                cluster.batch.owner,
+                cluster_updates=cluster_updates,
+            )
             return 1
 
-        identity_lock = identity.get("identity_lock") or {}
-        identity_facts = _identity_facts(identity)
-        Cluster.objects.filter(id=cluster.id).update(
-            product_name=product_name,
-            name=product_name,
-            product_facts="; ".join(identity_input["confirmed_points"]) or identity_facts or cluster.product_facts,
-            identity_lock=_identity_text(identity_lock),
-            updated_at=timezone.now(),
-        )
-        cluster.refresh_from_db()
+        effective_config = _effective_config(cluster.batch, cluster)
+        if not _effective_config_ready(effective_config):
+            analysis["readiness"] = {
+                "status": "waiting",
+                "code": "configuration_required",
+                "required_fields": ["platform", "market"],
+            }
+            _persist_prompt_terminal(
+                cluster.id,
+                claimed_revision,
+                [],
+                analysis,
+                Cluster.PreparationStatus.BLOCKED,
+                "configuration_required: select platform and market",
+                cluster.batch.owner,
+                cluster_updates=cluster_updates,
+            )
+            return 1
+
+        config_signature = _effective_config_signature(cluster.batch, cluster)
+        approved_references = _identity_reference_paths(cluster_assets, identity)
         ledger_input = {
-            "product_name": cluster.product_name,
-            "confirmed_points": _string_list(cluster.product_facts),
-            "product_profile": identity.get("product_profile", {}),
+            "product_name": product_name,
+            "confirmed_points": _string_list(product_facts),
+            "product_profile": identity["product_profile"],
             "identity_lock": identity_lock,
             "owned_observations": observations,
             "market_context": {
-                "platform": cluster.batch.platform,
-                "market": cluster.batch.market or cluster.batch.site,
+                "platform": effective_config["platform"],
+                "market": effective_config["market"],
+                "language": _market_language(effective_config["market"]),
             },
         }
-        ledger = _fact_ledger(
-            _prompt_node_json(
-                client,
-                "N3",
-                "Classify every fact as confirmed, observed, or inferred with confidence, risk, evidence, and allowed uses.",
-                ledger_input,
-            )
+        known_evidence_refs = {
+            "product_name",
+            "confirmed_points",
+            *[f"asset:{item['asset_id']}" for item in observations],
+            *[
+                f"observation:{snapshot['snapshot_id']}"
+                for snapshot in node_snapshots
+                if snapshot.get("node_id") == "N1"
+            ],
+        }
+        ledger = _prompt_node_json(
+            client,
+            "N3",
+            "Classify every fact as confirmed, observed, or inferred with confidence, risk, evidence, and allowed uses.",
+            ledger_input,
+            normalize=lambda value: _normalize_n3_ledger(
+                value,
+                known_evidence_refs,
+            ),
         )
         node_snapshots.append(
             _node_snapshot("N3", settings.APIMART_PROMPT_MODEL, ledger_input, ledger)
@@ -2206,21 +2849,44 @@ def process_prompt_once(client=None, storage=None):
         marketing_slots = [slot for slot in generated_slots if slot.id != hero_slot.id]
         compiled_by_slot = {}
 
+        hero_rules = _applicable_rules(cluster.batch, hero_slot)
+        hero_rule_refs = {
+            str(rule.get("rule_id")) for rule in hero_rules if rule.get("rule_id")
+        }
         hero_input = {
             "slot_order": hero_slot.order,
-            "product_name": cluster.product_name,
+            "role": "standard_white_background",
+            "product_name": product_name,
+            "product_profile": identity["product_profile"],
             "identity_lock": identity_lock,
             "fact_ledger": ledger,
+            "primary_asset_id": identity["primary_asset_id"],
+            "supporting_asset_ids": identity["supporting_asset_ids"],
             "resolved_rule_directives": [
-                rule.get("prompt_directive") for rule in _applicable_rules(cluster.batch, hero_slot)
+                rule.get("prompt_directive") for rule in hero_rules
             ],
-            "prompt_limits": {"max_characters": 3500, "max_text_lines": 0},
+            "rule_refs": sorted(hero_rule_refs),
+            "size": effective_config["size"],
+            "resolution": effective_config["resolution"],
+            "prompt_limits": {
+                "max_characters": 3500,
+                "max_text_lines": 0,
+                "max_main_scenes": 1,
+                "max_main_actions": 1,
+            },
         }
         hero_plan = _prompt_node_json(
             client,
             "N4",
             "Compile the standard white-background product hero. One scene, no action, no new visible text.",
             hero_input,
+            normalize=lambda value: _normalize_n4_prompt(
+                value,
+                hero_slot.order,
+                identity,
+                ledger,
+                hero_rule_refs,
+            ),
         )
         node_snapshots.append(
             _node_snapshot("N4", settings.APIMART_PROMPT_MODEL, hero_input, hero_plan, slot_id=hero_slot.id)
@@ -2237,74 +2903,130 @@ def process_prompt_once(client=None, storage=None):
             node_name="N4",
             node_template=None,
         )
+        compiled_by_slot[hero_slot.id]["reference_snapshot"] = approved_references
+        compiled_by_slot[hero_slot.id]["input_snapshot"]["reference_snapshot"] = approved_references
+        compiled_by_slot[hero_slot.id]["node_output"] = hero_plan
 
-        marketing_input = {
-            "product_name": cluster.product_name,
-            "identity_lock": identity_lock,
-            "fact_ledger": ledger,
-            "slots": [
-                {"slot_order": slot.order, "name": slot.name, "purpose": slot.purpose}
-                for slot in marketing_slots
-            ],
-            "seed_style": cluster.prompt_override or cluster.batch.global_prompt,
-        }
-        marketing_plan = _prompt_node_json(
-            client,
-            "N5",
-            "Plan one distinct purchase-decision scene for every supplied marketing slot. Do not repeat scene families.",
-            marketing_input,
-        )
-        expected_orders = {slot.order for slot in marketing_slots}
-        plans = _normalized_marketing_plans(marketing_plan, marketing_slots)
-        if set(plans) != expected_orders:
-            marketing_plan = _repair_marketing_plan_schema(
-                client,
-                marketing_plan,
-                marketing_slots,
-            )
-            plans = _normalized_marketing_plans(marketing_plan, marketing_slots)
-        if set(plans) != expected_orders:
-            raise ValueError("marketing plan missing slot plans")
-        marketing_plan["plans"] = [plans[slot.order] for slot in marketing_slots]
-        scene_families = [str(plans[slot.order].get("scene_family") or "") for slot in marketing_slots]
-        if len(scene_families) != len(set(scene_families)):
-            raise ValueError("marketing plan repeats scene families")
-        node_snapshots.append(
-            _node_snapshot("N5", settings.APIMART_PROMPT_MODEL, marketing_input, marketing_plan)
-        )
-        for slot in marketing_slots:
-            slot_input = {
-                "slot_order": slot.order,
-                "slot_plan": plans[slot.order],
-                "product_name": cluster.product_name,
+        marketing_plan = {"plans": []}
+        if marketing_slots:
+            fact_ids = {item["fact_id"] for item in ledger["facts"]}
+            inference_ids = {
+                item["fact_id"]
+                for item in ledger["facts"]
+                if item["fact_class"] == "inferred"
+            }
+            marketing_input = {
+                "product_name": product_name,
+                "product_profile": identity["product_profile"],
                 "identity_lock": identity_lock,
                 "fact_ledger": ledger,
-                "resolved_rule_directives": [
-                    rule.get("prompt_directive") for rule in _applicable_rules(cluster.batch, slot)
+                "slots": [
+                    {"slot_order": slot.order, "name": slot.name, "purpose": slot.purpose}
+                    for slot in marketing_slots
                 ],
-                "prompt_limits": {"max_characters": 3500, "max_text_lines": 3},
+                "market_context": {
+                    "platform": effective_config["platform"],
+                    "market": effective_config["market"],
+                    "seller_tier": effective_config["sellerTier"],
+                    "language": _market_language(effective_config["market"]),
+                },
+                "seed_style": cluster.prompt_override or cluster.batch.global_prompt,
             }
-            slot_plan = _prompt_node_json(
+            marketing_plan = _prompt_node_json(
                 client,
-                "N6",
-                f"SLOT_ORDER={slot.order}\nCompile one localized image instruction for this slot with one scene, one main action, and at most three visible text lines.",
-                slot_input,
+                "N5",
+                "Plan one distinct purchase-decision scene for every supplied marketing slot. Vary scene family, environment, camera, action, and composition.",
+                marketing_input,
+                normalize=lambda value: _normalize_n5_plans(
+                    value,
+                    marketing_slots,
+                    fact_ids,
+                    inference_ids,
+                ),
+                repair=lambda text: _repair_marketing_plan_response(
+                    client,
+                    text,
+                    marketing_slots,
+                ),
             )
             node_snapshots.append(
-                _node_snapshot("N6", settings.APIMART_PROMPT_MODEL, slot_input, slot_plan, slot_id=slot.id)
+                _node_snapshot("N5", settings.APIMART_PROMPT_MODEL, marketing_input, marketing_plan)
             )
-            compiled_by_slot[slot.id] = compile_slot_prompt(
-                cluster,
-                slot,
-                batch=cluster.batch,
-                template=template,
-                slot_directive=slot_plan.get("prompt"),
-                visible_text_lines=slot_plan.get("visible_text_lines"),
-                main_scene=slot_plan.get("main_scene"),
-                main_action=slot_plan.get("main_action"),
-                node_name="N6",
-                node_template=None,
-            )
+            plans = {plan["slot_order"]: plan for plan in marketing_plan["plans"]}
+            for slot in marketing_slots:
+                slot_rules = _applicable_rules(cluster.batch, slot)
+                slot_rule_refs = {
+                    str(rule.get("rule_id"))
+                    for rule in slot_rules
+                    if rule.get("rule_id")
+                }
+                slot_input = {
+                    "slot_order": slot.order,
+                    "slot_plan": plans[slot.order],
+                    "product_name": product_name,
+                    "product_profile": identity["product_profile"],
+                    "identity_lock": identity_lock,
+                    "fact_ledger": ledger,
+                    "market_context": {
+                        "platform": effective_config["platform"],
+                        "market": effective_config["market"],
+                        "language": _market_language(effective_config["market"]),
+                        "text_enabled": True,
+                    },
+                    "primary_asset_id": identity["primary_asset_id"],
+                    "supporting_asset_ids": identity["supporting_asset_ids"],
+                    "resolved_rule_directives": [
+                        rule.get("prompt_directive") for rule in slot_rules
+                    ],
+                    "rule_refs": sorted(slot_rule_refs),
+                    "size": effective_config["size"],
+                    "resolution": effective_config["resolution"],
+                    "prompt_limits": {
+                        "max_characters": 3500,
+                        "max_text_lines": 3,
+                        "max_main_scenes": 1,
+                        "max_main_actions": 1,
+                    },
+                }
+                slot_plan = _prompt_node_json(
+                    client,
+                    "N6",
+                    f"SLOT_ORDER={slot.order}\nCompile one localized image instruction for this slot with one scene, one main action, and at most three visible text lines.",
+                    slot_input,
+                    normalize=lambda value, order=slot.order, refs=slot_rule_refs: _normalize_n6_prompt(
+                        value,
+                        order,
+                        identity,
+                        ledger,
+                        refs,
+                    ),
+                )
+                node_snapshots.append(
+                    _node_snapshot(
+                        "N6",
+                        settings.APIMART_PROMPT_MODEL,
+                        slot_input,
+                        slot_plan,
+                        slot_id=slot.id,
+                    )
+                )
+                compiled_by_slot[slot.id] = compile_slot_prompt(
+                    cluster,
+                    slot,
+                    batch=cluster.batch,
+                    template=template,
+                    slot_directive=slot_plan["prompt"],
+                    visible_text_lines=slot_plan["visible_text_lines"],
+                    main_scene=slot_plan["main_scene"],
+                    main_action=slot_plan["main_action"],
+                    node_name="N6",
+                    node_template=None,
+                )
+                compiled_by_slot[slot.id]["reference_snapshot"] = approved_references
+                compiled_by_slot[slot.id]["input_snapshot"][
+                    "reference_snapshot"
+                ] = approved_references
+                compiled_by_slot[slot.id]["node_output"] = slot_plan
 
         gate_blocks = []
         prompt_values = []
@@ -2329,30 +3051,61 @@ def process_prompt_once(client=None, storage=None):
             else:
                 compiled = compiled_by_slot[slot.id]
                 prompt_text = compiled["prompt"]
-                gate = compiled["evaluation"]["rule_gate"]
-            gate_blocks.extend(gate["hard_blocks"])
+                gate = evaluate_prompt_rule_gate(
+                    cluster.batch,
+                    slot,
+                    prompt_text,
+                    visible_text_lines=compiled["node_output"]["visible_text_lines"],
+                    references=compiled["reference_snapshot"],
+                )
+            if (
+                slot in marketing_slots
+                and not _marketing_diversity_valid(marketing_plan)
+            ):
+                gate["hard_blocks"].append("prompt.set_diversity")
+                gate["decision"] = "block"
             gate_input = {
                 "slot_order": slot.order,
                 "prompt": prompt_text,
                 "rule_snapshot": compiled["rule_snapshot"],
+                "marketing_plan": marketing_plan if slot in marketing_slots else None,
             }
-            node_snapshots.append(
-                _node_snapshot("N7", "deterministic-rule-engine", gate_input, gate, slot_id=slot.id)
+            gate_snapshot = _node_snapshot(
+                "N7",
+                "deterministic-rule-engine",
+                gate_input,
+                gate,
+                slot_id=slot.id,
             )
+            node_snapshots.append(gate_snapshot)
+            gate = copy.deepcopy(gate)
+            gate["snapshot_id"] = gate_snapshot["snapshot_id"]
+            gate["preparation_revision"] = claimed_revision
+            gate["effective_config_signature"] = config_signature
+            compiled["evaluation"] = {
+                **compiled.get("evaluation", {}),
+                "rule_gate": gate,
+            }
+            gate_blocks.extend(gate["hard_blocks"])
+            input_snapshot = copy.deepcopy(compiled["input_snapshot"])
+            input_snapshot["_preparation_revision"] = claimed_revision
+            input_snapshot["_effective_config_signature"] = config_signature
+            source_snapshot = copy.deepcopy(input_snapshot)
+            structured_output = copy.deepcopy(compiled)
+            structured_output["_preparation_revision"] = claimed_revision
+            structured_output["_effective_config_signature"] = config_signature
             prompt_values.append({
                 "output_slot": slot,
                 "node_name": compiled["node_name"],
                 "template_version": compiled["template_version"],
                 "provider_model": compiled["provider_model"],
                 "prompt_text": prompt_text,
-                "input_snapshot": compiled["input_snapshot"],
-                "structured_output": compiled,
+                "input_snapshot": input_snapshot,
+                "structured_output": structured_output,
                 "evaluation": compiled["evaluation"],
-                "source_snapshot": compiled["input_snapshot"],
+                "source_snapshot": source_snapshot,
             })
-        analysis = {
-            "observations": observations,
-            "identity": identity,
+        analysis.update({
             "fact_ledger": ledger,
             "marketing_plan": marketing_plan,
             "rule_gate": {
@@ -2363,11 +3116,17 @@ def process_prompt_once(client=None, storage=None):
             },
             "prompt_os": node_snapshots,
             "_preparation_revision": claimed_revision,
-        }
+            "_effective_config_signature": config_signature,
+            "readiness": {
+                "status": "blocked" if gate_blocks else "ready",
+                "code": "rule_gate_blocked" if gate_blocks else "ready",
+            },
+        })
         persisted = _persist_prompt_terminal(
             cluster.id, claimed_revision, prompt_values, analysis,
             Cluster.PreparationStatus.BLOCKED if gate_blocks else Cluster.PreparationStatus.READY,
             ", ".join(dict.fromkeys(gate_blocks)), cluster.batch.owner,
+            cluster_updates=cluster_updates,
         )
         if not persisted:
             return 1
@@ -2574,12 +3333,51 @@ def _prompt_for_slot(cluster, slot):
     )
 
 
+def _approved_prompt_for_slot(cluster, batch, slot):
+    if cluster.preparation_status != Cluster.PreparationStatus.READY:
+        raise ValueError("Product Prompt OS preparation is not ready")
+    if not _effective_config_ready(_effective_config(batch, cluster)):
+        raise ValueError("Product requires a configured platform and market")
+    prompt_version = _prompt_for_slot(cluster, slot)
+    if prompt_version is None:
+        raise ValueError("Current approved PromptVersion is required before generation")
+    expected_node = "N4" if is_standard_product_hero_slot(slot) else "N6"
+    if prompt_version.node_name != expected_node:
+        raise ValueError(f"Current PromptVersion must come from {expected_node}")
+    revision = _preparation_revision(cluster.analysis_snapshot)
+    config_signature = _effective_config_signature(batch, cluster)
+    for snapshot in (
+        prompt_version.input_snapshot,
+        prompt_version.source_snapshot,
+        prompt_version.structured_output,
+    ):
+        if snapshot.get("_preparation_revision") != revision:
+            raise ValueError("PromptVersion preparation revision is stale")
+        if snapshot.get("_effective_config_signature") != config_signature:
+            raise ValueError("PromptVersion effective configuration is stale")
+    gate = prompt_version.evaluation.get("rule_gate", {})
+    if not gate.get("snapshot_id"):
+        raise ValueError("PromptVersion requires passing N7 evidence")
+    if (
+        gate.get("preparation_revision") != revision
+        or gate.get("effective_config_signature") != config_signature
+    ):
+        raise ValueError("N7 evidence revision or configuration is stale")
+    if gate.get("decision") != "pass" or gate.get("hard_blocks"):
+        raise ValueError("PromptVersion is blocked by the deterministic N7 gate")
+    return prompt_version
+
+
 @transaction.atomic
 def ensure_cluster_generations(cluster, user, *, slot_orders=None, force_new=False):
-    locked = Cluster.objects.select_for_update().get(id=cluster.id)
+    batch = Batch.objects.select_for_update().get(id=cluster.batch_id)
+    locked = (
+        Cluster.objects.select_for_update()
+        .prefetch_related("cluster_assets__asset")
+        .get(id=cluster.id, batch_id=batch.id)
+    )
     if locked.archived_at is not None:
         raise ValueError("Product is archived")
-    batch = Batch.objects.select_for_update().get(id=locked.batch_id)
     template = batch.output_template or _global_fallback_template()
     if template.status != OutputTemplate.Status.PUBLISHED:
         raise ValueError("output template must be published before generation")
@@ -2634,39 +3432,27 @@ def ensure_cluster_generations(cluster, user, *, slot_orders=None, force_new=Fal
         existing = {}
 
     to_create = [slot for slot in creatable if force_new or slot.id not in existing]
+    approved_prompts = {
+        slot.id: _approved_prompt_for_slot(locked, batch, slot)
+        for slot in to_create
+    }
     reserve_generation_usage(user, len(to_create))
     hero_refs = []
     if hero is not None:
-        hero_refs = [result.storage_path for result in hero.result_assets.all()]
+        hero_refs = [result.storage_path for result in hero.result_assets.all()[:1]]
+    approved_references = []
+    if to_create:
+        identity = locked.analysis_snapshot.get("identity", {})
+        cluster_assets = list(
+            locked.cluster_assets.select_related("asset").order_by("order", "id")
+        )
+        approved_references = _identity_reference_paths(cluster_assets, identity)
     created = []
-    node_template = _published_prompt_node("slot_prompt")
     for slot in to_create:
-        prompt_version = _prompt_for_slot(locked, slot)
-        if prompt_version is None:
-            compiled = compile_slot_prompt(locked, slot, batch=batch, template=template, node_template=node_template)
-            if compiled["evaluation"]["rule_gate"]["decision"] != "pass":
-                raise ValueError(", ".join(compiled["evaluation"]["rule_gate"]["hard_blocks"]))
-            prompt_version = PromptVersion.objects.create(
-                cluster=locked,
-                output_slot=slot,
-                created_by=user,
-                node_name=compiled["node_name"],
-                template_version=compiled["template_version"],
-                provider_model=compiled["provider_model"],
-                prompt_text=compiled["prompt"],
-                input_snapshot=compiled["input_snapshot"],
-                structured_output=compiled,
-                evaluation=compiled["evaluation"],
-                source_snapshot=compiled["input_snapshot"],
-            )
-        elif prompt_version.evaluation.get("rule_gate", {}).get("decision") == "block":
-            raise ValueError(
-                ", ".join(prompt_version.evaluation["rule_gate"].get("hard_blocks", []))
-                or "prompt rule gate blocked generation"
-            )
-        references = _prompt_version_references(prompt_version) or _reference_snapshot(locked)
+        prompt_version = approved_prompts[slot.id]
+        references = approved_references
         if slot.id != hero_slot.id:
-            references = list(dict.fromkeys([*references, *hero_refs]))
+            references = list(dict.fromkeys([*hero_refs, approved_references[0]]))
         created.append(
             Generation.objects.create(
                 batch=batch,

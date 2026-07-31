@@ -20,11 +20,10 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.http import require_POST
 
 from .forms import ERPAuthenticationForm, FirstPasswordChangeForm
-from .models import Asset, AuditEvent, Batch, Generation, ResultAsset
+from .models import Asset, AuditEvent, Batch, Cluster, Generation, ResultAsset
 from .services import (
     CatalogAuthExpired,
     archive_or_delete_cluster,
-    confirm_generation,
     create_project,
     ensure_cluster_generations,
     generation_failure_message,
@@ -34,6 +33,7 @@ from .services import (
     move_asset_to_new_cluster,
     review_generation,
     preflight_batch,
+    record_cluster_auto_generate,
     register_uploaded_asset,
     regenerate_generation,
     remove_asset_from_cluster,
@@ -483,12 +483,7 @@ def api_preflight(request, batch_id):
 @password_change_required
 @require_POST
 def api_confirm_generation(request, batch_id):
-    batch = _batch_for_user(request.user, batch_id)
-    try:
-        generations = confirm_generation(batch, request.user)
-    except ValueError as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
-    return JsonResponse({"generation_count": len(generations)})
+    return api_project_generate(request, batch_id)
 
 
 @login_required
@@ -506,12 +501,60 @@ def api_project_generate(request, batch_id):
             clusters = batch.clusters.filter(id__in=cluster_ids, archived_at__isnull=True)
         else:
             clusters = batch.clusters.filter(archived_at__isnull=True)
-        generations = []
+        generation_count = 0
+        items = []
         for cluster in clusters:
-            generations.extend(ensure_cluster_generations(cluster, request.user, slot_orders=slot_orders))
+            if cluster.preparation_status in {
+                Cluster.PreparationStatus.PENDING,
+                Cluster.PreparationStatus.PREPARING,
+            }:
+                record_cluster_auto_generate(cluster)
+                items.append(
+                    {
+                        "cluster_id": str(cluster.id),
+                        "status": "waiting",
+                        "code": "preparation_in_progress",
+                        "message": "Product preparation will queue generation automatically.",
+                    }
+                )
+                continue
+            if cluster.preparation_status in {
+                Cluster.PreparationStatus.BLOCKED,
+                Cluster.PreparationStatus.FAILED,
+            }:
+                items.append(
+                    {
+                        "cluster_id": str(cluster.id),
+                        "status": "blocked",
+                        "code": f"preparation_{cluster.preparation_status}",
+                        "message": cluster.preparation_error or "Product preparation is blocked.",
+                    }
+                )
+                continue
+            try:
+                generations = ensure_cluster_generations(
+                    cluster,
+                    request.user,
+                    slot_orders=slot_orders,
+                )
+            except (ValueError, TypeError) as exc:
+                items.append(
+                    {
+                        "cluster_id": str(cluster.id),
+                        "status": "blocked",
+                        "code": "prompt_not_ready",
+                        "message": str(exc),
+                    }
+                )
+                continue
+            generation_count += len(generations)
+            items.append({"cluster_id": str(cluster.id), "status": "queued"})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
-    return JsonResponse({"generation_count": len(generations)})
+    return JsonResponse(
+        {"generation_count": generation_count, "items": items},
+        status=202,
+    )
 
 
 @login_required

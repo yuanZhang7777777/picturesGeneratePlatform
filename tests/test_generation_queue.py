@@ -37,6 +37,57 @@ def make_batch_with_images(tmp_path, settings, count=1):
     return user, batch
 
 
+def approve_prompt(cluster, user, slot, *, revision=1, config_signature=None, node_name=None):
+    from platform_app.models import Cluster, PromptVersion
+    from platform_app.services import _effective_config_signature
+    from platform_app.template_policy import is_standard_product_hero_slot
+
+    cluster.preparation_status = Cluster.PreparationStatus.READY
+    primary = cluster.cluster_assets.select_related("asset").order_by("order", "id").first()
+    cluster.analysis_snapshot = {
+        **cluster.analysis_snapshot,
+        "_preparation_revision": revision,
+        "identity": cluster.analysis_snapshot.get("identity")
+        or {
+            "primary_asset_id": str(primary.asset_id),
+            "supporting_asset_ids": [],
+        },
+    }
+    cluster.save(update_fields=["preparation_status", "analysis_snapshot"])
+    signature = config_signature or _effective_config_signature(cluster.batch, cluster)
+    snapshot = {
+        "_preparation_revision": revision,
+        "_effective_config_signature": signature,
+        "reference_snapshot": [
+            relation.asset.storage_path
+            for relation in cluster.cluster_assets.select_related("asset").order_by("order", "id")
+        ],
+    }
+    return PromptVersion.objects.create(
+        cluster=cluster,
+        created_by=user,
+        output_slot=slot,
+        node_name=node_name
+        or ("N4" if is_standard_product_hero_slot(slot) else "N6"),
+        prompt_text=f"Approved prompt {slot.order}",
+        input_snapshot=snapshot,
+        source_snapshot=snapshot,
+        structured_output={
+            **snapshot,
+            "reference_snapshot": snapshot["reference_snapshot"],
+        },
+        evaluation={
+            "rule_gate": {
+                "decision": "pass",
+                "hard_blocks": [],
+                "snapshot_id": f"gate-{slot.order}",
+                "preparation_revision": revision,
+                "effective_config_signature": signature,
+            }
+        },
+    )
+
+
 def test_preflight_counts_clusters_and_quota(tmp_path, settings):
     from platform_app.services import preflight_batch
 
@@ -89,13 +140,7 @@ def test_ensure_cluster_generations_creates_detail_slots_only_after_completed_he
     batch.output_template = template
     batch.save(update_fields=["output_template"])
     for slot in template.slots.order_by("order"):
-        PromptVersion.objects.create(
-            cluster=cluster,
-            created_by=user,
-            output_slot=slot,
-            prompt_text=f"Prompt {slot.order}",
-            input_snapshot={"reference_snapshot": [batch.assets.first().storage_path]},
-        )
+        approve_prompt(cluster, user, slot)
 
     first = ensure_cluster_generations(cluster, user)
     second = ensure_cluster_generations(cluster, user)
@@ -123,6 +168,173 @@ def test_ensure_cluster_generations_creates_detail_slots_only_after_completed_he
         if generation.output_slot.order == 2
     ][0]
     assert hero_path in detail_refs
+
+
+def test_ensure_cluster_generations_cannot_compile_a_missing_prompt_version(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import Cluster, Generation, OutputTemplate, PromptVersion
+    from platform_app.services import ensure_cluster_generations
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    cluster.preparation_status = Cluster.PreparationStatus.READY
+    cluster.analysis_snapshot = {"_preparation_revision": 1}
+    cluster.save(update_fields=["preparation_status", "analysis_snapshot"])
+
+    with pytest.raises(ValueError, match="approved PromptVersion"):
+        ensure_cluster_generations(cluster, user)
+
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+    assert Generation.objects.filter(cluster=cluster).count() == 0
+
+
+@pytest.mark.parametrize(
+    ("revision", "node_name", "gate", "current_config", "message"),
+    [
+        (1, "N4", {"decision": "pass", "hard_blocks": [], "snapshot_id": "old"}, True, "revision"),
+        (2, "N4", {"decision": "pass", "hard_blocks": [], "snapshot_id": "gate"}, False, "configuration"),
+        (2, "manual_edit", {"decision": "pass", "hard_blocks": [], "snapshot_id": "gate"}, True, "N4"),
+        (2, "N4", {"decision": "pass", "hard_blocks": []}, True, "N7"),
+        (
+            2,
+            "N4",
+            {
+                "decision": "pass",
+                "hard_blocks": ["deterministic.identity"],
+                "snapshot_id": "gate",
+                "semantic_decision": "pass",
+            },
+            True,
+            "blocked",
+        ),
+    ],
+)
+def test_ensure_cluster_generations_requires_current_n4_and_passing_n7(
+    tmp_path,
+    settings,
+    revision,
+    node_name,
+    gate,
+    current_config,
+    message,
+):
+    from platform_app.models import Cluster, Generation, OutputTemplate, PromptVersion
+    from platform_app.services import _effective_config_signature, ensure_cluster_generations
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    slot = template.slots.get(order=1)
+    cluster.preparation_status = Cluster.PreparationStatus.READY
+    cluster.analysis_snapshot = {"_preparation_revision": 2}
+    cluster.save(update_fields=["preparation_status", "analysis_snapshot"])
+    signature = _effective_config_signature(batch, cluster)
+    prompt_signature = signature if current_config else "stale-config"
+    snapshot = {
+        "_preparation_revision": revision,
+        "_effective_config_signature": prompt_signature,
+    }
+    gate = {
+        **gate,
+        "preparation_revision": revision,
+        "effective_config_signature": prompt_signature,
+    }
+    PromptVersion.objects.create(
+        cluster=cluster,
+        output_slot=slot,
+        created_by=user,
+        node_name=node_name,
+        prompt_text="Candidate prompt",
+        input_snapshot=snapshot,
+        source_snapshot=snapshot,
+        structured_output=snapshot,
+        evaluation={"rule_gate": gate},
+    )
+
+    with pytest.raises(ValueError, match=message):
+        ensure_cluster_generations(cluster, user)
+
+    assert Generation.objects.filter(cluster=cluster).count() == 0
+
+
+def test_generation_references_follow_n2_white_and_marketing_order(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import (
+        Asset,
+        ClusterAsset,
+        Generation,
+        OutputSlot,
+        OutputTemplate,
+        ResultAsset,
+    )
+    from platform_app.services import ensure_cluster_generations
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    hero_slot = template.slots.get(order=1)
+    detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
+    primary = cluster.cluster_assets.get().asset
+    supports = []
+    for index in range(3):
+        path = f"originals/{batch.id}/support-{index}.png"
+        (tmp_path / path).write_bytes(image_bytes())
+        asset = Asset.objects.create(
+            batch=batch,
+            kind=Asset.Kind.IMAGE,
+            original_filename=f"support-{index}.png",
+            storage_path=path,
+            sha256=str(index + 3).rjust(64, "0"),
+            file_size=len(image_bytes()),
+            content_type="image/png",
+        )
+        ClusterAsset.objects.create(
+            cluster=cluster,
+            asset=asset,
+            role=ClusterAsset.Role.REFERENCE,
+            order=index + 2,
+        )
+        supports.append(asset)
+    cluster.analysis_snapshot = {
+        "_preparation_revision": 3,
+        "identity": {
+            "primary_asset_id": str(primary.id),
+            "supporting_asset_ids": [str(asset.id) for asset in supports],
+        },
+    }
+    cluster.save(update_fields=["analysis_snapshot"])
+    approve_prompt(cluster, user, hero_slot, revision=3)
+    approve_prompt(cluster, user, detail_slot, revision=3)
+
+    hero = ensure_cluster_generations(cluster, user)[0]
+
+    assert hero.reference_snapshot == [
+        primary.storage_path,
+        *[asset.storage_path for asset in supports],
+    ]
+
+    hero.status = Generation.Status.COMPLETED
+    hero.save(update_fields=["status"])
+    hero_path = f"results/{batch.id}/{cluster.id}/{hero_slot.id}/1/hero.png"
+    ResultAsset.objects.create(
+        generation=hero,
+        storage_path=hero_path,
+        sha256="9" * 64,
+        file_size=10,
+    )
+
+    generations = ensure_cluster_generations(cluster, user)
+    detail = next(item for item in generations if item.output_slot_id == detail_slot.id)
+
+    assert detail.reference_snapshot == [hero_path, primary.storage_path]
 
 
 def test_archived_product_cannot_create_generations(tmp_path, settings):
@@ -186,13 +398,7 @@ def test_worker_enqueues_detail_slots_after_hero_completion(tmp_path, settings):
     batch.output_template = template
     batch.save(update_fields=["output_template"])
     for slot in template.slots.order_by("order"):
-        PromptVersion.objects.create(
-            cluster=cluster,
-            created_by=user,
-            output_slot=slot,
-            prompt_text=f"Prompt {slot.order}",
-            input_snapshot={"reference_snapshot": [batch.assets.first().storage_path]},
-        )
+        approve_prompt(cluster, user, slot)
 
     ensure_cluster_generations(cluster, user)
     assert list(cluster.generations.values_list("output_slot__order", flat=True)) == [1]
@@ -235,6 +441,9 @@ def test_shopee_vn_preserves_source_then_generates_white_hero_and_seven_marketin
     source_bytes = image_bytes()
     asset = register_uploaded_asset(batch, "seller-photo.png", source_bytes, "image/png")
     cluster = asset.clusters.get()
+    for slot in batch.output_template.slots.order_by("order"):
+        if slot.name != "Seller original product photo":
+            approve_prompt(cluster, user, slot)
 
     assert preflight_batch(batch, user)["slot_count"] == 9
     assert preflight_batch(batch, user)["generation_count"] == 8
