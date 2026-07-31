@@ -159,8 +159,8 @@ def test_project_settings_only_requeues_products_with_changed_effective_configur
     assert batch.rule_profile_id == vietnam_rules.id
     assert inherited.preparation_status == Cluster.PreparationStatus.PENDING
     assert inherited.auto_generate is False
-    assert matching_override.preparation_status == Cluster.PreparationStatus.READY
-    assert matching_override.auto_generate is True
+    assert matching_override.preparation_status == Cluster.PreparationStatus.PENDING
+    assert matching_override.auto_generate is False
     assert PromptVersion.objects.filter(cluster=inherited).count() == 1
 
 
@@ -330,3 +330,100 @@ def test_cluster_update_rejects_a_blank_configuration_override(client):
 
     assert response.status_code == 400
     assert "platform_override" in response.json()["error"]
+
+
+def test_site_only_project_uses_legacy_market_for_configuration_snapshot(client):
+    from platform_app.models import Batch
+
+    global_template, global_rules, _, _ = make_published_configuration()
+    user = make_user()
+    batch = Batch.objects.create(
+        owner=user,
+        name="Legacy site project",
+        platform="shopee",
+        site="SG",
+        market="",
+        output_template=global_template,
+        rule_profile=global_rules,
+    )
+    client.force_login(user)
+
+    response = client.get(reverse("api_project_snapshot", args=[batch.id]))
+
+    assert response.status_code == 200
+    assert response.json()["configurationStatus"] == "configured"
+    assert response.json()["defaultConfig"]["market"] == "SG"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("platform", "lazada"), ("size", "16:9"), ("resolution", "4k")],
+)
+def test_project_settings_rejects_unsupported_verified_values(client, field, value):
+    from platform_app.models import Batch
+
+    global_template, global_rules, _, _ = make_published_configuration()
+    user = make_user()
+    batch = Batch.objects.create(
+        owner=user,
+        name="Validated",
+        output_template=global_template,
+        rule_profile=global_rules,
+    )
+    payload = {
+        "platform": "shopee",
+        "market": "VN",
+        "seller_tier": "general",
+        "size": "1:1",
+        "resolution": "1k",
+    }
+    payload[field] = value
+    client.force_login(user)
+
+    response = client.patch(
+        reverse("api_project_settings", args=[batch.id]),
+        data=json.dumps(payload),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert field in response.json()["error"]
+
+
+def test_settings_requeues_when_resolving_template_or_rule_changes(client):
+    from platform_app.models import Batch, Cluster
+
+    _, _, _, _ = make_published_configuration()
+    user = make_user()
+    batch = Batch.objects.create(
+        owner=user,
+        name="Unbound configuration",
+        platform="shopee",
+        site="VN",
+        market="VN",
+        seller_tier="general",
+        size="1:1",
+        resolution="1k",
+    )
+    cluster = create_cluster(batch, "Product")
+    cluster.preparation_status = Cluster.PreparationStatus.READY
+    cluster.save(update_fields=["preparation_status"])
+    client.force_login(user)
+
+    response = client.patch(
+        reverse("api_project_settings", args=[batch.id]),
+        data=json.dumps(
+            {
+                "platform": "shopee",
+                "market": "VN",
+                "seller_tier": "general",
+                "size": "1:1",
+                "resolution": "1k",
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING

@@ -44,3 +44,30 @@ Result: exit `0`, `No changes detected`. Django also emitted the existing local 
 
 - No remaining Task 1 implementation items.
 - Cluster effective configuration is now the persisted/API preparation contract. Prompt/generation workers still consume the project template/rules until their assigned follow-up task adopts product-effective configuration.
+
+## Fix round 1/5
+
+### Changes
+
+- Added a preparation revision in `analysis_snapshot` for settings/override invalidation while preserving prior analysis and prompt history.
+- Prompt workers now abandon stale claimed revisions instead of finalizing stale prompts, READY, or FAILED states.
+- Legacy `site` is used when `market` is empty for configuration serialization/status.
+- Settings now allow only verified platform (`shopee`, `tiktok`), size (`1:1`, `3:4`), and resolution (`1k`, `2k`) values.
+- Template/rule IDs are included in internal invalidation signatures without changing the public effective-config schema.
+
+### RED
+
+```powershell
+pytest tests/test_project_configuration.py::test_site_only_project_uses_legacy_market_for_configuration_snapshot tests/test_project_configuration.py::test_project_settings_rejects_unsupported_verified_values tests/test_project_configuration.py::test_settings_requeues_when_resolving_template_or_rule_changes -q
+pytest tests/test_prompt_os.py::test_prompt_worker_requeues_when_settings_change_during_preparation -q
+```
+
+Observed failures: legacy site-only rows returned `required`; unsupported settings returned `200`; template/rule rebinding left a product `ready`; and a settings change during prompt preparation finished `ready`.
+
+### GREEN
+
+```powershell
+pytest tests/test_project_configuration.py::test_site_only_project_uses_legacy_market_for_configuration_snapshot tests/test_project_configuration.py::test_project_settings_rejects_unsupported_verified_values tests/test_project_configuration.py::test_settings_requeues_when_resolving_template_or_rule_changes tests/test_prompt_os.py::test_prompt_worker_requeues_when_settings_change_during_preparation -q
+```
+
+Result: `6 passed`. Final `pytest -q` passed after updating the older configuration test to expect template/rule rebinding invalidation.

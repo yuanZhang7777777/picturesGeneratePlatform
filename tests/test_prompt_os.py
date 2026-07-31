@@ -891,3 +891,79 @@ def test_tiktok_us_official_no_digital_rendering_rule_blocks_paid_generation():
 
     with pytest.raises(ValueError, match="no_digital_rendering"):
         confirm_generation(batch, user)
+
+
+def test_prompt_worker_requeues_when_settings_change_during_preparation(tmp_path, settings):
+    from platform_app.management.commands.seed_platform_templates import GLOBAL_SLOTS
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion, RuleProfile
+    from platform_app.services import (
+        FakeAPIMartClient,
+        LocalStorage,
+        process_prompt_once,
+        request_cluster_preparation,
+        update_project_settings,
+    )
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(
+        seed_key="global-marketplace-nine-slot-template",
+        platform="global",
+        site="",
+        name="Global template",
+    )
+    for order, name, purpose in GLOBAL_SLOTS:
+        template.slots.create(order=order, name=name, purpose=purpose)
+    rule = RuleProfile.objects.create(
+        seed_key="global-marketplace-prompt-os-v2-rule",
+        platform="global",
+        site="",
+        name="Global rules",
+        status=RuleProfile.Status.PUBLISHED,
+    )
+    batch = Batch.objects.create(
+        owner=user,
+        name="Race",
+        platform="shopee",
+        site="VN",
+        market="VN",
+        output_template=template,
+        rule_profile=rule,
+    )
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="e" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class UpdatingClient(FakeAPIMartClient):
+        changed = False
+
+        def observe_images(self, instruction, image_paths):
+            if not self.changed:
+                self.changed = True
+                update_project_settings(
+                    batch,
+                    {
+                        "platform": "tiktok",
+                        "market": "TH",
+                        "seller_tier": "general",
+                        "size": "1:1",
+                        "resolution": "1k",
+                    },
+                )
+            return super().observe_images(instruction, image_paths)
+
+    assert process_prompt_once(UpdatingClient(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0

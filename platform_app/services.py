@@ -49,6 +49,9 @@ from .template_policy import (
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_TXT_BYTES = 256 * 1024
 BATCH_GENERATION_LIMIT = 300
+SUPPORTED_PLATFORMS = {"shopee", "tiktok"}
+SUPPORTED_SIZES = {"1:1", "3:4"}
+SUPPORTED_RESOLUTIONS = {"1k", "2k"}
 STYLE_DNA_VALUES = {
     "composition": {"centered", "top-left", "top-right", "bottom-left", "bottom-right", "rule-of-thirds", "symmetrical", "negative-space"},
     "lighting": {"soft daylight", "natural daylight", "diffused studio", "softbox", "high key", "low key"},
@@ -691,7 +694,7 @@ def create_project(
 def _default_config(batch):
     return {
         "platform": batch.platform,
-        "market": batch.market,
+        "market": batch.market or batch.site,
         "sellerTier": batch.seller_tier or Batch.SellerTier.GENERAL,
         "size": batch.size or "1:1",
         "resolution": batch.resolution or "1k",
@@ -731,7 +734,42 @@ def _optional_config_value(payload, field, current, fallback):
     value = payload.get(field, current)
     if not isinstance(value, str):
         raise TypeError(f"{field} must be a string")
-    return value.strip() or current or fallback
+    value = value.strip()
+    if not value:
+        return current or fallback
+    allowed = {"size": SUPPORTED_SIZES, "resolution": SUPPORTED_RESOLUTIONS}[field]
+    if value not in allowed:
+        raise ValueError(f"unsupported {field}")
+    return value
+
+
+def _preparation_revision(snapshot):
+    try:
+        return int((snapshot or {}).get("_preparation_revision", 0))
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def _invalidate_preparation(cluster):
+    snapshot = copy.deepcopy(cluster.analysis_snapshot) if isinstance(cluster.analysis_snapshot, dict) else {}
+    snapshot["_preparation_revision"] = _preparation_revision(snapshot) + 1
+    cluster.analysis_snapshot = snapshot
+    cluster.preparation_status = Cluster.PreparationStatus.PENDING
+    cluster.preparation_error = ""
+    cluster.auto_generate = False
+
+
+def _preparation_is_current(cluster_id, revision):
+    current = Cluster.objects.filter(id=cluster_id).values("preparation_status", "analysis_snapshot").first()
+    return bool(
+        current
+        and current["preparation_status"] == Cluster.PreparationStatus.PREPARING
+        and _preparation_revision(current["analysis_snapshot"]) == revision
+    )
+
+
+def _configuration_signature(batch, cluster):
+    return _effective_config(batch, cluster), batch.output_template_id, batch.rule_profile_id
 
 
 @transaction.atomic
@@ -740,6 +778,8 @@ def update_project_settings(batch, payload):
         raise TypeError("request body must be an object")
     locked = Batch.objects.select_for_update().get(id=batch.id)
     platform = _required_config_value(payload, "platform")
+    if platform not in SUPPORTED_PLATFORMS:
+        raise ValueError("unsupported platform")
     market = _required_config_value(payload, "market", uppercase=True)
     seller_tier = _required_config_value(payload, "seller_tier").lower()
     if seller_tier not in Batch.SellerTier.values:
@@ -755,7 +795,7 @@ def update_project_settings(batch, payload):
         raise TypeError("global_prompt must be a string")
 
     clusters = list(locked.clusters.select_for_update().filter(archived_at__isnull=True))
-    before = {cluster.id: _effective_config(locked, cluster) for cluster in clusters}
+    before = {cluster.id: _configuration_signature(locked, cluster) for cluster in clusters}
     locked.platform = platform
     locked.site = market
     locked.market = market
@@ -780,12 +820,9 @@ def update_project_settings(batch, payload):
         ]
     )
     for cluster in clusters:
-        if before[cluster.id] == _effective_config(locked, cluster):
+        if before[cluster.id] == _configuration_signature(locked, cluster):
             continue
-        cluster.preparation_status = Cluster.PreparationStatus.PENDING
-        cluster.preparation_error = ""
-        cluster.analysis_snapshot = {}
-        cluster.auto_generate = False
+        _invalidate_preparation(cluster)
         cluster.save(
             update_fields=[
                 "preparation_status",
@@ -2023,6 +2060,7 @@ def process_prompt_once(client=None, storage=None):
     )
     if not claimed:
         return 0
+    claimed_revision = _preparation_revision(cluster.analysis_snapshot)
     try:
         node_snapshots = []
         cluster_assets = list(cluster.cluster_assets.select_related("asset").order_by("order", "id"))
@@ -2099,6 +2137,8 @@ def process_prompt_once(client=None, storage=None):
         if not confirmed_product_name and (
             identity.get("decision") != "continue" or confidence < 0.5 or not product_name
         ):
+            if not _preparation_is_current(cluster.id, claimed_revision):
+                return 1
             analysis = {"observations": observations, "identity": identity, "prompt_os": node_snapshots}
             Cluster.objects.filter(id=cluster.id).update(
                 product_name=product_name,
@@ -2252,6 +2292,8 @@ def process_prompt_once(client=None, storage=None):
             )
 
         gate_blocks = []
+        if not _preparation_is_current(cluster.id, claimed_revision):
+            return 1
         for slot in slots:
             if is_source_product_photo_slot(slot):
                 source_relation = cluster_assets[0]
@@ -2309,12 +2351,13 @@ def process_prompt_once(client=None, storage=None):
                 "warnings": [],
             },
             "prompt_os": node_snapshots,
+            "_preparation_revision": claimed_revision,
         }
-        Cluster.objects.filter(id=cluster.id).update(
+        if not _preparation_is_current(cluster.id, claimed_revision):
+            return 1
+        Cluster.objects.filter(id=cluster.id, preparation_status=Cluster.PreparationStatus.PREPARING).update(
             analysis_snapshot=analysis,
-            preparation_status=(
-                Cluster.PreparationStatus.BLOCKED if gate_blocks else Cluster.PreparationStatus.READY
-            ),
+            preparation_status=(Cluster.PreparationStatus.BLOCKED if gate_blocks else Cluster.PreparationStatus.READY),
             preparation_error=", ".join(dict.fromkeys(gate_blocks)),
             updated_at=timezone.now(),
         )
@@ -2323,11 +2366,12 @@ def process_prompt_once(client=None, storage=None):
             ensure_cluster_generations(cluster, cluster.batch.owner)
         return 1
     except Exception as exc:
-        Cluster.objects.filter(id=cluster.id).update(
-            preparation_status=Cluster.PreparationStatus.FAILED,
-            preparation_error=_sanitize_provider_text(str(exc)),
-            updated_at=timezone.now(),
-        )
+        if _preparation_is_current(cluster.id, claimed_revision):
+            Cluster.objects.filter(id=cluster.id, preparation_status=Cluster.PreparationStatus.PREPARING).update(
+                preparation_status=Cluster.PreparationStatus.FAILED,
+                preparation_error=_sanitize_provider_text(str(exc)),
+                updated_at=timezone.now(),
+            )
         return 1
 
 
@@ -3063,7 +3107,7 @@ def update_cluster_content(cluster, user, payload):
             raise ValueError(", ".join(gate["hard_blocks"]))
         prepared_prompts.append((slot, prompt, input_snapshot, gate))
 
-    effective_before = _effective_config(locked.batch, locked)
+    effective_before = _configuration_signature(locked.batch, locked)
     content_changed = False
     if "name" in payload or "product_name" in payload:
         product_name = str(payload.get("product_name", payload.get("name")) or "").strip()
@@ -3109,13 +3153,14 @@ def update_cluster_content(cluster, user, payload):
             raise ValueError("seller_tier_override must be general or mall")
         if locked.seller_tier_override != value:
             locked.seller_tier_override = value
-    configuration_changed = effective_before != _effective_config(locked.batch, locked)
+    configuration_changed = effective_before != _configuration_signature(locked.batch, locked)
     if configuration_changed or (content_changed and not prepared_prompts):
-        locked.preparation_status = Cluster.PreparationStatus.PENDING
-        locked.preparation_error = ""
-        locked.analysis_snapshot = {}
         if configuration_changed:
-            locked.auto_generate = False
+            _invalidate_preparation(locked)
+        else:
+            locked.preparation_status = Cluster.PreparationStatus.PENDING
+            locked.preparation_error = ""
+            locked.analysis_snapshot = {}
     for slot, prompt, input_snapshot, gate in prepared_prompts:
         PromptVersion.objects.create(
             cluster=locked,
@@ -3697,7 +3742,7 @@ def serialize_project(batch):
         "platform": batch.platform,
         "market": batch.market or batch.site,
         "sellerTier": batch.seller_tier,
-        "configurationStatus": "configured" if batch.platform and batch.market else "required",
+        "configurationStatus": "configured" if batch.platform and (batch.market or batch.site) else "required",
         "defaultConfig": _default_config(batch),
         "template": template.name,
         "size": batch.size,
