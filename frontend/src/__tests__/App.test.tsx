@@ -188,13 +188,24 @@ test("keeps imports inside an initially collapsed add-product drawer", async () 
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
 });
 
+test("focuses and closes the add-product drawer accessibly", async () => {
+  renderApp("/projects/project-demo");
+
+  await openImportPanel();
+  const dialog = screen.getByRole("dialog", { name: "添加商品" });
+  expect(dialog).toContainElement(document.activeElement as HTMLElement | null);
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "添加商品" })).not.toBeInTheDocument();
+});
+
 test("shows two explicit import choices for both upload and ERP SKU entry", async () => {
   renderApp("/projects/project-demo");
 
   await openImportPanel();
   fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
-  expect(screen.getByRole("button", { name: "选择图片" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "选择文件夹" })).toBeInTheDocument();
+  expect(screen.getByRole("menu", { name: "添加素材方式" })).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "选择图片" })).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "选择文件夹" })).toBeInTheDocument();
   expect(screen.getByLabelText("选择图片")).toHaveAttribute("multiple");
   expect(screen.getByLabelText("选择图片")).not.toHaveAttribute("webkitdirectory");
   expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("multiple");

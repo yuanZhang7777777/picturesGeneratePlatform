@@ -99,10 +99,10 @@ export function ImportPanel({
     </div>
     {tab === "images" ? <>
       <div className="relative">
-        <button className="secondary-button" type="button" aria-expanded={pickerOpen} onClick={() => setPickerOpen((open) => !open)}>添加图片或文件夹</button>
-        {pickerOpen && <div className="absolute z-10 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" type="button" onClick={() => imagePicker.current?.click()}>选择图片</button>
-          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" type="button" onClick={() => folderPicker.current?.click()}>选择文件夹</button>
+        <button className="secondary-button" type="button" aria-controls="asset-picker-menu" aria-expanded={pickerOpen} onClick={() => setPickerOpen((open) => !open)}>添加图片或文件夹</button>
+        {pickerOpen && <div id="asset-picker-menu" role="menu" aria-label="添加素材方式" className="absolute z-10 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" role="menuitem" type="button" onClick={() => imagePicker.current?.click()}>选择图片</button>
+          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" role="menuitem" type="button" onClick={() => folderPicker.current?.click()}>选择文件夹</button>
         </div>}
       </div>
       <div className="mt-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center" onDragOver={(event) => event.preventDefault()} onDrop={dropFiles}>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DndContext, type DragEndEvent } from "@dnd-kit/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
@@ -37,7 +37,7 @@ export default function ProjectGrouping() {
   const skuImport = useMutation({ mutationFn: ({ skus, mode }: { skus: string[]; mode: ImportMode }) => importSkus(projectId!, skus, mode), onSuccess: invalidate });
   const generate = useMutation({ mutationFn: () => generateProject(projectId!, { clusterIds: selectedClusters.map((sku) => sku.id), slotOrders }), onSuccess: invalidate });
   const merge = useMutation({ mutationFn: ({ sku, assetId }: { sku: ProductSku; assetId: string }) => mergeAsset(sku.id, assetId, sku.version), onSuccess: invalidate });
-  const save = useMutation({ mutationFn: ({ sku, payload }: { sku: ProductSku; payload: ClusterUpdateInput }) => updateCluster(sku.id, sku.version, payload), onSuccess: invalidate });
+  const save = useMutation({ mutationFn: ({ skuId, expectedVersion, payload }: { skuId: string; expectedVersion: number; payload: ClusterUpdateInput }) => updateCluster(skuId, expectedVersion, payload), onSuccess: invalidate });
   const removeAsset = useMutation({ mutationFn: deleteAsset, onSuccess: invalidate });
   const removeCluster = useMutation({ mutationFn: deleteCluster, onSuccess: invalidate });
   const saveSettings = useMutation({ mutationFn: (input: ProductConfiguration) => updateProjectSettings(projectId!, input), onSuccess: async () => { setSettingsOpen(false); await invalidate(); } });
@@ -72,15 +72,17 @@ export default function ProjectGrouping() {
     {globalError && <div className="mb-5"><ErrorPanel error={globalError} /></div>}
     <DndContext onDragEnd={onDragEnd}><section className="product-card-grid">{project.skus.map((sku) => {
       const assets = sku.assets ?? project.assets.filter((asset) => sku.assetIds.includes(asset.id));
-      return <ProductCard key={sku.id} sku={sku} assets={assets} mergeableAssets={mergeableAssets} selected={!deselectedIds.has(sku.id)} disabled={merge.isPending || save.isPending || removeAsset.isPending || removeCluster.isPending} onMerge={(assetId) => merge.mutate({ sku, assetId })} onSave={(payload) => save.mutate({ sku, payload })} onDeleteAsset={(assetId) => removeAsset.mutate(assetId)} onDelete={() => removeCluster.mutate(sku.id)} onSelect={(next) => setDeselectedIds((current) => { const copy = new Set(current); if (next) copy.delete(sku.id); else copy.add(sku.id); return copy; })} />;
+      return <ProductCard key={sku.id} sku={sku} assets={assets} mergeableAssets={mergeableAssets} selected={!deselectedIds.has(sku.id)} disabled={merge.isPending || save.isPending || removeAsset.isPending || removeCluster.isPending} onMerge={(assetId) => merge.mutate({ sku, assetId })} onSave={(payload, expectedVersion) => save.mutateAsync({ skuId: sku.id, expectedVersion, payload })} onReload={() => projectQuery.refetch()} onDeleteAsset={(assetId) => removeAsset.mutate(assetId)} onDelete={() => removeCluster.mutate(sku.id)} onSelect={(next) => setDeselectedIds((current) => { const copy = new Set(current); if (next) copy.delete(sku.id); else copy.add(sku.id); return copy; })} />;
     })}</section></DndContext>
     {!project.skus.length && <EmptyState title="还没有商品素材" description="点击“添加商品”上传图片、文件夹或导入 ERP SKU。" />}
   </Shell>;
 }
 
 function ImportDrawer({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; document.addEventListener("keydown", close); return () => document.removeEventListener("keydown", close); }, [onClose]);
-  return <div className="fixed inset-0 z-30 bg-slate-950/20" role="presentation" onMouseDown={onClose}><aside aria-label="添加商品" aria-modal="true" className="absolute inset-y-0 right-0 w-full max-w-xl overflow-y-auto bg-slate-50 p-5 shadow-2xl" role="dialog" onMouseDown={(event) => event.stopPropagation()}><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold">添加商品</h2><button className="secondary-button" type="button" onClick={onClose}>关闭</button></div>{children}</aside></div>;
+  useEffect(() => { closeButton.current?.focus(); }, []);
+  return <div className="fixed inset-0 z-30 bg-slate-950/20" role="presentation" onMouseDown={onClose}><aside aria-label="添加商品" aria-modal="true" className="absolute inset-y-0 right-0 w-full max-w-xl overflow-y-auto bg-slate-50 p-5 shadow-2xl" role="dialog" onMouseDown={(event) => event.stopPropagation()}><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold">添加商品</h2><button ref={closeButton} className="secondary-button" type="button" onClick={onClose}>关闭</button></div>{children}</aside></div>;
 }
 
 function ProjectSettings({ initial, pending, onSave }: { initial?: ProductConfiguration; pending: boolean; onSave: (input: ProductConfiguration) => void }) {

@@ -1,5 +1,5 @@
 import { developmentWorkspace } from "./mock-data";
-import type { ClusterUpdateInput, ImportMode, PreflightResult, ProductConfiguration, Project, ProjectInput, ReviewInput, RevisionInput, SkuImportResult, WorkspaceSnapshot } from "./types";
+import type { ClusterUpdateInput, ClusterUpdateResult, ImportMode, PreflightResult, ProductConfiguration, Project, ProjectInput, ReviewInput, RevisionInput, SkuImportResult, WorkspaceSnapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public authRequired = false) {
@@ -201,7 +201,7 @@ export function importSkus(projectId: string, skus: string[], mode: ImportMode) 
 }
 
 export function updateCluster(clusterId: string, expectedVersion: number, payload: ClusterUpdateInput) {
-  return jsonRequest(`/api/clusters/${clusterId}/`, {
+  return jsonRequest<ClusterUpdateResult>(`/api/clusters/${clusterId}/`, {
     method: "POST",
     body: JSON.stringify({ expected_version: expectedVersion, ...payload }),
   });

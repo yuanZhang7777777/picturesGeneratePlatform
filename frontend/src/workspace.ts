@@ -20,8 +20,8 @@ export function snapshotPollInterval(active: boolean, hidden: boolean): number |
   return hidden ? 15_000 : 3_000;
 }
 
-export function projectHasActiveWork(project: { status: string; skus: Array<{ outputs: Array<{ status: string }> }> }) {
-  return project.status === "queued" || project.status === "running" || project.skus.some((sku) =>
-    sku.outputs.some((output) => output.status === "queued" || output.status === "running"),
+export function projectHasActiveWork(project: { status: string; skus: Array<{ preparationStatus?: string; outputs: Array<{ status: string }> }> }) {
+  return project.status === "draft" || project.status === "organizing" || project.status === "queued" || project.status === "running" || project.skus.some((sku) =>
+    sku.preparationStatus === "pending" || sku.preparationStatus === "preparing" || sku.outputs.some((output) => output.status === "queued" || output.status === "running"),
   );
 }

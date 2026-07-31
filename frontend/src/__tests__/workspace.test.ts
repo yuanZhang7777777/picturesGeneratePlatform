@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { currentOutputs, snapshotPollInterval } from "../workspace";
+import { currentOutputs, projectHasActiveWork, snapshotPollInterval } from "../workspace";
 
 test("counts only the highest attempt for each output slot while retaining version history", () => {
   const result = currentOutputs([
@@ -25,4 +25,10 @@ test("polls active snapshots every 3 seconds in foreground and 15 seconds in bac
   expect(snapshotPollInterval(true, false)).toBe(3000);
   expect(snapshotPollInterval(true, true)).toBe(15000);
   expect(snapshotPollInterval(false, false)).toBe(false);
+});
+
+test("continues polling while an imported product is awaiting preparation", () => {
+  expect(projectHasActiveWork({ status: "draft", skus: [{ preparationStatus: "preparing", outputs: [] }] })).toBe(true);
+  expect(projectHasActiveWork({ status: "organizing", skus: [{ preparationStatus: "pending", outputs: [] }] })).toBe(true);
+  expect(projectHasActiveWork({ status: "completed", skus: [{ preparationStatus: "ready", outputs: [] }] })).toBe(false);
 });

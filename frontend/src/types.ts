@@ -102,6 +102,11 @@ export interface ClusterUpdateInput {
   prompts?: { slot_order: number; prompt: string }[];
 }
 
+export interface ClusterUpdateResult {
+  id: string;
+  version: number;
+}
+
 export interface ProductConfiguration {
   platform: string;
   market: string;
