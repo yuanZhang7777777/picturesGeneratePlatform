@@ -106,4 +106,3 @@ Back up the current release and `.env`, update only `CATALOG_ALLOWED_IMAGE_HOSTS
 - [ ] **Step 4: Run production smoke**
 
 Verify `/health/ready`, confirm the container receives the allowlist, log in with an ERP employee account, import one confirmed SKU, verify its image preview and OSS object, then verify “退出登录” returns to `/login/`.
-
