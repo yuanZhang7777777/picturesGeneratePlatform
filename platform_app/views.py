@@ -504,51 +504,65 @@ def api_project_generate(request, batch_id):
         generation_count = 0
         items = []
         for cluster in clusters:
-            if cluster.preparation_status in {
-                Cluster.PreparationStatus.PENDING,
-                Cluster.PreparationStatus.PREPARING,
-            }:
-                record_cluster_auto_generate(cluster)
-                items.append(
-                    {
-                        "cluster_id": str(cluster.id),
-                        "status": "waiting",
-                        "code": "preparation_in_progress",
-                        "message": "Product preparation will queue generation automatically.",
-                    }
-                )
-                continue
-            if cluster.preparation_status in {
-                Cluster.PreparationStatus.BLOCKED,
-                Cluster.PreparationStatus.FAILED,
-            }:
-                items.append(
-                    {
-                        "cluster_id": str(cluster.id),
-                        "status": "blocked",
-                        "code": f"preparation_{cluster.preparation_status}",
-                        "message": cluster.preparation_error or "Product preparation is blocked.",
-                    }
-                )
-                continue
             try:
+                if cluster.preparation_status in {
+                    Cluster.PreparationStatus.PENDING,
+                    Cluster.PreparationStatus.PREPARING,
+                }:
+                    record_cluster_auto_generate(cluster)
+                    items.append(
+                        {
+                            "cluster_id": str(cluster.id),
+                            "status": "waiting",
+                            "code": "preparation_in_progress",
+                            "message": "Product preparation will queue generation automatically.",
+                        }
+                    )
+                    continue
+                if cluster.preparation_status in {
+                    Cluster.PreparationStatus.BLOCKED,
+                    Cluster.PreparationStatus.FAILED,
+                }:
+                    items.append(
+                        {
+                            "cluster_id": str(cluster.id),
+                            "status": "blocked",
+                            "code": f"preparation_{cluster.preparation_status}",
+                            "message": cluster.preparation_error
+                            or "Product preparation is blocked.",
+                        }
+                    )
+                    continue
+                existing_ids = set(
+                    cluster.generations.values_list("id", flat=True)
+                )
                 generations = ensure_cluster_generations(
                     cluster,
                     request.user,
                     slot_orders=slot_orders,
                 )
-            except (ValueError, TypeError) as exc:
+                new_ids = [
+                    generation.id
+                    for generation in generations
+                    if generation.id not in existing_ids
+                    and generation.status == Generation.Status.QUEUED
+                ]
+                generation_count += len(new_ids)
+                items.append({"cluster_id": str(cluster.id), "status": "queued"})
+            except Exception as exc:
                 items.append(
                     {
                         "cluster_id": str(cluster.id),
                         "status": "blocked",
-                        "code": "prompt_not_ready",
+                        "code": (
+                            "prompt_not_ready"
+                            if isinstance(exc, (ValueError, TypeError))
+                            else "generation_request_failed"
+                        ),
                         "message": str(exc),
                     }
                 )
                 continue
-            generation_count += len(generations)
-            items.append({"cluster_id": str(cluster.id), "status": "queued"})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     return JsonResponse(

@@ -158,9 +158,9 @@ def test_project_settings_only_requeues_products_with_changed_effective_configur
     matching_override.refresh_from_db()
     assert batch.rule_profile_id == vietnam_rules.id
     assert inherited.preparation_status == Cluster.PreparationStatus.PENDING
-    assert inherited.auto_generate is False
+    assert inherited.auto_generate is True
     assert matching_override.preparation_status == Cluster.PreparationStatus.PENDING
-    assert matching_override.auto_generate is False
+    assert matching_override.auto_generate is True
     assert PromptVersion.objects.filter(cluster=inherited).count() == 1
 
 

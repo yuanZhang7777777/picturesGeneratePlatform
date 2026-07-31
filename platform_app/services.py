@@ -4,6 +4,7 @@ import ipaddress
 import json
 import re
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -63,6 +64,24 @@ STYLE_DNA_FIELDS = set(STYLE_DNA_VALUES)
 _UNSET = object()
 INFANT_KEYWORDS = ("baby", "infant", "newborn", "toddler", "婴", "幼儿", "宝宝")
 ADULT_KEYWORDS = ("adult", "clothing", "apparel", "beauty", "fashion", "成人", "服装", "美容")
+TEST_NODE_INSTRUCTIONS = {
+    "N1": "TEST N1: observe visible product identity and return the complete N1 JSON contract.",
+    "N2": "TEST N2: merge owned observations and return the complete N2 identity JSON contract.",
+    "N3": "TEST N3: classify traceable facts and return the complete N3 ledger JSON contract.",
+    "N4": "TEST N4: compile the standard white-background hero JSON contract.",
+    "N5": "TEST N5: plan a diverse marketing set and return the complete N5 JSON contract.",
+    "N6": "TEST N6: compile one localized marketing-slot JSON contract.",
+    "N7": "TEST N7: evaluate the final prompt and references against deterministic rules.",
+    "N8": "TEST N8: compile one bounded review revision JSON contract.",
+    "N9": "TEST N9: simplify one failed prompt without changing identity or hard rules.",
+}
+MARKETING_DIVERSITY_MAX_SHARE = {
+    "scene_family": 0.5,
+    "environment": 0.5,
+    "camera": 0.5,
+    "main_action": 0.5,
+    "composition": 0.5,
+}
 
 
 class SubmitUnknown(Exception):
@@ -373,7 +392,7 @@ class FakeAPIMartClient:
                         "fact_refs": [],
                         "inference_refs": [],
                         "main_scene": f"distinct scene {slot['slot_order']}",
-                        "main_action": "none",
+                        "main_action": f"action-{slot['slot_order']}",
                         "subject_relationship": "product is the clear subject",
                         "composition": f"composition-{slot['slot_order']}",
                         "copy_intent": "",
@@ -832,7 +851,6 @@ def _invalidate_preparation(cluster):
     cluster.analysis_snapshot = snapshot
     cluster.preparation_status = Cluster.PreparationStatus.PENDING
     cluster.preparation_error = ""
-    cluster.auto_generate = False
 
 
 def _preparation_is_current(cluster_id, revision):
@@ -1431,7 +1449,16 @@ def _promote_primary_if_needed(cluster):
             relation.role = role
             relation.save(update_fields=["role", "order"])
     cluster.version += 1
-    cluster.save(update_fields=["version", "updated_at"])
+    _invalidate_preparation(cluster)
+    cluster.save(
+        update_fields=[
+            "version",
+            "preparation_status",
+            "preparation_error",
+            "analysis_snapshot",
+            "updated_at",
+        ]
+    )
 
 
 def _active_generation_exists(cluster):
@@ -1509,6 +1536,15 @@ def merge_asset_into_cluster(asset, target_cluster, expected_version=None):
         old_cluster = Cluster.objects.select_for_update().get(id=old_relation.cluster_id)
         _ensure_cluster_mutable(old_cluster)
     relation = target.add_asset(asset)
+    _invalidate_preparation(target)
+    target.save(
+        update_fields=[
+            "preparation_status",
+            "preparation_error",
+            "analysis_snapshot",
+            "updated_at",
+        ]
+    )
     if old_cluster is not None:
         _promote_primary_if_needed(old_cluster)
     return relation
@@ -1766,6 +1802,18 @@ def _published_prompt_node(node_name):
     )
 
 
+def _prompt_node_contract(node_name):
+    node_template = _published_prompt_node(node_name)
+    if node_template is not None:
+        return node_template.instruction, node_template.version
+    if not settings.APIMART_FAKE_MODE:
+        raise ValueError(f"published {node_name} prompt node template is required")
+    instruction = TEST_NODE_INSTRUCTIONS.get(node_name)
+    if not instruction:
+        raise ValueError(f"test prompt node template is not defined for {node_name}")
+    return instruction, "test-v1"
+
+
 def _prompt_node(node_name, node_template=_UNSET):
     if node_template is _UNSET:
         node_template = _published_prompt_node(node_name)
@@ -1931,19 +1979,34 @@ def _json_repair_prompt(text, schema):
     )
 
 
-def _repair_observation_json(client, text):
-    return client.optimize_prompt(
-        {
-            "text": _json_repair_prompt(
-                text,
-                (
-                    'Required schema: {"asset_id":"string","image_role":"string",'
-                    '"contains_target_product":true,"observed_identity":{},'
-                    '"reference_quality":0,"candidate_product_name":"string",'
-                    '"candidate_product_name_confidence":0.0}.'
+def _repair_observation_json(
+    client,
+    text,
+    *,
+    system_instruction,
+    observation_input,
+    image_path,
+):
+    return client.observe_images(
+        "\n".join(
+            [
+                "NODE N1",
+                f"ASSET_ID={observation_input['asset_id']}",
+                system_instruction,
+                "Repeat the same owned-image observation using the same image evidence and input.",
+                json.dumps(observation_input, ensure_ascii=False, sort_keys=True),
+                _json_repair_prompt(
+                    text,
+                    (
+                        'Required schema: {"asset_id":"string","image_role":"string",'
+                        '"contains_target_product":true,"observed_identity":{},'
+                        '"reference_quality":0,"candidate_product_name":"string",'
+                        '"candidate_product_name_confidence":0.0}.'
+                    ),
                 ),
-            )
-        }
+            ]
+        ),
+        [image_path],
     )
 
 
@@ -1995,6 +2058,16 @@ def _required_string_list(payload, field):
     return [item.strip() for item in value if item.strip()]
 
 
+def _has_nonempty_value(value):
+    if isinstance(value, dict):
+        return any(_has_nonempty_value(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_has_nonempty_value(item) for item in value)
+    if isinstance(value, str):
+        return bool(value.strip())
+    return value is not None and value is not False
+
+
 def _normalize_n1_observation(payload, expected_asset_id):
     if not isinstance(payload, dict):
         raise ValueError("N1 output must be an object")
@@ -2008,6 +2081,8 @@ def _normalize_n1_observation(payload, expected_asset_id):
     observed_identity = payload.get("observed_identity")
     if not isinstance(observed_identity, dict):
         raise ValueError("observed_identity must be an object")
+    if contains_target and not _has_nonempty_value(observed_identity):
+        raise ValueError("observed_identity must contain visible identity evidence")
     reference_quality = payload.get("reference_quality")
     if (
         isinstance(reference_quality, bool)
@@ -2056,6 +2131,10 @@ def _normalize_n2_identity(payload, valid_asset_ids):
         raise ValueError("product_profile must be an object")
     if not isinstance(identity_lock, dict):
         raise ValueError("identity_lock must be an object")
+    if decision == "continue" and not _has_nonempty_value(identity_lock):
+        raise ValueError("identity_lock must contain identity constraints when decision is continue")
+    if decision == "continue" and not _has_nonempty_value(product_profile):
+        raise ValueError("product_profile must contain product identity when decision is continue")
     primary_asset_id = payload.get("primary_asset_id")
     if primary_asset_id is not None:
         primary_asset_id = str(primary_asset_id)
@@ -2254,6 +2333,22 @@ def _normalize_n4_prompt(payload, slot_order, identity, ledger, rule_refs):
     )
 
 
+def _validate_marketing_diversity(plans):
+    if not plans:
+        return
+    for field, max_share in MARKETING_DIVERSITY_MAX_SHARE.items():
+        values = [str(plan.get(field) or "").strip().casefold() for plan in plans]
+        if any(not value for value in values):
+            raise ValueError(f"marketing plan diversity requires non-empty {field}")
+        allowed_repeats = max(1, int(len(values) * max_share))
+        most_common = Counter(values).most_common(1)[0][1]
+        if most_common > allowed_repeats:
+            raise ValueError(
+                f"marketing plan diversity repeats {field} {most_common} times; "
+                f"at most {allowed_repeats} are allowed"
+            )
+
+
 def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids):
     plans = _normalized_marketing_plans(payload, marketing_slots)
     expected = {slot.order for slot in marketing_slots}
@@ -2278,7 +2373,6 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids):
         "must_show",
         "must_avoid",
     )
-    signatures = set()
     normalized = []
     for slot in marketing_slots:
         plan = copy.deepcopy(plans[slot.order])
@@ -2290,14 +2384,8 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids):
             plan[field] = _required_string_list(plan, field)
         _validate_known_refs(plan["fact_refs"], set(fact_ids), "fact_refs")
         _validate_known_refs(plan["inference_refs"], set(inference_ids), "inference_refs")
-        signature = tuple(
-            plan[field].strip().casefold()
-            for field in ("scene_family", "environment", "camera", "main_action", "composition")
-        )
-        if signature in signatures:
-            raise ValueError("marketing plan diversity combination is repeated")
-        signatures.add(signature)
         normalized.append(plan)
+    _validate_marketing_diversity(normalized)
     result = copy.deepcopy(payload)
     result["plans"] = normalized
     return result
@@ -2394,29 +2482,36 @@ def _node_snapshot(node_id, model_id, input_snapshot, output_snapshot, *, slot_i
 
 
 def _prompt_node_json(client, node_id, instruction, payload, normalize=None, repair=None):
-    node_template = _published_prompt_node(node_id)
-    system_instruction = node_template.instruction if node_template is not None else ""
+    system_instruction, _ = _prompt_node_contract(node_id)
+    node_text = "\n".join(
+        [
+            f"NODE {node_id}",
+            instruction,
+            "Return exactly one JSON object without Markdown or commentary.",
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        ]
+    )
     response = client.optimize_prompt(
         {
-            "system": system_instruction
-            or "Return only valid JSON for ecommerce image prompt planning.",
-            "text": "\n".join(
-                [
-                    f"NODE {node_id}",
-                    instruction,
-                    "Return exactly one JSON object without Markdown or commentary.",
-                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
-                ]
-            )
+            "system": system_instruction,
+            "text": node_text,
         }
     )
     repair = repair or (
         lambda text: client.optimize_prompt(
             {
-                "text": _json_repair_prompt(
-                    text,
-                    f"Return the valid JSON object required by NODE {node_id}.",
-                )
+                "system": system_instruction,
+                "text": "\n".join(
+                    [
+                        node_text,
+                        "The previous response was invalid. Repair it once.",
+                        _json_repair_prompt(
+                            text,
+                            f"Return the valid JSON object required by NODE {node_id}.",
+                        ),
+                        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    ]
+                ),
             }
         )
     )
@@ -2548,6 +2643,29 @@ def _effective_config_signature(batch, cluster):
     return _snapshot_hash(_configuration_signature(batch, cluster))
 
 
+def _current_rule_bundle_snapshot(batch, slot):
+    snapshot = _rule_snapshot(batch.rule_profile)
+    snapshot["resolved_rules"] = _applicable_rules(batch, slot)
+    return snapshot
+
+
+def _preparation_lineage(cluster, batch, slot, *, cluster_assets=None, template=None):
+    cluster_assets = cluster_assets or list(
+        cluster.cluster_assets.select_related("asset").order_by("order", "id")
+    )
+    template = template or batch.output_template or _global_fallback_template()
+    return {
+        "preparation_revision": _preparation_revision(cluster.analysis_snapshot),
+        "cluster_version": cluster.version,
+        "identity_input_signature": _identity_input_signature(cluster, cluster_assets),
+        "effective_config_signature": _effective_config_signature(batch, cluster),
+        "template_content_hash": _snapshot_hash(_template_snapshot(template, slot)),
+        "rule_bundle_content_hash": _snapshot_hash(
+            _current_rule_bundle_snapshot(batch, slot)
+        ),
+    }
+
+
 def _identity_reference_paths(cluster_assets, identity):
     paths_by_id = {
         str(relation.asset_id): relation.asset.storage_path
@@ -2580,15 +2698,31 @@ def _market_language(market):
 
 
 def _marketing_diversity_valid(marketing_plan):
-    plans = marketing_plan.get("plans", [])
-    signatures = [
-        tuple(
-            str(plan.get(field) or "").strip().casefold()
-            for field in ("scene_family", "environment", "camera", "main_action", "composition")
-        )
-        for plan in plans
-    ]
-    return len(signatures) == len(set(signatures)) and all(all(signature) for signature in signatures)
+    try:
+        _validate_marketing_diversity(marketing_plan.get("plans", []))
+    except ValueError:
+        return False
+    return True
+
+
+def _claim_prompt_cluster(candidate):
+    claimed = Cluster.objects.filter(
+        id=candidate.id,
+        preparation_status=Cluster.PreparationStatus.PENDING,
+        archived_at__isnull=True,
+        analysis_snapshot=copy.deepcopy(candidate.analysis_snapshot),
+    ).update(
+        preparation_status=Cluster.PreparationStatus.PREPARING,
+        preparation_error="",
+        updated_at=timezone.now(),
+    )
+    if not claimed:
+        return None
+    return Cluster.objects.select_related(
+        "batch",
+        "batch__owner",
+        "batch__output_template",
+    ).get(id=candidate.id)
 
 
 def process_prompt_once(client=None, storage=None):
@@ -2602,16 +2736,8 @@ def process_prompt_once(client=None, storage=None):
     )
     if cluster is None:
         return 0
-    claimed = Cluster.objects.filter(
-        id=cluster.id,
-        preparation_status=Cluster.PreparationStatus.PENDING,
-        archived_at__isnull=True,
-    ).update(
-        preparation_status=Cluster.PreparationStatus.PREPARING,
-        preparation_error="",
-        updated_at=timezone.now(),
-    )
-    if not claimed:
+    cluster = _claim_prompt_cluster(cluster)
+    if cluster is None:
         return 0
     claimed_revision = _preparation_revision(cluster.analysis_snapshot)
     try:
@@ -2641,12 +2767,7 @@ def process_prompt_once(client=None, storage=None):
         else:
             node_snapshots = []
             observations = []
-            observation_template = _published_prompt_node("N1")
-            observation_system = (
-                observation_template.instruction
-                if observation_template is not None
-                else "Observe only visible product evidence. Return one strict JSON object."
-            )
+            observation_system, _ = _prompt_node_contract("N1")
             references = [relation.asset.storage_path for relation in image_relations]
             with storage.reference_paths(references) as image_paths:
                 for relation, image_path in zip(image_relations, image_paths):
@@ -2673,7 +2794,13 @@ def process_prompt_once(client=None, storage=None):
                             value,
                             asset_id,
                         ),
-                        lambda text: _repair_observation_json(client, text),
+                        lambda text, node_input=observation_input, path=image_path: _repair_observation_json(
+                            client,
+                            text,
+                            system_instruction=observation_system,
+                            observation_input=node_input,
+                            image_path=path,
+                        ),
                     )
                     observations.append(observation)
                     node_snapshots.append(
@@ -2901,7 +3028,6 @@ def process_prompt_once(client=None, storage=None):
             main_scene=hero_plan.get("main_scene"),
             main_action=hero_plan.get("main_action"),
             node_name="N4",
-            node_template=None,
         )
         compiled_by_slot[hero_slot.id]["reference_snapshot"] = approved_references
         compiled_by_slot[hero_slot.id]["input_snapshot"]["reference_snapshot"] = approved_references
@@ -2942,11 +3068,6 @@ def process_prompt_once(client=None, storage=None):
                     marketing_slots,
                     fact_ids,
                     inference_ids,
-                ),
-                repair=lambda text: _repair_marketing_plan_response(
-                    client,
-                    text,
-                    marketing_slots,
                 ),
             )
             node_snapshots.append(
@@ -3020,7 +3141,6 @@ def process_prompt_once(client=None, storage=None):
                     main_scene=slot_plan["main_scene"],
                     main_action=slot_plan["main_action"],
                     node_name="N6",
-                    node_template=None,
                 )
                 compiled_by_slot[slot.id]["reference_snapshot"] = approved_references
                 compiled_by_slot[slot.id]["input_snapshot"][
@@ -3032,17 +3152,32 @@ def process_prompt_once(client=None, storage=None):
         prompt_values = []
         for slot in slots:
             if is_source_product_photo_slot(slot):
-                source_relation = cluster_assets[0]
+                source_relation = next(
+                    (
+                        relation
+                        for relation in cluster_assets
+                        if str(relation.asset_id) == str(identity["primary_asset_id"])
+                    ),
+                    None,
+                )
+                if source_relation is None:
+                    raise ValueError("source slot requires the N2 primary product asset")
                 prompt_text = "Preserve the original seller product photo without AI modification."
-                gate = evaluate_prompt_rule_gate(cluster.batch, slot, prompt_text)
+                final_references = [source_relation.asset.storage_path]
+                gate = evaluate_prompt_rule_gate(
+                    cluster.batch,
+                    slot,
+                    prompt_text,
+                    references=final_references,
+                )
                 compiled = {
                     "node_name": "source_passthrough",
                     "template_version": "builtin-v2.0.0",
                     "provider_model": "none",
                     "prompt": prompt_text,
-                    "reference_snapshot": [source_relation.asset.storage_path],
+                    "reference_snapshot": final_references,
                     "template_snapshot": _template_snapshot(template, slot),
-                    "rule_snapshot": _rule_snapshot(cluster.batch.rule_profile),
+                    "rule_snapshot": _current_rule_bundle_snapshot(cluster.batch, slot),
                     "input_snapshot": {"source_asset_id": str(source_relation.asset_id)},
                     "evaluation": {"fact_policy": "source-passthrough", "rule_gate": gate},
                     "size": cluster.batch.size or template.default_size,
@@ -3051,12 +3186,13 @@ def process_prompt_once(client=None, storage=None):
             else:
                 compiled = compiled_by_slot[slot.id]
                 prompt_text = compiled["prompt"]
+                final_references = list(compiled["reference_snapshot"])
                 gate = evaluate_prompt_rule_gate(
                     cluster.batch,
                     slot,
                     prompt_text,
                     visible_text_lines=compiled["node_output"]["visible_text_lines"],
-                    references=compiled["reference_snapshot"],
+                    references=final_references,
                 )
             if (
                 slot in marketing_slots
@@ -3064,11 +3200,21 @@ def process_prompt_once(client=None, storage=None):
             ):
                 gate["hard_blocks"].append("prompt.set_diversity")
                 gate["decision"] = "block"
+            lineage = _preparation_lineage(
+                cluster,
+                cluster.batch,
+                slot,
+                cluster_assets=cluster_assets,
+                template=template,
+            )
             gate_input = {
                 "slot_order": slot.order,
                 "prompt": prompt_text,
                 "rule_snapshot": compiled["rule_snapshot"],
                 "marketing_plan": marketing_plan if slot in marketing_slots else None,
+                "reference_snapshot": final_references,
+                "structural_asset_id": str(identity["primary_asset_id"]),
+                "lineage": lineage,
             }
             gate_snapshot = _node_snapshot(
                 "N7",
@@ -3082,6 +3228,7 @@ def process_prompt_once(client=None, storage=None):
             gate["snapshot_id"] = gate_snapshot["snapshot_id"]
             gate["preparation_revision"] = claimed_revision
             gate["effective_config_signature"] = config_signature
+            gate["lineage"] = lineage
             compiled["evaluation"] = {
                 **compiled.get("evaluation", {}),
                 "rule_gate": gate,
@@ -3090,10 +3237,14 @@ def process_prompt_once(client=None, storage=None):
             input_snapshot = copy.deepcopy(compiled["input_snapshot"])
             input_snapshot["_preparation_revision"] = claimed_revision
             input_snapshot["_effective_config_signature"] = config_signature
+            input_snapshot["_preparation_lineage"] = lineage
+            input_snapshot["reference_snapshot"] = final_references
             source_snapshot = copy.deepcopy(input_snapshot)
             structured_output = copy.deepcopy(compiled)
             structured_output["_preparation_revision"] = claimed_revision
             structured_output["_effective_config_signature"] = config_signature
+            structured_output["_preparation_lineage"] = lineage
+            structured_output["reference_snapshot"] = final_references
             prompt_values.append({
                 "output_slot": slot,
                 "node_name": compiled["node_name"],
@@ -3241,68 +3392,228 @@ def preflight_batch(batch, user, template=None):
     }
 
 
-def _latest_completed_hero(cluster, template):
+def _same_slot_n7_snapshot(cluster, slot, snapshot_id):
+    snapshots = (
+        cluster.analysis_snapshot.get("prompt_os", [])
+        if isinstance(cluster.analysis_snapshot, dict)
+        else []
+    )
+    for snapshot in reversed(snapshots):
+        if (
+            snapshot.get("snapshot_id") == snapshot_id
+            and snapshot.get("node_id") == "N7"
+            and snapshot.get("slot_id") == str(slot.id)
+        ):
+            return snapshot
+    return None
+
+
+def _validate_prompt_version_readiness(
+    prompt_version,
+    cluster,
+    batch,
+    slot,
+    *,
+    references=None,
+    allowed_nodes=None,
+):
+    if prompt_version is None or not prompt_version.prompt_text.strip():
+        raise ValueError("Current approved PromptVersion is required before generation")
+    if (
+        prompt_version.cluster_id != cluster.id
+        or prompt_version.output_slot_id != slot.id
+    ):
+        raise ValueError("PromptVersion must belong to the current product and slot")
+    if allowed_nodes and prompt_version.node_name not in allowed_nodes:
+        expected = "/".join(sorted(allowed_nodes))
+        raise ValueError(f"Current PromptVersion must come from {expected}")
+
+    revision = _preparation_revision(cluster.analysis_snapshot)
+    config_signature = _effective_config_signature(batch, cluster)
+    for snapshot in (
+        prompt_version.input_snapshot,
+        prompt_version.source_snapshot,
+        prompt_version.structured_output,
+    ):
+        if snapshot.get("_preparation_revision") != revision:
+            raise ValueError("PromptVersion preparation revision is stale")
+        if snapshot.get("_effective_config_signature") != config_signature:
+            raise ValueError("PromptVersion effective configuration is stale")
+    gate = prompt_version.evaluation.get("rule_gate", {})
+    if not gate.get("snapshot_id"):
+        raise ValueError("PromptVersion requires passing N7 evidence")
+    if gate.get("decision") != "pass" or gate.get("hard_blocks"):
+        raise ValueError("PromptVersion is blocked by the deterministic N7 gate")
+
+    current_lineage = _preparation_lineage(cluster, batch, slot)
+    for snapshot in (
+        prompt_version.input_snapshot,
+        prompt_version.source_snapshot,
+        prompt_version.structured_output,
+    ):
+        if snapshot.get("_preparation_lineage") != current_lineage:
+            raise ValueError("PromptVersion content lineage is stale")
+
+    n7 = _same_slot_n7_snapshot(cluster, slot, gate.get("snapshot_id"))
+    if n7 is None:
+        raise ValueError("PromptVersion requires a real same-slot N7 record")
+    if (
+        n7.get("status") != "succeeded"
+        or n7.get("input_hash") != _snapshot_hash(n7.get("input_snapshot"))
+        or n7.get("output_hash") != _snapshot_hash(n7.get("output_snapshot"))
+    ):
+        raise ValueError("same-slot N7 record content hash is invalid")
+    n7_input = n7.get("input_snapshot", {})
+    n7_output = n7.get("output_snapshot", {})
+    references = list(
+        references
+        if references is not None
+        else prompt_version.input_snapshot.get("reference_snapshot", [])
+    )
+    if (
+        n7_input.get("lineage") != current_lineage
+        or n7_input.get("prompt") != prompt_version.prompt_text
+        or n7_input.get("reference_snapshot") != references
+    ):
+        raise ValueError("same-slot N7 record does not match final submission content")
+    primary_asset_id = (
+        cluster.analysis_snapshot.get("identity", {}).get("primary_asset_id")
+        if isinstance(cluster.analysis_snapshot, dict)
+        else None
+    )
+    if str(n7_input.get("structural_asset_id")) != str(primary_asset_id):
+        raise ValueError("same-slot N7 record requires the current structural asset")
+    if (
+        gate.get("lineage") != current_lineage
+        or gate.get("decision") != "pass"
+        or gate.get("hard_blocks")
+        or n7_output.get("decision") != "pass"
+        or n7_output.get("hard_blocks")
+    ):
+        raise ValueError("PromptVersion is blocked by the deterministic N7 gate")
+    return current_lineage
+
+
+def _validate_generation_readiness(generation, cluster=None, batch=None):
+    cluster = cluster or generation.cluster
+    batch = batch or generation.batch
+    slot = generation.output_slot
+    prompt_version = generation.prompt_version
+    if prompt_version is None:
+        raise ValueError("Generation submission readiness requires PromptVersion")
+    allowed_nodes = (
+        {"source_passthrough"}
+        if is_source_product_photo_slot(slot)
+        else {"N4", "N8", "N9"}
+        if is_standard_product_hero_slot(slot)
+        else {"N6", "N8", "N9"}
+    )
+    _validate_prompt_version_readiness(
+        prompt_version,
+        cluster,
+        batch,
+        slot,
+        references=generation.reference_snapshot,
+        allowed_nodes=allowed_nodes,
+    )
+    if generation.prompt_text != prompt_version.prompt_text:
+        raise ValueError("Generation submission readiness prompt snapshot is inconsistent")
+    template = batch.output_template or slot.template
+    if generation.template_snapshot != _template_snapshot(template, slot):
+        raise ValueError("Generation submission readiness template content is stale")
+    if generation.rule_snapshot != _current_rule_bundle_snapshot(batch, slot):
+        raise ValueError("Generation submission readiness rule content is stale")
+    if prompt_version.node_name in {"N8", "N9"}:
+        parent_id = prompt_version.source_snapshot.get("parent_prompt_version_id")
+        parent = PromptVersion.objects.filter(
+            id=parent_id,
+            cluster=cluster,
+            output_slot=slot,
+        ).first()
+        if parent is None or parent.node_name not in {"N4", "N6", "N8", "N9"}:
+            raise ValueError("Generation submission readiness follow-up lineage is invalid")
+    return prompt_version
+
+
+def _latest_current_completed_hero(cluster, batch, template):
     hero_slot = standard_product_hero_slot(template)
     if hero_slot is None:
         return None
-    return (
+    candidates = (
         cluster.generations.filter(
             output_slot__template=template,
             output_slot=hero_slot,
             status=Generation.Status.COMPLETED,
             result_assets__isnull=False,
         )
+        .select_related("prompt_version", "output_slot")
         .prefetch_related("result_assets")
         .order_by("-attempt", "-created_at", "-id")
-        .first()
     )
+    for candidate in candidates:
+        try:
+            _validate_generation_readiness(candidate, cluster, batch)
+        except ValueError:
+            continue
+        return candidate
+    return None
 
 
 def _ensure_source_passthrough_generation(cluster, batch, template, slot, user):
-    existing = (
-        cluster.generations.filter(output_slot=slot)
-        .exclude(status=Generation.Status.CANCELED)
-        .order_by("-attempt", "-created_at", "-id")
-        .first()
-    )
-    if existing is not None:
-        return existing
+    prompt_version = _approved_prompt_for_slot(cluster, batch, slot)
+    source_asset_id = prompt_version.input_snapshot.get("source_asset_id")
     relation = (
         cluster.cluster_assets.select_related("asset")
-        .filter(asset__kind=Asset.Kind.IMAGE)
-        .order_by("order", "id")
+        .filter(asset_id=source_asset_id, asset__kind=Asset.Kind.IMAGE)
         .first()
     )
     if relation is None:
-        raise ValueError("source-photo slot requires an uploaded or ERP product image")
-    prompt = "Preserve the original seller product photo without AI modification."
-    prompt_version = _prompt_for_slot(cluster, slot) or PromptVersion.objects.create(
-        cluster=cluster,
-        output_slot=slot,
-        created_by=user,
-        node_name="source_passthrough",
-        template_version="builtin-v2.0.0",
-        provider_model="none",
-        prompt_text=prompt,
-        input_snapshot={"source_asset_id": str(relation.asset_id)},
-        structured_output={"source_asset_id": str(relation.asset_id), "prompt": prompt},
-        evaluation={"fact_policy": "source-passthrough", "rule_gate": {"decision": "pass", "hard_blocks": []}},
-        source_snapshot={"source_asset_id": str(relation.asset_id)},
+        raise ValueError("source PromptVersion must identify a current cluster asset")
+    references = [relation.asset.storage_path]
+    _validate_prompt_version_readiness(
+        prompt_version,
+        cluster,
+        batch,
+        slot,
+        references=references,
+        allowed_nodes={"source_passthrough"},
     )
+    for existing in (
+        cluster.generations.filter(
+            output_slot=slot,
+            status=Generation.Status.COMPLETED,
+        )
+        .select_related("prompt_version")
+        .order_by("-attempt", "-created_at", "-id")
+    ):
+        try:
+            _validate_prompt_version_readiness(
+                existing.prompt_version,
+                cluster,
+                batch,
+                slot,
+                references=existing.reference_snapshot,
+                allowed_nodes={"source_passthrough"},
+            )
+        except ValueError:
+            continue
+        if existing.reference_snapshot == references and existing.result_assets.exists():
+            return existing
+    prompt = prompt_version.prompt_text
     generation = Generation.objects.create(
         batch=batch,
         cluster=cluster,
         output_slot=slot,
         prompt_version=prompt_version,
         created_by=user,
-        attempt=1,
+        attempt=latest_attempt(cluster, slot) + 1,
         status=Generation.Status.COMPLETED,
         prompt_text=prompt,
         size=batch.size or template.default_size,
         resolution=batch.resolution or template.default_resolution,
-        reference_snapshot=[relation.asset.storage_path],
+        reference_snapshot=references,
         template_snapshot=_template_snapshot(template, slot),
-        rule_snapshot=_rule_snapshot(batch.rule_profile),
+        rule_snapshot=_current_rule_bundle_snapshot(batch, slot),
         completed_at=timezone.now(),
     )
     source_data = LocalStorage().read(relation.asset.storage_path)
@@ -3310,7 +3621,7 @@ def _ensure_source_passthrough_generation(cluster, batch, template, slot, user):
     if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
         suffix = ".png"
     storage_path = (
-        f"results/{batch.id}/{cluster.id}/{slot.id}/1/"
+        f"results/{batch.id}/{cluster.id}/{slot.id}/{generation.attempt}/"
         f"{uuid.uuid4().hex}{suffix}"
     )
     LocalStorage().save(storage_path, source_data)
@@ -3340,32 +3651,122 @@ def _approved_prompt_for_slot(cluster, batch, slot):
         raise ValueError("Product requires a configured platform and market")
     prompt_version = _prompt_for_slot(cluster, slot)
     if prompt_version is None:
+        if is_source_product_photo_slot(slot):
+            raise ValueError("Current source PromptVersion is required before passthrough")
         raise ValueError("Current approved PromptVersion is required before generation")
-    expected_node = "N4" if is_standard_product_hero_slot(slot) else "N6"
-    if prompt_version.node_name != expected_node:
-        raise ValueError(f"Current PromptVersion must come from {expected_node}")
-    revision = _preparation_revision(cluster.analysis_snapshot)
-    config_signature = _effective_config_signature(batch, cluster)
-    for snapshot in (
-        prompt_version.input_snapshot,
-        prompt_version.source_snapshot,
-        prompt_version.structured_output,
-    ):
-        if snapshot.get("_preparation_revision") != revision:
-            raise ValueError("PromptVersion preparation revision is stale")
-        if snapshot.get("_effective_config_signature") != config_signature:
-            raise ValueError("PromptVersion effective configuration is stale")
-    gate = prompt_version.evaluation.get("rule_gate", {})
-    if not gate.get("snapshot_id"):
-        raise ValueError("PromptVersion requires passing N7 evidence")
-    if (
-        gate.get("preparation_revision") != revision
-        or gate.get("effective_config_signature") != config_signature
-    ):
-        raise ValueError("N7 evidence revision or configuration is stale")
-    if gate.get("decision") != "pass" or gate.get("hard_blocks"):
-        raise ValueError("PromptVersion is blocked by the deterministic N7 gate")
+    expected_node = (
+        "source_passthrough"
+        if is_source_product_photo_slot(slot)
+        else "N4"
+        if is_standard_product_hero_slot(slot)
+        else "N6"
+    )
+    _validate_prompt_version_readiness(
+        prompt_version,
+        cluster,
+        batch,
+        slot,
+        allowed_nodes={expected_node},
+    )
     return prompt_version
+
+
+def _create_gated_prompt_version(
+    *,
+    cluster,
+    batch,
+    slot,
+    user,
+    node_name,
+    template_version,
+    provider_model,
+    prompt_text,
+    input_snapshot,
+    structured_output,
+    source_snapshot,
+    references,
+    parent_prompt_version=None,
+    hero_generation=None,
+    fact_policy="traceable-inference",
+):
+    references = list(references)
+    prompt_text, input_snapshot = apply_standard_product_hero_policy(
+        slot,
+        prompt_text,
+        copy.deepcopy(input_snapshot),
+    )
+    _, source_snapshot = apply_standard_product_hero_policy(
+        slot,
+        prompt_text,
+        copy.deepcopy(source_snapshot),
+    )
+    structured_output = copy.deepcopy(structured_output)
+    structured_output["prompt"] = prompt_text
+    lineage = _preparation_lineage(cluster, batch, slot)
+    identity = cluster.analysis_snapshot.get("identity", {})
+    structural_asset_id = identity.get("primary_asset_id")
+    gate = evaluate_prompt_rule_gate(
+        batch,
+        slot,
+        prompt_text,
+        visible_text_lines=structured_output.get("visible_text_lines")
+        or structured_output.get("node_output", {}).get("visible_text_lines"),
+        references=references,
+    )
+    gate_input = {
+        "slot_order": slot.order,
+        "prompt": prompt_text,
+        "rule_snapshot": _current_rule_bundle_snapshot(batch, slot),
+        "reference_snapshot": references,
+        "structural_asset_id": str(structural_asset_id),
+        "hero_generation_id": str(hero_generation.id) if hero_generation else None,
+        "parent_prompt_version_id": (
+            str(parent_prompt_version.id) if parent_prompt_version else None
+        ),
+        "lineage": lineage,
+    }
+    gate_snapshot = _node_snapshot(
+        "N7",
+        "deterministic-rule-engine",
+        gate_input,
+        gate,
+        slot_id=slot.id,
+    )
+    analysis = copy.deepcopy(cluster.analysis_snapshot)
+    analysis.setdefault("prompt_os", []).append(gate_snapshot)
+    cluster.analysis_snapshot = analysis
+    cluster.save(update_fields=["analysis_snapshot", "updated_at"])
+    gate = {
+        **gate,
+        "snapshot_id": gate_snapshot["snapshot_id"],
+        "preparation_revision": lineage["preparation_revision"],
+        "effective_config_signature": lineage["effective_config_signature"],
+        "lineage": lineage,
+    }
+
+    for snapshot in (input_snapshot, source_snapshot, structured_output):
+        snapshot["_preparation_revision"] = lineage["preparation_revision"]
+        snapshot["_effective_config_signature"] = lineage[
+            "effective_config_signature"
+        ]
+        snapshot["_preparation_lineage"] = lineage
+        snapshot["reference_snapshot"] = references
+        if parent_prompt_version is not None:
+            snapshot["parent_prompt_version_id"] = str(parent_prompt_version.id)
+    structured_output["prompt"] = prompt_text
+    return PromptVersion.objects.create(
+        cluster=cluster,
+        output_slot=slot,
+        created_by=user,
+        node_name=node_name,
+        template_version=template_version,
+        provider_model=provider_model,
+        prompt_text=prompt_text,
+        input_snapshot=input_snapshot,
+        structured_output=structured_output,
+        evaluation={"fact_policy": fact_policy, "rule_gate": gate},
+        source_snapshot=source_snapshot,
+    )
 
 
 @transaction.atomic
@@ -3406,16 +3807,15 @@ def ensure_cluster_generations(cluster, user, *, slot_orders=None, force_new=Fal
     for source_slot in source_slots:
         if source_slot in slots:
             _ensure_source_passthrough_generation(locked, batch, template, source_slot, user)
-    hero = _latest_completed_hero(locked, template)
+    hero = _latest_current_completed_hero(locked, batch, template)
     creatable = [
         slot
         for slot in slots
         if not is_source_product_photo_slot(slot) and (slot.id == hero_slot.id or hero is not None)
     ]
     if not force_new:
-        existing = {
-            generation.output_slot_id: generation
-            for generation in locked.generations.filter(
+        existing = {}
+        for generation in locked.generations.filter(
                 output_slot__in=creatable,
                 status__in=[
                     Generation.Status.QUEUED,
@@ -3426,8 +3826,16 @@ def ensure_cluster_generations(cluster, user, *, slot_orders=None, force_new=Fal
                     Generation.Status.ARCHIVING,
                     Generation.Status.COMPLETED,
                 ],
-            ).order_by("output_slot__order", "-attempt", "-id")
-        }
+            ).select_related("prompt_version", "output_slot").order_by(
+                "output_slot__order", "-attempt", "-id"
+            ):
+            if generation.output_slot_id in existing:
+                continue
+            try:
+                _validate_generation_readiness(generation, locked, batch)
+            except ValueError:
+                continue
+            existing[generation.output_slot_id] = generation
     else:
         existing = {}
 
@@ -3449,10 +3857,32 @@ def ensure_cluster_generations(cluster, user, *, slot_orders=None, force_new=Fal
         approved_references = _identity_reference_paths(cluster_assets, identity)
     created = []
     for slot in to_create:
-        prompt_version = approved_prompts[slot.id]
+        base_prompt_version = approved_prompts[slot.id]
         references = approved_references
+        hero_for_gate = None
         if slot.id != hero_slot.id:
-            references = list(dict.fromkeys([*hero_refs, approved_references[0]]))
+            references = [hero_refs[0], approved_references[0]]
+            hero_for_gate = hero
+        prompt_version = _create_gated_prompt_version(
+            cluster=locked,
+            batch=batch,
+            slot=slot,
+            user=user,
+            node_name=base_prompt_version.node_name,
+            template_version=base_prompt_version.template_version,
+            provider_model=base_prompt_version.provider_model,
+            prompt_text=base_prompt_version.prompt_text,
+            input_snapshot=base_prompt_version.input_snapshot,
+            structured_output=base_prompt_version.structured_output,
+            source_snapshot=base_prompt_version.source_snapshot,
+            references=references,
+            parent_prompt_version=None,
+            hero_generation=hero_for_gate,
+            fact_policy=base_prompt_version.evaluation.get(
+                "fact_policy",
+                "traceable-inference",
+            ),
+        )
         created.append(
             Generation.objects.create(
                 batch=batch,
@@ -3467,7 +3897,7 @@ def ensure_cluster_generations(cluster, user, *, slot_orders=None, force_new=Fal
                 resolution=batch.resolution or template.default_resolution,
                 reference_snapshot=references,
                 template_snapshot=_template_snapshot(template, slot),
-                rule_snapshot=_rule_snapshot(batch.rule_profile),
+                rule_snapshot=_current_rule_bundle_snapshot(batch, slot),
             )
         )
     Batch.objects.filter(id=batch.id).update(status=Batch.Status.QUEUED, updated_at=timezone.now())
@@ -3662,15 +4092,6 @@ def _create_simplified_failure_retry(generation, client):
     )
     if len(prompt) >= len(generation.prompt_text):
         return None
-    gate = evaluate_prompt_rule_gate(
-        generation.batch,
-        generation.output_slot,
-        prompt,
-        visible_text_lines=output.get("visible_text_lines"),
-        references=generation.reference_snapshot,
-    )
-    if gate["decision"] != "pass":
-        return None
     structured_output = copy.deepcopy(previous.structured_output if previous else {})
     structured_output["failure_simplifier"] = output
     structured_output["node_snapshot"] = _node_snapshot(
@@ -3680,18 +4101,20 @@ def _create_simplified_failure_retry(generation, client):
         output,
         slot_id=generation.output_slot_id,
     )
-    prompt_version = PromptVersion.objects.create(
+    prompt_version = _create_gated_prompt_version(
         cluster=generation.cluster,
-        output_slot=generation.output_slot,
-        created_by=generation.created_by or generation.batch.owner,
+        batch=generation.batch,
+        slot=generation.output_slot,
+        user=generation.created_by or generation.batch.owner,
         node_name="N9",
-        template_version=_prompt_node("N9")[1],
+        template_version=_prompt_node_contract("N9")[1],
         provider_model="gpt-image-2",
         prompt_text=prompt,
         input_snapshot=input_snapshot,
         structured_output=structured_output,
-        evaluation={"fact_policy": "traceable-inference", "rule_gate": gate},
         source_snapshot=copy.deepcopy(previous.source_snapshot if previous else input_snapshot),
+        references=generation.reference_snapshot,
+        parent_prompt_version=previous,
     )
     return _create_followup_attempt(
         generation,
@@ -3699,6 +4122,89 @@ def _create_simplified_failure_retry(generation, client):
         prompt_version=prompt_version,
         prompt_text=prompt,
     )
+
+
+def _claim_generation_for_submission(generation_id):
+    claimed = Generation.objects.filter(
+        id=generation_id,
+        status=Generation.Status.QUEUED,
+        cluster__archived_at__isnull=True,
+    ).update(
+        status=Generation.Status.SUBMITTING,
+        updated_at=timezone.now(),
+    )
+    if not claimed:
+        return None
+    return Generation.objects.select_related(
+        "batch",
+        "batch__owner",
+        "batch__output_template",
+        "batch__rule_profile",
+        "cluster",
+        "output_slot__template",
+        "prompt_version",
+    ).get(id=generation_id)
+
+
+def _validate_generation_submission(generation):
+    if generation.status != Generation.Status.SUBMITTING:
+        raise ValueError("Generation submission readiness requires a claimed item")
+    cluster = Cluster.objects.select_related("batch").get(id=generation.cluster_id)
+    batch = Batch.objects.select_related("output_template", "rule_profile").get(
+        id=generation.batch_id
+    )
+    if cluster.archived_at is not None:
+        raise ValueError("Generation submission readiness product is archived")
+    if cluster.preparation_status != Cluster.PreparationStatus.READY:
+        raise ValueError("Generation submission readiness Prompt OS is not ready")
+    if not _effective_config_ready(_effective_config(batch, cluster)):
+        raise ValueError("Generation submission readiness configuration is incomplete")
+    generation.cluster = cluster
+    generation.batch = batch
+    _validate_generation_readiness(generation, cluster, batch)
+    if is_source_product_photo_slot(generation.output_slot):
+        raise ValueError("Source passthrough must never reach the paid provider")
+    if not generation.reference_snapshot:
+        raise ValueError("Generation submission readiness requires final references")
+
+    if not is_standard_product_hero_slot(generation.output_slot):
+        gate = generation.prompt_version.evaluation["rule_gate"]
+        n7 = _same_slot_n7_snapshot(
+            cluster,
+            generation.output_slot,
+            gate["snapshot_id"],
+        )
+        hero_id = n7["input_snapshot"].get("hero_generation_id")
+        hero = (
+            Generation.objects.select_related(
+                "prompt_version",
+                "output_slot",
+                "batch",
+                "cluster",
+            )
+            .prefetch_related("result_assets")
+            .filter(
+                id=hero_id,
+                batch=batch,
+                cluster=cluster,
+                status=Generation.Status.COMPLETED,
+            )
+            .first()
+        )
+        if hero is None:
+            raise ValueError(
+                "Generation submission readiness requires the current completed white hero"
+            )
+        _validate_generation_readiness(hero, cluster, batch)
+        hero_path = hero.result_assets.order_by("created_at", "id").values_list(
+            "storage_path",
+            flat=True,
+        ).first()
+        if not hero_path or generation.reference_snapshot[0] != hero_path:
+            raise ValueError(
+                "Generation submission readiness white hero reference is stale"
+            )
+    return generation
 
 
 def process_generation_once(client=None, storage=None):
@@ -3738,12 +4244,17 @@ def process_generation_once(client=None, storage=None):
         break
 
     if queued is not None:
-        prompt_version, prompt_text = _ensure_generation_prompt_policy(queued, queued.created_by)
-        if prompt_version_id := getattr(prompt_version, "id", None):
-            if queued.prompt_version_id != prompt_version_id or queued.prompt_text != prompt_text:
-                queued._replace_prompt_version_for_policy(prompt_version, prompt_text)
-        queued.status = Generation.Status.SUBMITTING
-        queued.save(update_fields=["status", "updated_at"])
+        queued = _claim_generation_for_submission(queued.id)
+        if queued is None:
+            return 0
+        try:
+            _validate_generation_submission(queued)
+        except (TypeError, ValueError) as exc:
+            queued.status = Generation.Status.FAILED
+            queued.failure_reason = f"submission readiness: {_sanitize_provider_text(str(exc))}"
+            queued.save(update_fields=["status", "failure_reason", "updated_at"])
+            queued.batch.recompute_status()
+            return 1
         try:
             with storage.reference_paths(queued.reference_snapshot) as image_paths:
                 task_id = client.submit_generation(
@@ -4010,94 +4521,85 @@ ACTIVE_GENERATION_STATUSES = {
 }
 
 
-def _ensure_generation_prompt_policy(generation, user):
-    """Keep a paid generation and its immutable PromptVersion on the same enforced prompt."""
-    previous = generation.prompt_version
-    if previous is None:
-        input_snapshot = {
-            "product_facts": generation.cluster.product_facts,
-            "identity_lock": generation.cluster.identity_lock,
-            "reference_snapshot": copy.deepcopy(generation.reference_snapshot),
-        }
-        source_snapshot = copy.deepcopy(input_snapshot)
-    else:
-        input_snapshot = copy.deepcopy(previous.input_snapshot)
-        source_snapshot = copy.deepcopy(previous.source_snapshot)
-
-    prompt_text, input_snapshot = apply_standard_product_hero_policy(
-        generation.output_slot,
-        previous.prompt_text if previous else generation.prompt_text,
-        input_snapshot,
-    )
-    if previous is None and not input_snapshot.get("standard_product_hero"):
-        return None, prompt_text
-    if previous is not None and prompt_text == previous.prompt_text and input_snapshot == previous.input_snapshot:
-        return previous, prompt_text
-
-    _, source_snapshot = apply_standard_product_hero_policy(
-        generation.output_slot,
-        prompt_text,
-        source_snapshot,
-    )
-    structured_output = copy.deepcopy(previous.structured_output if previous else {})
-    structured_output["prompt"] = prompt_text
-    prompt_version = PromptVersion.objects.create(
-        cluster=generation.cluster,
-        output_slot=generation.output_slot,
-        created_by=user or generation.created_by or generation.batch.owner,
-        node_name=previous.node_name if previous else "slot_prompt",
-        template_version=previous.template_version if previous else "builtin-v1",
-        provider_model=previous.provider_model if previous else "gpt-image-2",
-        prompt_text=prompt_text,
-        input_snapshot=input_snapshot,
-        structured_output=structured_output,
-        evaluation=copy.deepcopy(previous.evaluation if previous else {}),
-        source_snapshot=source_snapshot,
-    )
-    return prompt_version, prompt_text
-
-
+@transaction.atomic
 def _create_followup_attempt(source, user, **overrides):
-    if not Cluster.objects.filter(id=source.cluster_id, archived_at__isnull=True).exists():
+    batch = Batch.objects.select_for_update().select_related(
+        "output_template",
+        "rule_profile",
+    ).get(id=source.batch_id)
+    cluster = Cluster.objects.select_for_update().get(
+        id=source.cluster_id,
+        batch_id=batch.id,
+    )
+    locked_source = Generation.objects.select_for_update().select_related(
+        "prompt_version",
+        "output_slot__template",
+    ).get(
+        id=source.id,
+        batch_id=batch.id,
+        cluster_id=cluster.id,
+    )
+    if cluster.archived_at is not None:
         raise ValueError("Product is archived")
-    siblings = Generation.objects.filter(
-        cluster_id=source.cluster_id,
-        output_slot_id=source.output_slot_id,
-    ).exclude(id=source.id)
-    if siblings.filter(attempt__gt=source.attempt).exists() or siblings.filter(
+    try:
+        _validate_generation_readiness(locked_source, cluster, batch)
+    except ValueError as exc:
+        raise ValueError(f"Generation submission readiness: {exc}") from exc
+    siblings = Generation.objects.select_for_update().filter(
+        cluster_id=cluster.id,
+        output_slot_id=locked_source.output_slot_id,
+    ).exclude(id=locked_source.id)
+    if siblings.filter(attempt__gt=locked_source.attempt).exists() or siblings.filter(
         status__in=ACTIVE_GENERATION_STATUSES
     ).exists():
         raise ValueError("A newer generation attempt already exists")
     next_attempt = (
         Generation.objects.filter(
-            cluster_id=source.cluster_id,
-            output_slot_id=source.output_slot_id,
+            cluster_id=cluster.id,
+            output_slot_id=locked_source.output_slot_id,
         ).aggregate(value=Max("attempt"))["value"]
         or 0
     ) + 1
+    chosen_prompt = overrides.get("prompt_version", locked_source.prompt_version)
+    chosen_text = overrides.get("prompt_text", locked_source.prompt_text)
+    chosen_references = copy.deepcopy(
+        overrides.get("reference_snapshot", locked_source.reference_snapshot)
+    )
+    try:
+        _validate_prompt_version_readiness(
+            chosen_prompt,
+            cluster,
+            batch,
+            locked_source.output_slot,
+            references=chosen_references,
+            allowed_nodes=(
+                {"N4", "N8", "N9"}
+                if is_standard_product_hero_slot(locked_source.output_slot)
+                else {"N6", "N8", "N9"}
+            ),
+        )
+    except ValueError as exc:
+        raise ValueError(f"Generation submission readiness: {exc}") from exc
+    if chosen_text != chosen_prompt.prompt_text:
+        raise ValueError("Generation submission readiness prompt snapshot is inconsistent")
     reserve_generation_usage(user, 1)
     values = {
-        "batch": source.batch,
-        "cluster": source.cluster,
-        "output_slot": source.output_slot,
-        "prompt_version": source.prompt_version,
+        "batch": batch,
+        "cluster": cluster,
+        "output_slot": locked_source.output_slot,
+        "prompt_version": locked_source.prompt_version,
         "created_by": user,
         "attempt": next_attempt,
         "status": Generation.Status.QUEUED,
-        "prompt_text": source.prompt_text,
-        "size": source.size,
-        "resolution": source.resolution,
-        "reference_snapshot": copy.deepcopy(source.reference_snapshot),
-        "template_snapshot": copy.deepcopy(source.template_snapshot),
-        "rule_snapshot": copy.deepcopy(source.rule_snapshot),
+        "prompt_text": locked_source.prompt_text,
+        "size": locked_source.size,
+        "resolution": locked_source.resolution,
+        "reference_snapshot": copy.deepcopy(locked_source.reference_snapshot),
+        "template_snapshot": copy.deepcopy(locked_source.template_snapshot),
+        "rule_snapshot": copy.deepcopy(locked_source.rule_snapshot),
     }
     values.update(overrides)
-    followup = Generation.objects.create(**values)
-    prompt_version, prompt_text = _ensure_generation_prompt_policy(followup, user)
-    if prompt_version_id := getattr(prompt_version, "id", None):
-        if followup.prompt_version_id != prompt_version_id or followup.prompt_text != prompt_text:
-            followup._replace_prompt_version_for_policy(prompt_version, prompt_text)
-    return followup
+    return Generation.objects.create(**values)
 
 
 @transaction.atomic
@@ -4247,17 +4749,16 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
         if previous:
             input_snapshot = copy.deepcopy(previous.input_snapshot)
             source_snapshot = copy.deepcopy(previous.source_snapshot)
-            references = _prompt_version_references(previous)
             prior_prompt = previous.prompt_text
         else:
-            references = copy.deepcopy(locked.reference_snapshot)
             input_snapshot = {
                 "product_facts": locked.cluster.product_facts,
                 "identity_lock": locked.cluster.identity_lock,
-                "reference_snapshot": references,
+                "reference_snapshot": copy.deepcopy(locked.reference_snapshot),
             }
             source_snapshot = copy.deepcopy(input_snapshot)
             prior_prompt = locked.prompt_text
+        references = copy.deepcopy(locked.reference_snapshot)
         input_snapshot["revision_delta"] = revision_delta
         source_snapshot["revision_delta"] = revision_delta
         structured_output = copy.deepcopy(previous.structured_output if previous else {})
@@ -4309,15 +4810,6 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
             prompt_text,
             source_snapshot,
         )
-        gate = evaluate_prompt_rule_gate(
-            locked.batch,
-            locked.output_slot,
-            prompt_text,
-            visible_text_lines=director_output.get("visible_text_lines"),
-            references=references,
-        )
-        if gate["decision"] != "pass":
-            raise ValueError(", ".join(gate["hard_blocks"]))
         structured_output["modification_director"] = director_output
         structured_output["node_snapshot"] = _node_snapshot(
             "N8",
@@ -4327,18 +4819,20 @@ def review_generation(generation, reviewer, *, decision, issue_tags=None, descri
             slot_id=locked.output_slot_id,
         )
         structured_output["prompt"] = prompt_text
-        prompt_version = PromptVersion.objects.create(
-            cluster=locked.cluster,
-            output_slot=locked.output_slot,
-            created_by=reviewer,
+        prompt_version = _create_gated_prompt_version(
+            cluster=cluster,
+            batch=locked.batch,
+            slot=locked.output_slot,
+            user=reviewer,
             node_name="N8",
-            template_version=_prompt_node("N8")[1],
+            template_version=_prompt_node_contract("N8")[1],
             provider_model=previous.provider_model if previous else "gpt-image-2",
             prompt_text=prompt_text,
             input_snapshot=input_snapshot,
             structured_output=structured_output,
-            evaluation={"fact_policy": "traceable-inference", "rule_gate": gate},
             source_snapshot=source_snapshot,
+            references=references,
+            parent_prompt_version=previous,
         )
         revision = _create_followup_attempt(
             locked,

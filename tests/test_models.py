@@ -284,7 +284,7 @@ def test_generated_batch_and_cluster_cannot_be_deleted_but_unused_drafts_can():
     assert not Batch.objects.filter(id=draft.id).exists()
 
 
-def test_retry_failed_generation_preserves_old_attempt():
+def test_retry_failed_legacy_generation_without_prompt_version_is_rejected():
     from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
 
     user = make_user()
@@ -301,17 +301,14 @@ def test_retry_failed_generation_preserves_old_attempt():
         prompt_text="make product image",
     )
 
-    retry = failed.retry_failed(user)
+    with pytest.raises(ValueError, match="requires PromptVersion"):
+        failed.retry_failed(user)
 
-    assert retry.attempt == 2
-    assert retry.status == Generation.Status.QUEUED
     assert failed.prompt_text == "make product image"
-    assert "Hero restrictions: no promotional text" in retry.prompt_text
-    assert retry.prompt_version.prompt_text == retry.prompt_text
-    assert Generation.objects.filter(cluster=cluster, output_slot=slot).count() == 2
+    assert Generation.objects.filter(cluster=cluster, output_slot=slot).count() == 1
 
 
-def test_retry_of_legacy_first_slot_rewrites_the_new_attempt_prompt_without_mutating_history():
+def test_retry_of_legacy_first_slot_prompt_is_rejected_without_mutating_history():
     from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate, PromptVersion
 
     user = make_user()
@@ -336,14 +333,12 @@ def test_retry_of_legacy_first_slot_rewrites_the_new_attempt_prompt_without_muta
         prompt_text=legacy_prompt.prompt_text,
     )
 
-    retry = failed.retry_failed(user)
+    with pytest.raises(ValueError, match="submission readiness"):
+        failed.retry_failed(user)
 
     assert failed.prompt_text == "Legacy product prompt"
     assert failed.prompt_version_id == legacy_prompt.id
-    assert retry.prompt_version_id != legacy_prompt.id
-    assert "Hero restrictions: no promotional text" in retry.prompt_text
-    assert retry.prompt_version.prompt_text == retry.prompt_text
-    assert retry.prompt_version.input_snapshot["standard_product_hero"] is True
+    assert Generation.objects.filter(cluster=cluster, output_slot=slot).count() == 1
 
 
 def test_retry_non_failed_generation_is_rejected():

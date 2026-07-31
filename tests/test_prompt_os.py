@@ -492,7 +492,8 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
     )
     assert cluster.analysis_snapshot["fact_ledger"]["review_summary"]["confirmed_count"] == 1
     prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
-    assert [prompt.output_slot.order for prompt in prompts] == list(range(1, 10))
+    assert sorted({prompt.output_slot.order for prompt in prompts}) == list(range(1, 10))
+    assert len(prompts) == 10
     assert all("Silicone cup" in prompt.prompt_text for prompt in prompts)
     assert all(prompt.evaluation["rule_gate"]["decision"] == "pass" for prompt in prompts)
     assert list(
@@ -530,7 +531,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                                     "scene_family": f"family-{order}",
                                     "conversion_goal": f"decision-{order}",
                                     "main_scene": f"scene-{order}",
-                                    "main_action": "none",
+                                "main_action": f"action-{order}",
                                     "visible_text_lines": [],
                                 }
                                 for order in range(2, 10)
@@ -840,11 +841,11 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                             "camera": f"camera-{order}",
                             "decision_task": f"goal-{order}",
                             "conversion_goal": f"goal-{order}",
-                            "fact_refs": [],
-                            "inference_refs": [],
-                            "main_scene": f"scene-{order}",
-                            "main_action": "none",
-                            "subject_relationship": "product centered",
+                                "fact_refs": [],
+                                "inference_refs": [],
+                                "main_scene": f"scene-{order}",
+                                "main_action": f"action-{order}",
+                                "subject_relationship": "product centered",
                             "composition": f"composition-{order}",
                             "copy_intent": "",
                             "text_mode": "up_to_3_lines",
@@ -1179,13 +1180,13 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
 
     with pytest.raises(ValueError, match="candidate_product_name"):
         _normalize_n1_observation(
-            {
-                "asset_id": asset_id,
-                "image_role": "clean_product",
-                "contains_target_product": True,
-                "observed_identity": {},
-                "reference_quality": 92,
-            },
+                {
+                    "asset_id": asset_id,
+                    "image_role": "clean_product",
+                    "contains_target_product": True,
+                    "observed_identity": {"category_candidates": ["travel mug"]},
+                    "reference_quality": 92,
+                },
             asset_id,
         )
 
@@ -1607,3 +1608,203 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
     assert cluster.analysis_snapshot["identity"]["conflict_state"] == "conflict"
     assert "conflict" in cluster.preparation_error
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+
+
+def test_n1_target_observation_requires_nonempty_visible_identity():
+    from platform_app.services import _normalize_n1_observation
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+
+    with pytest.raises(ValueError, match="observed_identity"):
+        _normalize_n1_observation(
+            {
+                "asset_id": asset_id,
+                "image_role": "clean_product",
+                "contains_target_product": True,
+                "observed_identity": {"category_candidates": []},
+                "reference_quality": 92,
+                "candidate_product_name": "Travel mug",
+                "candidate_product_name_confidence": 0.9,
+            },
+            asset_id,
+        )
+
+
+def test_n2_continue_requires_nonempty_identity_lock_and_product_profile():
+    from platform_app.services import _normalize_n2_identity
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    payload = {
+        "decision": "continue",
+        "product_name": "Travel mug",
+        "confidence": 0.9,
+        "conflict_state": "match",
+        "primary_asset_id": asset_id,
+        "supporting_asset_ids": [],
+        "identity_lock": {"must_not_change": []},
+        "product_profile": {"category": ""},
+    }
+
+    with pytest.raises(ValueError, match="identity_lock"):
+        _normalize_n2_identity(payload, {asset_id})
+
+    payload["identity_lock"] = {"must_not_change": ["Keep the visible handle"]}
+    with pytest.raises(ValueError, match="product_profile"):
+        _normalize_n2_identity(payload, {asset_id})
+
+
+def test_n5_diversity_rejects_one_repeated_dimension_even_when_tuples_differ():
+    from types import SimpleNamespace
+
+    from platform_app.services import _normalize_n5_plans
+
+    slots = [
+        SimpleNamespace(order=2, name="Benefit 1"),
+        SimpleNamespace(order=3, name="Benefit 2"),
+        SimpleNamespace(order=4, name="Benefit 3"),
+        SimpleNamespace(order=5, name="Benefit 4"),
+    ]
+    plans = []
+    for index, slot in enumerate(slots):
+        plans.append(
+            {
+                "slot_order": slot.order,
+                "role": "marketing",
+                "decision_task": f"decision-{index}",
+                "main_scene": f"scene-{index}",
+                "main_action": f"action-{index}",
+                "subject_relationship": f"relationship-{index}",
+                "composition": f"composition-{index}",
+                "text_mode": "none",
+                "scene_family": "lifestyle",
+                "environment": f"environment-{index}",
+                "camera": f"camera-{index}",
+                "copy_intent": "",
+                "fact_refs": [],
+                "inference_refs": [],
+                "localization_notes": [],
+                "must_show": [],
+                "must_avoid": [],
+            }
+        )
+
+    with pytest.raises(ValueError, match="scene_family"):
+        _normalize_n5_plans({"plans": plans}, slots, set(), set())
+
+
+def test_real_prompt_node_call_fails_closed_without_published_template(settings):
+    from platform_app.services import _prompt_node_json
+
+    settings.APIMART_FAKE_MODE = False
+
+    class Client:
+        calls = 0
+
+        def optimize_prompt(self, payload):
+            self.calls += 1
+            return {"output_text": "{}"}
+
+    client = Client()
+
+    with pytest.raises(ValueError, match="published N3"):
+        _prompt_node_json(client, "N3", "Compile facts.", {"product": "mug"})
+
+    assert client.calls == 0
+
+
+def test_prompt_node_repair_preserves_original_system_and_input():
+    import json
+
+    from platform_app.models import PromptNodeTemplate
+    from platform_app.services import _prompt_node_json
+
+    PromptNodeTemplate.objects.create(
+        node_name="N3",
+        version="review-test",
+        instruction="FULL N3 SYSTEM CONTRACT",
+        status=PromptNodeTemplate.Status.PUBLISHED,
+    )
+
+    class Client:
+        def __init__(self):
+            self.payloads = []
+
+        def optimize_prompt(self, payload):
+            self.payloads.append(payload)
+            if len(self.payloads) == 1:
+                return {"output_text": "not json"}
+            return {"output_text": json.dumps({"ok": True})}
+
+    client = Client()
+    result = _prompt_node_json(
+        client,
+        "N3",
+        "Compile facts.",
+        {"product": "mug", "confirmed": ["steel"]},
+    )
+
+    assert result == {"ok": True}
+    assert [payload["system"] for payload in client.payloads] == [
+        "FULL N3 SYSTEM CONTRACT",
+        "FULL N3 SYSTEM CONTRACT",
+    ]
+    assert '"product": "mug"' in client.payloads[1]["text"]
+    assert "not json" in client.payloads[1]["text"]
+
+
+def test_configuration_change_preserves_waiting_auto_generate_intent():
+    from django.core.management import call_command
+
+    from platform_app.models import Cluster
+    from platform_app.services import create_project, update_project_settings
+
+    call_command("seed_platform_templates")
+    user = make_user()
+    batch = create_project(
+        user,
+        name="Waiting auto generation",
+        platform="shopee",
+        market="VN",
+    )
+    cluster = make_cluster(batch)
+    Cluster.objects.filter(id=cluster.id).update(
+        preparation_status=Cluster.PreparationStatus.BLOCKED,
+        analysis_snapshot={"_preparation_revision": 3},
+        auto_generate=True,
+    )
+
+    update_project_settings(
+        batch,
+        {
+            "platform": "tiktok",
+            "market": "TH",
+            "seller_tier": "general",
+            "size": "1:1",
+            "resolution": "1k",
+        },
+    )
+
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.analysis_snapshot["_preparation_revision"] == 4
+    assert cluster.auto_generate is True
+
+
+def test_prompt_claim_rejects_a_stale_preparation_revision():
+    from platform_app.models import Batch, Cluster
+    from platform_app.services import _claim_prompt_cluster
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Prompt claim")
+    stale = Cluster.objects.create(
+        batch=batch,
+        name="Product",
+        analysis_snapshot={"_preparation_revision": 1},
+    )
+    Cluster.objects.filter(id=stale.id).update(
+        analysis_snapshot={"_preparation_revision": 2},
+    )
+
+    assert _claim_prompt_cluster(stale) is None
+    stale.refresh_from_db()
+    assert stale.preparation_status == Cluster.PreparationStatus.PENDING

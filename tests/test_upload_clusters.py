@@ -274,3 +274,38 @@ def test_product_being_prepared_cannot_change_reference_images(tmp_path, setting
         move_asset_to_new_cluster(first)
     with pytest.raises(ValueError, match="being prepared"):
         update_cluster_content(cluster, user, {"expected_version": cluster.version, "name": "Changed"})
+
+
+def test_asset_relation_changes_invalidate_prompt_preparation(tmp_path, settings):
+    from platform_app.models import Cluster
+    from platform_app.services import (
+        create_batch,
+        merge_asset_into_cluster,
+        move_asset_to_new_cluster,
+        register_uploaded_asset,
+    )
+
+    settings.MEDIA_ROOT = tmp_path
+    batch = create_batch(make_user(), "Batch 1")
+    first = register_uploaded_asset(batch, "a.png", image_bytes(), "image/png")
+    second = register_uploaded_asset(batch, "b.png", image_bytes(), "image/png")
+    target = first.clusters.get()
+    Cluster.objects.filter(id=target.id).update(
+        preparation_status=Cluster.PreparationStatus.READY,
+        analysis_snapshot={"_preparation_revision": 5},
+    )
+
+    merge_asset_into_cluster(second, target, expected_version=target.version)
+
+    target.refresh_from_db()
+    assert target.preparation_status == Cluster.PreparationStatus.PENDING
+    assert target.analysis_snapshot["_preparation_revision"] == 6
+
+    Cluster.objects.filter(id=target.id).update(
+        preparation_status=Cluster.PreparationStatus.READY,
+    )
+    move_asset_to_new_cluster(second)
+
+    target.refresh_from_db()
+    assert target.preparation_status == Cluster.PreparationStatus.PENDING
+    assert target.analysis_snapshot["_preparation_revision"] == 7

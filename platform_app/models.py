@@ -73,14 +73,6 @@ class ProtectedGenerationQuerySet(models.QuerySet):
     def delete(self, *args, **kwargs):
         raise ValidationError("Generation records are undeletable")
 
-    def _replace_prompt_version_for_policy(self, generation, prompt_version, prompt_text):
-        return models.QuerySet.update(
-            self.filter(pk=generation.pk),
-            prompt_version=prompt_version,
-            prompt_text=prompt_text,
-            updated_at=timezone.now(),
-        )
-
 
 class ProtectedPromptVersionQuerySet(models.QuerySet):
     def update(self, **kwargs):
@@ -566,13 +558,6 @@ class Generation(models.Model):
             if current and any(current[field] != getattr(self, field) for field in self.IMMUTABLE_SNAPSHOT_FIELDS):
                 raise ValidationError("Generation identity and snapshot are immutable")
         return super().save(*args, **kwargs)
-
-    def _replace_prompt_version_for_policy(self, prompt_version, prompt_text):
-        if self._state.adding:
-            raise ValidationError("Generation must be saved before policy upgrade")
-        type(self).objects.get_queryset()._replace_prompt_version_for_policy(self, prompt_version, prompt_text)
-        self.prompt_version = prompt_version
-        self.prompt_text = prompt_text
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Generation records are undeletable")

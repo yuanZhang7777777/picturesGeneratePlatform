@@ -38,9 +38,10 @@ def make_global_baseline():
 
 
 def approve_view_prompt(cluster, user, slot, revision=1):
-    from platform_app.models import Cluster, PromptVersion
-    from platform_app.services import _effective_config_signature
+    from platform_app.models import Cluster
+    from platform_app.services import _create_gated_prompt_version
 
+    cluster.refresh_from_db()
     primary = cluster.cluster_assets.select_related("asset").get()
     cluster.preparation_status = Cluster.PreparationStatus.READY
     cluster.analysis_snapshot = {
@@ -51,29 +52,22 @@ def approve_view_prompt(cluster, user, slot, revision=1):
         },
     }
     cluster.save(update_fields=["preparation_status", "analysis_snapshot"])
-    signature = _effective_config_signature(cluster.batch, cluster)
     snapshot = {
-        "_preparation_revision": revision,
-        "_effective_config_signature": signature,
+        "reference_snapshot": [primary.asset.storage_path],
     }
-    return PromptVersion.objects.create(
+    return _create_gated_prompt_version(
         cluster=cluster,
-        created_by=user,
-        output_slot=slot,
+        batch=cluster.batch,
+        slot=slot,
+        user=user,
         node_name="N4",
+        template_version="test-v1",
+        provider_model="gpt-image-2",
         prompt_text=f"Approved {cluster.id}",
         input_snapshot=snapshot,
+        structured_output={**snapshot, "visible_text_lines": []},
         source_snapshot=snapshot,
-        structured_output=snapshot,
-        evaluation={
-            "rule_gate": {
-                "decision": "pass",
-                "hard_blocks": [],
-                "snapshot_id": f"gate-{cluster.id}",
-                "preparation_revision": revision,
-                "effective_config_signature": signature,
-            }
-        },
+        references=snapshot["reference_snapshot"],
     )
 
 
@@ -249,15 +243,28 @@ def test_snapshot_includes_cluster_and_generation_state(client, tmp_path, settin
 
 
 def test_retry_endpoint_creates_new_attempt_for_failed_generation(client, tmp_path, settings):
-    from platform_app.models import Generation
-    from platform_app.services import confirm_generation, create_batch, register_uploaded_asset
+    from platform_app.models import Generation, OutputTemplate
+    from platform_app.services import (
+        create_batch,
+        ensure_cluster_generations,
+        register_uploaded_asset,
+    )
 
     settings.MEDIA_ROOT = tmp_path
     user = make_user()
     make_global_baseline()
     batch = create_batch(user, "Batch 1")
-    register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
-    generation = confirm_generation(batch, user)[0]
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    cluster = register_uploaded_asset(
+        batch,
+        "a.png",
+        image_file("a.png").read(),
+        "image/png",
+    ).clusters.get()
+    approve_view_prompt(cluster, user, template.slots.get(order=1))
+    generation = ensure_cluster_generations(cluster, user)[0]
     generation.status = Generation.Status.FAILED
     generation.save(update_fields=["status"])
     client.force_login(user)
@@ -301,7 +308,7 @@ def test_project_generate_api_is_cluster_scoped_and_idempotent(client, tmp_path,
     assert first_response.status_code == 202
     assert second_response.status_code == 202
     assert first_response.json()["generation_count"] == 1
-    assert second_response.json()["generation_count"] == 1
+    assert second_response.json()["generation_count"] == 0
     assert first_response.json()["items"] == [
         {"cluster_id": str(first.id), "status": "queued"}
     ]
@@ -425,6 +432,58 @@ def test_legacy_confirm_endpoint_cannot_bypass_prompt_preparation(
     cluster.refresh_from_db()
     assert cluster.auto_generate is True
     assert batch.generations.count() == 0
+
+
+def test_project_generate_keeps_record_intent_database_error_local(
+    client,
+    tmp_path,
+    settings,
+    monkeypatch,
+):
+    from django.db import DatabaseError
+
+    from platform_app.services import create_batch, record_cluster_auto_generate, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = create_batch(user, "Isolated intent failures")
+    clusters = [
+        register_uploaded_asset(
+            batch,
+            f"{index}.png",
+            image_file(f"{index}.png").read(),
+            "image/png",
+        ).clusters.get()
+        for index in range(2)
+    ]
+    failed_id = clusters[0].id
+
+    def record_with_one_failure(cluster):
+        if cluster.id == failed_id:
+            raise DatabaseError("simulated row conflict")
+        return record_cluster_auto_generate(cluster)
+
+    monkeypatch.setattr(
+        "platform_app.views.record_cluster_auto_generate",
+        record_with_one_failure,
+    )
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_project_generate", args=[batch.id]),
+        data=__import__("json").dumps(
+            {"cluster_ids": [str(cluster.id) for cluster in clusters]}
+        ),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 202
+    items = {item["cluster_id"]: item for item in response.json()["items"]}
+    assert items[str(failed_id)]["status"] == "blocked"
+    assert items[str(failed_id)]["code"] == "generation_request_failed"
+    assert items[str(clusters[1].id)]["status"] == "waiting"
+    clusters[1].refresh_from_db()
+    assert clusters[1].auto_generate is True
 
 
 def test_update_cluster_prompt_requires_current_version(client, tmp_path, settings):

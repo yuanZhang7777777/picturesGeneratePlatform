@@ -52,3 +52,37 @@ Final command results (2026-07-31):
 - `confirm_generation()` remains as a legacy service used by older unit tests, but no production HTTP endpoint calls it; both project generation HTTP routes use the hard-gated asynchronous path.
 - APIMart schema repair quality still depends on the provider returning the requested complete node contract on its single repair attempt; failure is fail-closed for that product.
 - No frontend or project documentation was changed because Task 2 explicitly restricted those files; the accepted brief and existing Prompt OS specification already describe the target contract.
+
+## Fix round 1 (2026-07-31)
+
+### Review findings closed
+
+- Added one fail-closed submission validator immediately before the provider POST. It re-reads the current Batch, Cluster, Generation, PromptVersion, same-slot N7 evidence, final references, template content, rule bundle content, preparation revision, cluster version, and identity-input signature.
+- Added compare-and-set claims for Prompt preparation and Generation submission. Prompt claims bind the entire prior analysis snapshot; Generation claims allow only one `queued -> submitting` winner.
+- Moved final N7 creation after the exact paid prompt and reference array are known. White images use the N2 primary plus up to three N2 supports; marketing images use the current white result first and the N2 primary second.
+- Made same-slot N7 evidence content-addressed and bound it to the exact prompt, final references, structural asset, template/rule content hashes, and current preparation lineage. Forged, stale, cross-slot, or mutated evidence now fails closed.
+- Asset merge, split, move, promotion, and removal invalidate preparation while preserving `auto_generate`. Stale completed white images and stale source passthrough attempts are ignored; replacement attempts append history.
+- Real mode now requires a published N1–N9 node template. Fake mode uses explicit node-specific test templates. JSON repair preserves the original system instruction and node input; N1 repair also reuses the same image evidence.
+- N1/N2 require non-empty identity content when continuing. N5/N7 enforce per-field marketing diversity rather than only rejecting identical five-field tuples.
+- Follow-up retry, regenerate, N8, and N9 paths lock Batch → Cluster → Generation, validate the source and chosen PromptVersion under lock, and append immutable attempts. The unused in-place PromptVersion replacement bypass was removed.
+- Project generation API isolates database/runtime errors per product and counts only newly queued work.
+
+### RED / GREEN evidence
+
+- Initial focused RED group: 8 failures covering non-empty N1/N2, N5 diversity, missing real templates, repair context, `auto_generate`, prompt CAS, and asset invalidation; the same 8 tests passed after implementation.
+- Submission RED group: 8 failures covering forged N7, template/rule mutation, source bypass, legacy worker submission, Generation CAS, API idempotent count, and per-item database isolation; all passed after implementation.
+- Follow-up RED group: 4 failures covering N8/N9 lineage, legacy regeneration, and lock order; all passed after implementation.
+- Focused backend regression: 105 passed.
+- First full regression exposed 8 legacy-contract tests; they were updated to use real gated PromptVersions or to assert fail-closed legacy behavior. All 8 passed after migration.
+
+### Final verification
+
+- `pytest -q`: 255 passed; warnings only.
+- `python manage.py check`: exit 0, no issues.
+- `python manage.py makemigrations --check --dry-run`: exit 0, no changes detected; only the expected local PostgreSQL-unavailable history-check warning.
+- `git diff --check`: exit 0; line-ending notices only.
+
+### Documentation impact
+
+- No project authority document changed. The existing Prompt OS specification already requires N7 before every paid image execution, immutable PromptVersion/Generation history, final-reference traceability, and per-product isolation.
+- This append-only task report is the review-fix handoff required by the accepted task boundary.

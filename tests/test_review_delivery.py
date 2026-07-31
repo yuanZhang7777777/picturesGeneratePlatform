@@ -53,24 +53,36 @@ def make_project(owner, name="Project"):
 
 
 def make_generation(owner, tmp_path, *, name="Project", attempt=1, status="completed", content=b"result"):
-    from platform_app.models import Generation, PromptVersion, ResultAsset
+    from platform_app.models import Cluster, Generation, ResultAsset
+    from platform_app.services import (
+        _create_gated_prompt_version,
+        _current_rule_bundle_snapshot,
+        _template_snapshot,
+    )
 
     batch, cluster, slot = make_project(owner, name)
-    prompt_version = PromptVersion.objects.create(
+    references = [f"originals/{batch.id}/product.png"]
+    cluster.preparation_status = Cluster.PreparationStatus.READY
+    cluster.analysis_snapshot = {"_preparation_revision": 1, "identity": {}}
+    cluster.save(update_fields=["preparation_status", "analysis_snapshot"])
+    snapshot = {
+        "product_facts": cluster.product_facts,
+        "identity_lock": cluster.identity_lock,
+        "reference_snapshot": references,
+    }
+    prompt_version = _create_gated_prompt_version(
         cluster=cluster,
-        created_by=owner,
+        batch=batch,
+        slot=slot,
+        user=owner,
+        node_name="N4",
+        template_version="test-v1",
+        provider_model="gpt-image-2",
         prompt_text="Original grounded prompt",
-        input_snapshot={
-            "product_facts": cluster.product_facts,
-            "identity_lock": cluster.identity_lock,
-            "reference_snapshot": [f"originals/{batch.id}/product.png"],
-        },
-        structured_output={"prompt": "Original grounded prompt"},
-        source_snapshot={
-            "product_facts": cluster.product_facts,
-            "identity_lock": cluster.identity_lock,
-            "reference_snapshot": [f"originals/{batch.id}/product.png"],
-        },
+        input_snapshot=snapshot,
+        structured_output={"prompt": "Original grounded prompt", "visible_text_lines": []},
+        source_snapshot=snapshot,
+        references=references,
     )
     generation = Generation.objects.create(
         batch=batch,
@@ -81,9 +93,9 @@ def make_generation(owner, tmp_path, *, name="Project", attempt=1, status="compl
         attempt=attempt,
         status=status,
         prompt_text=prompt_version.prompt_text,
-        reference_snapshot=[f"originals/{batch.id}/product.png"],
-        template_snapshot={"template": "published-v1"},
-        rule_snapshot={"rules": {"background": "white"}},
+        reference_snapshot=references,
+        template_snapshot=_template_snapshot(batch.output_template, slot),
+        rule_snapshot=_current_rule_bundle_snapshot(batch, slot),
     )
     storage_path = (
         f"results/{batch.id}/{cluster.id}/{slot.id}/{attempt}/"
@@ -824,7 +836,7 @@ def test_review_validation_and_technical_retry_are_separate(client, tmp_path, se
     retry = client.post(reverse("api_generation_retry", args=[failed.id]))
     assert retry.status_code == 200
     retry_generation = Generation.objects.get(id=retry.json()["id"])
-    assert retry_generation.prompt_version_id != failed.prompt_version_id
+    assert retry_generation.prompt_version_id == failed.prompt_version_id
     assert retry_generation.prompt_version.prompt_text == retry_generation.prompt_text
     assert "Hero restrictions: no promotional text" in retry_generation.prompt_text
     assert retry_generation.attempt == 2
@@ -874,24 +886,36 @@ def test_changes_requested_requires_reason_and_rejects_rect_outside_canvas(
 
 
 def test_retry_and_revision_reserve_daily_quota(client, tmp_path, settings):
-    from platform_app.models import Generation
-    from platform_app.services import confirm_generation
+    from django.utils import timezone
+    from platform_app.models import DailyGenerationUsage, Generation
 
     settings.MEDIA_ROOT = tmp_path
     settings.GENERATION_QUOTAS_ENABLED = True
     owner = make_user("quota-owner")
     owner.daily_generation_limit = 1
     owner.save(update_fields=["daily_generation_limit"])
-    batch, _, _ = make_project(owner, "Quota confirm")
-    generation = confirm_generation(batch, owner)[0]
-    generation.status = Generation.Status.FAILED
-    generation.save(update_fields=["status"])
+    _, _, _, generation, _ = make_generation(
+        owner,
+        tmp_path,
+        name="Quota confirm",
+        status=Generation.Status.FAILED,
+    )
+    DailyGenerationUsage.objects.create(
+        scope=DailyGenerationUsage.Scope.ORGANIZATION,
+        date=timezone.localdate(),
+        used=1,
+    )
+    DailyGenerationUsage.objects.create(
+        scope=DailyGenerationUsage.Scope.USER,
+        date=timezone.localdate(),
+        user=owner,
+        used=1,
+    )
     client.force_login(owner)
 
     retry = client.post(reverse("api_generation_retry", args=[generation.id]))
     assert retry.status_code == 400
     assert "quota" in retry.json()["error"].lower()
-    from platform_app.models import DailyGenerationUsage
 
     assert DailyGenerationUsage.objects.get(scope="org").used == 1
     assert DailyGenerationUsage.objects.get(scope="user", user=owner).used == 1
