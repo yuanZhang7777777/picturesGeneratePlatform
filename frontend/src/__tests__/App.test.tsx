@@ -169,6 +169,14 @@ test("asks only for a project name before opening the project workbench", async 
   expect(screen.queryByLabelText("市场")).not.toBeInTheDocument();
 });
 
+test("keeps project seller tier inside more settings", async () => {
+  renderApp("/projects/project-demo");
+
+  fireEvent.click(await screen.findByRole("button", { name: "项目默认配置" }));
+  fireEvent.click(screen.getByRole("button", { name: "项目更多设置" }));
+  expect(screen.getByLabelText("项目店铺类型")).toHaveValue("general");
+});
+
 test("keeps imports inside an initially collapsed add-product drawer", async () => {
   renderApp("/projects/project-demo");
 
@@ -324,7 +332,7 @@ test("renders product cards with relation choice and prompt editing", async () =
 
   expect(await screen.findByRole("img", { name: "商品参考图" })).toBeInTheDocument();
   expect(screen.getByLabelText("商品名称")).toHaveValue("桌面护眼灯");
-  fireEvent.click(screen.getByRole("button", { name: "更多" }));
+  fireEvent.click(screen.getByRole("button", { name: "更多设置" }));
   expect(screen.getByDisplayValue("一图一商品")).toBeInTheDocument();
   expect(screen.getByLabelText("身份锁")).toHaveValue("深蓝色灯头");
   expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("白底标准图 prompt");
@@ -334,7 +342,7 @@ test("saves edited product relation and prompts through the cluster endpoint", a
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "更多" }));
+  fireEvent.click(await screen.findByRole("button", { name: "更多设置" }));
   fireEvent.change(screen.getByLabelText("整套要求"), { target: { value: "更明亮的书桌场景" } });
   fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
 
@@ -368,7 +376,7 @@ test("keeps product details collapsed until requested", async () => {
 
   await screen.findByRole("checkbox", { name: "生成 桌面护眼灯" });
   expect(screen.queryByLabelText("身份锁")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "更多" }));
+  fireEvent.click(screen.getByRole("button", { name: "更多设置" }));
   expect(screen.getByLabelText("身份锁")).toHaveValue("深蓝色灯头");
 });
 
@@ -392,7 +400,7 @@ test("offers merge controls from the product detail drawer", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "更多" }));
+  fireEvent.click(await screen.findByRole("button", { name: "更多设置" }));
   fireEvent.click(await screen.findByRole("button", { name: "合并未分配图片 1" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/merge/"))).toBe(true));

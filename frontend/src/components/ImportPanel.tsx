@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type InputHTMLAttributes } from "react";
 
 import { uploadPath, type UploadResult } from "../api";
-import type { ImportMode } from "../types";
+import type { ImportMode, SkuImportResult } from "../types";
 
 const folderInputProps = { webkitdirectory: "" } as InputHTMLAttributes<HTMLInputElement>;
 const acceptedTypes = ".jpg,.jpeg,.png,.webp,.txt";
@@ -45,7 +45,7 @@ export function ImportPanel({
   disabled,
 }: {
   onUpload: (files: File[], mode: ImportMode) => Promise<UploadResult>;
-  onSkuImport: (skus: string[], mode: ImportMode) => Promise<unknown>;
+  onSkuImport: (skus: string[], mode: ImportMode) => Promise<SkuImportResult>;
   onImported: () => void;
   disabled?: boolean;
 }) {
@@ -55,6 +55,7 @@ export function ImportPanel({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [skuText, setSkuText] = useState("");
+  const [skuErrors, setSkuErrors] = useState<string[]>([]);
   const skuLines = () => skuText.split(/\s+/).map((item) => item.trim()).filter(Boolean);
   const addFiles = (nextFiles: File[]) => setFiles((current) => {
     const merged = new Map(current.map((file) => [`${uploadPath(file)}:${file.size}:${file.lastModified}`, file]));
@@ -78,9 +79,15 @@ export function ImportPanel({
   const importSkuList = async (mode: ImportMode) => {
     const skus = skuLines().slice(0, 50);
     if (!skus.length) return;
-    await onSkuImport(skus, mode);
-    setSkuText("");
-    onImported();
+    try {
+      const result = await onSkuImport(skus, mode);
+      const failed = result.items.filter((item) => item.status === "failed");
+      setSkuText(failed.map((item) => item.sku).join("\n"));
+      setSkuErrors(failed.map((item) => `${item.sku}：${skuErrorMessage(item.errorCode)}`));
+      if (!failed.length) onImported();
+    } catch {
+      // The mutation owner renders transport/auth errors; do not lose the typed SKU list.
+    }
   };
   const imageFiles = files.filter((file) => !uploadPath(file).toLowerCase().endsWith(".txt"));
   const txtCount = files.length - imageFiles.length;
@@ -112,13 +119,18 @@ export function ImportPanel({
         {files.length > 0 && <button className="text-sm font-semibold text-slate-600" type="button" onClick={() => setFiles([])}>清空</button>}
       </div>
     </> : <>
-      <label className="block text-sm font-medium text-slate-700"><span className="mb-2 block">ERP SKU</span><textarea value={skuText} onChange={(event) => setSkuText(event.target.value)} placeholder="每行或空格分隔，单次最多 50 个" /></label>
+      <label className="block text-sm font-medium text-slate-700"><span className="mb-2 block">ERP SKU</span><textarea value={skuText} onChange={(event) => { setSkuText(event.target.value); setSkuErrors([]); }} placeholder="每行或空格分隔，单次最多 50 个" /></label>
+      {skuErrors.length > 0 && <ul className="mt-3 space-y-1 text-sm text-amber-800">{skuErrors.map((message) => <li key={message}>{message}</li>)}</ul>}
       <div className="mt-4 flex flex-wrap gap-2">
         <button className="primary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("auto")}>导入并自动出图</button>
         <button className="secondary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("organize")}>导入后整理</button>
       </div>
     </>}
   </section>;
+}
+
+function skuErrorMessage(code: string | null | undefined) {
+  return ({ sku_not_found: "SKU 不存在或无可用商品图片", catalog_unavailable: "ERP 商品服务暂不可用", catalog_image_invalid: "商品图片无法导入", archive_failed: "商品图片归档失败", project_locked: "项目当前不可导入" } as Record<string, string>)[code ?? ""] ?? "导入失败，请重试";
 }
 
 function PendingImage({ file, index }: { file: File; index: number }) {

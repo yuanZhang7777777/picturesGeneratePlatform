@@ -1,5 +1,5 @@
 import { developmentWorkspace } from "./mock-data";
-import type { ClusterUpdateInput, ImportMode, PreflightResult, ProductConfiguration, Project, ProjectInput, ReviewInput, RevisionInput, WorkspaceSnapshot } from "./types";
+import type { ClusterUpdateInput, ImportMode, PreflightResult, ProductConfiguration, Project, ProjectInput, ReviewInput, RevisionInput, SkuImportResult, WorkspaceSnapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public authRequired = false) {
@@ -194,7 +194,7 @@ export async function uploadAssets(projectId: string, files: File[], mode: Impor
 }
 
 export function importSkus(projectId: string, skus: string[], mode: ImportMode) {
-  return jsonRequest(`/api/projects/${projectId}/sku-import/`, {
+  return jsonRequest<SkuImportResult>(`/api/projects/${projectId}/sku-import/`, {
     method: "POST",
     body: JSON.stringify({ skus, mode }),
   });

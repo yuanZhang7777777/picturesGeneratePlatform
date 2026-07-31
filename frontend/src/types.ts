@@ -74,6 +74,21 @@ export interface RuleGateSnapshot {
 export interface PromptAnalysisSnapshot {
   fact_ledger?: FactLedgerSnapshot;
   rule_gate?: RuleGateSnapshot;
+  readiness?: { status?: string; code?: string; required_fields?: string[] };
+}
+
+export interface SkuImportItem {
+  sku: string;
+  productName?: string;
+  status: "imported" | "failed";
+  clusterId?: string | null;
+  errorCode?: string | null;
+}
+
+export interface SkuImportResult {
+  imported: number;
+  failed: number;
+  items: SkuImportItem[];
 }
 
 export interface ClusterUpdateInput {
