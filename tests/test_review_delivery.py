@@ -117,7 +117,7 @@ def uploaded_png(name="front.png"):
     return SimpleUploadedFile(name, content.getvalue(), content_type="image/png")
 
 
-def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(client):
+def test_csrf_bootstrap_and_project_creation_ignores_legacy_configuration(client):
     from platform_app.models import Batch, OutputTemplate, RuleProfile
 
     user = make_user("owner")
@@ -158,9 +158,17 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
     missing_csrf = post_json(
         csrf_client,
         reverse("api_project_create"),
-        {**base_payload, "template": str(published_template.id)},
+        {**base_payload, "template": str(draft_template.id)},
     )
     assert missing_csrf.status_code == 403
+
+    def assert_global_fallback(response):
+        assert response.status_code == 201
+        batch = Batch.objects.get(id=response.json()["id"])
+        assert batch.owner == user
+        assert batch.output_template == baseline
+        assert (batch.platform, batch.site, batch.market) == ("", "", "")
+        assert batch.seller_tier == "general"
 
     draft = post_json(
         csrf_client,
@@ -172,7 +180,7 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
         },
         csrf_token=token,
     )
-    assert draft.status_code == 400
+    assert_global_fallback(draft)
 
     draft_rule_response = post_json(
         csrf_client,
@@ -184,7 +192,7 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
         },
         csrf_token=token,
     )
-    assert draft_rule_response.status_code == 400
+    assert_global_fallback(draft_rule_response)
 
     created = post_json(
         csrf_client,
@@ -196,12 +204,7 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
         },
         csrf_token=token,
     )
-    assert created.status_code == 201
-    batch = Batch.objects.get(id=created.json()["id"])
-    assert batch.owner == user
-    assert batch.output_template == published_template
-    assert batch.rule_profile == published_rule
-    assert batch.seller_tier == "mall"
+    assert_global_fallback(created)
 
     named = post_json(
         csrf_client,
@@ -209,8 +212,7 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
         {**base_payload, "name": "Named project", "template": "Published template"},
         csrf_token=token,
     )
-    assert named.status_code == 201
-    assert Batch.objects.get(id=named.json()["id"]).output_template == published_template
+    assert_global_fallback(named)
 
     defaulted = post_json(
         csrf_client,
@@ -218,8 +220,7 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
         {**base_payload, "name": "Default project"},
         csrf_token=token,
     )
-    assert defaulted.status_code == 201
-    assert Batch.objects.get(id=defaulted.json()["id"]).output_template == baseline
+    assert_global_fallback(defaulted)
 
     tiktok = post_json(
         csrf_client,
@@ -227,10 +228,7 @@ def test_csrf_bootstrap_and_project_creation_only_use_published_configuration(cl
         {**base_payload, "name": "TikTok project", "platform": "tiktok", "market": "TH"},
         csrf_token=token,
     )
-    assert tiktok.status_code == 201
-    tiktok_batch = Batch.objects.get(id=tiktok.json()["id"])
-    assert tiktok_batch.output_template == baseline
-    assert tiktok_batch.seller_tier == "general"
+    assert_global_fallback(tiktok)
 
 
 def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_path, settings):

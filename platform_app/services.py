@@ -638,8 +638,8 @@ def create_project(
     owner,
     *,
     name,
-    platform="shopee",
-    market="SG",
+    platform="",
+    market="",
     seller_tier="general",
     template=None,
     rule_profile=None,
@@ -650,8 +650,8 @@ def create_project(
     name = str(name or "").strip()
     if not name:
         raise ValueError("name is required")
-    platform = str(platform or "shopee").strip()
-    market = str(market or "SG").strip().upper()
+    platform = str(platform or "").strip()
+    market = str(market or "").strip().upper()
     seller_tier = str(seller_tier or Batch.SellerTier.GENERAL).strip().lower()
     if platform != "shopee":
         seller_tier = Batch.SellerTier.GENERAL
@@ -686,6 +686,116 @@ def create_project(
         resolution=str(resolution or output_template.default_resolution),
         global_prompt=str(global_prompt or ""),
     )
+
+
+def _default_config(batch):
+    return {
+        "platform": batch.platform,
+        "market": batch.market,
+        "sellerTier": batch.seller_tier or Batch.SellerTier.GENERAL,
+        "size": batch.size or "1:1",
+        "resolution": batch.resolution or "1k",
+        "globalPrompt": batch.global_prompt or "",
+    }
+
+
+def _effective_config(batch, cluster):
+    defaults = _default_config(batch)
+    platform = cluster.platform_override if cluster.platform_override is not None else (defaults["platform"] or "global")
+    seller_tier = (
+        cluster.seller_tier_override
+        if cluster.seller_tier_override is not None
+        else defaults["sellerTier"]
+    )
+    return {
+        "platform": platform,
+        "market": cluster.market_override if cluster.market_override is not None else defaults["market"],
+        "sellerTier": seller_tier if platform == "shopee" else Batch.SellerTier.GENERAL,
+        "size": defaults["size"],
+        "resolution": defaults["resolution"],
+        "globalPrompt": defaults["globalPrompt"],
+    }
+
+
+def _required_config_value(payload, field, *, uppercase=False):
+    value = payload.get(field)
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a string")
+    value = value.strip()
+    if not value:
+        raise ValueError(f"{field} is required")
+    return value.upper() if uppercase else value
+
+
+def _optional_config_value(payload, field, current, fallback):
+    value = payload.get(field, current)
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a string")
+    return value.strip() or current or fallback
+
+
+@transaction.atomic
+def update_project_settings(batch, payload):
+    if not isinstance(payload, dict):
+        raise TypeError("request body must be an object")
+    locked = Batch.objects.select_for_update().get(id=batch.id)
+    platform = _required_config_value(payload, "platform")
+    market = _required_config_value(payload, "market", uppercase=True)
+    seller_tier = _required_config_value(payload, "seller_tier").lower()
+    if seller_tier not in Batch.SellerTier.values:
+        raise ValueError("seller_tier must be general or mall")
+    if platform != "shopee":
+        seller_tier = Batch.SellerTier.GENERAL
+    output_template = _default_output_template(platform, market, seller_tier)
+    rule_profile = _default_rule_profile(platform, market)
+    size = _optional_config_value(payload, "size", locked.size, "1:1")
+    resolution = _optional_config_value(payload, "resolution", locked.resolution, "1k")
+    global_prompt = payload.get("global_prompt", locked.global_prompt)
+    if not isinstance(global_prompt, str):
+        raise TypeError("global_prompt must be a string")
+
+    clusters = list(locked.clusters.select_for_update().filter(archived_at__isnull=True))
+    before = {cluster.id: _effective_config(locked, cluster) for cluster in clusters}
+    locked.platform = platform
+    locked.site = market
+    locked.market = market
+    locked.seller_tier = seller_tier
+    locked.output_template = output_template
+    locked.rule_profile = rule_profile
+    locked.size = size
+    locked.resolution = resolution
+    locked.global_prompt = global_prompt
+    locked.save(
+        update_fields=[
+            "platform",
+            "site",
+            "market",
+            "seller_tier",
+            "output_template",
+            "rule_profile",
+            "size",
+            "resolution",
+            "global_prompt",
+            "updated_at",
+        ]
+    )
+    for cluster in clusters:
+        if before[cluster.id] == _effective_config(locked, cluster):
+            continue
+        cluster.preparation_status = Cluster.PreparationStatus.PENDING
+        cluster.preparation_error = ""
+        cluster.analysis_snapshot = {}
+        cluster.auto_generate = False
+        cluster.save(
+            update_fields=[
+                "preparation_status",
+                "preparation_error",
+                "analysis_snapshot",
+                "auto_generate",
+                "updated_at",
+            ]
+        )
+    return locked
 
 
 def _bytes(content):
@@ -2953,6 +3063,7 @@ def update_cluster_content(cluster, user, payload):
             raise ValueError(", ".join(gate["hard_blocks"]))
         prepared_prompts.append((slot, prompt, input_snapshot, gate))
 
+    effective_before = _effective_config(locked.batch, locked)
     content_changed = False
     if "name" in payload or "product_name" in payload:
         product_name = str(payload.get("product_name", payload.get("name")) or "").strip()
@@ -2976,10 +3087,35 @@ def update_cluster_content(cluster, user, payload):
             if getattr(locked, field) != value:
                 setattr(locked, field, value)
                 content_changed = True
-    if content_changed and not prepared_prompts:
+    for field, uppercase in (("platform_override", False), ("market_override", True)):
+        if field not in payload:
+            continue
+        value = payload[field]
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"{field} must be a string or null")
+        value = value.strip() if value is not None else None
+        if value == "":
+            raise ValueError(f"{field} cannot be empty")
+        if uppercase and value is not None:
+            value = value.upper()
+        if getattr(locked, field) != value:
+            setattr(locked, field, value)
+    if "seller_tier_override" in payload:
+        value = payload["seller_tier_override"]
+        if value is not None and not isinstance(value, str):
+            raise TypeError("seller_tier_override must be a string or null")
+        value = value.strip().lower() if value is not None else None
+        if value is not None and value not in Batch.SellerTier.values:
+            raise ValueError("seller_tier_override must be general or mall")
+        if locked.seller_tier_override != value:
+            locked.seller_tier_override = value
+    configuration_changed = effective_before != _effective_config(locked.batch, locked)
+    if configuration_changed or (content_changed and not prepared_prompts):
         locked.preparation_status = Cluster.PreparationStatus.PENDING
         locked.preparation_error = ""
         locked.analysis_snapshot = {}
+        if configuration_changed:
+            locked.auto_generate = False
     for slot, prompt, input_snapshot, gate in prepared_prompts:
         PromptVersion.objects.create(
             cluster=locked,
@@ -3007,10 +3143,14 @@ def update_cluster_content(cluster, user, payload):
             "product_facts",
             "identity_lock",
             "prompt_override",
+            "platform_override",
+            "market_override",
+            "seller_tier_override",
             "relation_type",
             "preparation_status",
             "preparation_error",
             "analysis_snapshot",
+            "auto_generate",
             "version",
             "updated_at",
         ]
@@ -3528,6 +3668,12 @@ def serialize_project(batch):
                 "facts": cluster.product_facts,
                 "identityLock": cluster.identity_lock,
                 "brief": cluster.prompt_override,
+                "overrides": {
+                    "platform": cluster.platform_override,
+                    "market": cluster.market_override,
+                    "sellerTier": cluster.seller_tier_override,
+                },
+                "effectiveConfig": _effective_config(batch, cluster),
                 "analysisSnapshot": cluster.analysis_snapshot,
                 "prompts": [
                     {
@@ -3551,6 +3697,8 @@ def serialize_project(batch):
         "platform": batch.platform,
         "market": batch.market or batch.site,
         "sellerTier": batch.seller_tier,
+        "configurationStatus": "configured" if batch.platform and batch.market else "required",
+        "defaultConfig": _default_config(batch),
         "template": template.name,
         "size": batch.size,
         "status": _project_status(batch.status),

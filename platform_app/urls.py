@@ -20,6 +20,11 @@ urlpatterns = [
         name="api_project_snapshot",
     ),
     path(
+        "api/projects/<uuid:batch_id>/settings/",
+        views.api_project_settings,
+        name="api_project_settings",
+    ),
+    path(
         "api/projects/<uuid:batch_id>/assets/",
         views.api_upload_assets,
         name="api_project_upload_assets",

@@ -246,6 +246,9 @@ class Cluster(models.Model):
     identity_lock = models.TextField(blank=True)
     target_consumer = models.CharField(max_length=40, blank=True)
     prompt_override = models.TextField(blank=True)
+    platform_override = models.CharField(max_length=40, null=True, blank=True)
+    market_override = models.CharField(max_length=40, null=True, blank=True)
+    seller_tier_override = models.CharField(max_length=20, null=True, blank=True)
     relation_type = models.CharField(
         max_length=40,
         choices=RelationType.choices,

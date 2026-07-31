@@ -44,6 +44,7 @@ from .services import (
     StorageError,
     UploadError,
     update_cluster_content,
+    update_project_settings,
 )
 
 MAX_EXPORT_RESULT_BYTES = 25 * 1024 * 1024
@@ -179,17 +180,11 @@ def api_csrf(request):
 def api_project_create(request):
     try:
         payload = json.loads(request.body or "{}")
+        if not isinstance(payload, dict):
+            raise TypeError("request body must be an object")
         batch = create_project(
             request.user,
             name=payload.get("name"),
-            platform=payload.get("platform", "shopee"),
-            market=payload.get("market", "SG"),
-            seller_tier=payload.get("seller_tier", "general"),
-            template=payload.get("template"),
-            rule_profile=payload.get("rule_profile"),
-            size=payload.get("size", ""),
-            resolution=payload.get("resolution", ""),
-            global_prompt=payload.get("global_prompt", ""),
         )
     except (ValueError, TypeError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
@@ -211,6 +206,19 @@ def api_workspace_snapshot(request):
 @require_http_methods(["GET"])
 def api_project_snapshot(request, batch_id):
     return JsonResponse(_serialize_project(_batch_for_user(request.user, batch_id)))
+
+
+@login_required
+@password_change_required
+@require_http_methods(["PATCH"])
+def api_project_settings(request, batch_id):
+    batch = _batch_for_user(request.user, batch_id)
+    try:
+        payload = json.loads(request.body or "{}")
+        batch = update_project_settings(batch, payload)
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(_serialize_project(batch))
 
 
 @login_required
