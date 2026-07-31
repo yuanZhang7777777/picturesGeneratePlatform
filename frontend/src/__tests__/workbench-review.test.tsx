@@ -81,6 +81,7 @@ test("shows seller tier override and a precise blocked action", async () => {
 
   expect(screen.getByText("请确认商品身份或补充商品名称")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "更多设置" }));
+  expect(screen.getByText("店铺类型：普通店（跟随项目）")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("商品店铺类型"), { target: { value: "mall" } });
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
   await waitFor(() => expect(onSave).toHaveBeenCalledWith({ seller_tier_override: "mall" }, 1));
@@ -94,6 +95,21 @@ test("shows TikTok as a platform-fixed ordinary store even if a raw override say
 
   fireEvent.click(screen.getByRole("button", { name: "更多设置" }));
   expect(screen.getByText("店铺类型：普通店（平台规则固定）")).toBeInTheDocument();
+  expect(screen.queryByLabelText("商品店铺类型")).not.toBeInTheDocument();
+  expect(screen.getByText("TikTok Shop 店铺类型固定为普通店，不能单独修改。")).toBeInTheDocument();
+});
+
+test("does not submit a Mall override after switching the product to TikTok", async () => {
+  const onSave = vi.fn().mockResolvedValue({ id: "sku-1", version: 2 });
+  render(<ProductCard sku={sku} assets={sku.assets!} mergeableAssets={[]} selected onSelect={() => undefined} onMerge={() => undefined} onSave={onSave} onReload={vi.fn()} onDeleteAsset={() => undefined} onDelete={() => undefined} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "更多设置" }));
+  fireEvent.change(screen.getByLabelText("商品店铺类型"), { target: { value: "mall" } });
+  fireEvent.change(screen.getByLabelText("商品平台"), { target: { value: "tiktok" } });
+  expect(screen.queryByLabelText("商品店铺类型")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+
+  await waitFor(() => expect(onSave).toHaveBeenCalledWith({ platform_override: "tiktok" }, 1));
 });
 
 test("keeps the card square and hides detailed fields until its drawer opens", () => {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ClusterUpdateInput, ProductPrompt, ProductSku, RelationType, RuleGateMessage } from "../types";
+import type { ClusterUpdateInput, ClusterUpdateResult, ProductPrompt, ProductSku, RelationType, RuleGateMessage } from "../types";
 
 const defaultPrompts = [
   "白底标准图",
@@ -46,23 +46,34 @@ export function PromptEditor({
   disabled,
 }: {
   sku: ProductSku;
-  onSave: (payload: ClusterUpdateInput) => Promise<unknown> | void;
+  onSave: (payload: ClusterUpdateInput) => Promise<ClusterUpdateResult> | void;
   disabled?: boolean;
 }) {
   const [draft, setDraft] = useState(() => draftFromSku(sku));
   const [savedDraft, setSavedDraft] = useState(() => draftFromSku(sku));
   const currentSkuId = useRef(sku.id);
+  const pendingVersion = useRef<number | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
 
   useEffect(() => {
     const next = draftFromSku(sku);
     const skuChanged = currentSkuId.current !== sku.id;
     currentSkuId.current = sku.id;
-    if (skuChanged || !dirty) {
+    if (skuChanged) {
+      pendingVersion.current = null;
+      setDraft(next);
+      setSavedDraft(next);
+      return;
+    }
+    if (pendingVersion.current !== null) {
+      if (sku.version < pendingVersion.current) return;
+      pendingVersion.current = null;
+    }
+    if (!dirty) {
       setDraft(next);
       setSavedDraft(next);
     }
-  }, [sku.id, sku.relationType, sku.identityLock, sku.brief, sku.prompts, dirty]);
+  }, [sku.id, sku.version, sku.relationType, sku.identityLock, sku.brief, sku.prompts, dirty]);
 
   const updatePrompt = (slotOrder: number, text: string) => {
     setDraft((current) => ({ ...current, prompts: current.prompts.map((prompt) => prompt.slotOrder === slotOrder ? { ...prompt, text } : prompt) }));
@@ -70,7 +81,7 @@ export function PromptEditor({
   const save = async () => {
     const next = draft;
     try {
-      await onSave({
+      const result = await onSave({
         relation_type: next.relationType,
         identity_lock: next.identityLock,
         prompt_override: next.brief,
@@ -78,6 +89,7 @@ export function PromptEditor({
           .filter((prompt) => !prompt.readOnly && prompt.text.trim())
           .map((prompt) => ({ slot_order: prompt.slotOrder, prompt: prompt.text })),
       });
+      pendingVersion.current = result?.version ?? null;
       setSavedDraft(next);
     } catch {
       // ProductCard shows the save error and keeps this local draft dirty for retry.

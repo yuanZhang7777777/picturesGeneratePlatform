@@ -127,16 +127,29 @@ test("keeps dirty relation, identity, brief, and prompt drafts across a polling 
   expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("保留本地白底 Prompt");
 });
 
-test("updates the prompt baseline after a successful save before later snapshots", async () => {
-  const onSave = vi.fn().mockResolvedValue(undefined);
+test("keeps a successful prompt save while the parent still renders the old SKU snapshot", async () => {
+  const onSave = vi.fn().mockResolvedValue({ id: "cluster-1", version: 4 });
   const view = render(<PromptEditor sku={sku} onSave={onSave} />);
 
   fireEvent.change(screen.getByLabelText("身份锁"), { target: { value: "已保存身份锁" } });
   fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+  view.rerender(<PromptEditor sku={sku} onSave={onSave} />);
+
   expect(screen.getByLabelText("身份锁")).toHaveValue("已保存身份锁");
+});
 
-  view.rerender(<PromptEditor sku={{ ...sku, identityLock: "服务器刷新身份锁" }} onSave={onSave} />);
+test("adopts the acknowledged SKU snapshot as the new prompt baseline", async () => {
+  const onSave = vi.fn().mockResolvedValue({ id: "cluster-1", version: 4 });
+  const view = render(<PromptEditor sku={sku} onSave={onSave} />);
 
-  expect(screen.getByLabelText("身份锁")).toHaveValue("服务器刷新身份锁");
+  fireEvent.change(screen.getByLabelText("身份锁"), { target: { value: "已保存身份锁" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
+  await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+
+  view.rerender(<PromptEditor sku={{ ...sku, version: 4, identityLock: "服务器确认身份锁" }} onSave={onSave} />);
+  expect(screen.getByLabelText("身份锁")).toHaveValue("服务器确认身份锁");
+
+  view.rerender(<PromptEditor sku={{ ...sku, version: 5, identityLock: "后续远端身份锁" }} onSave={onSave} />);
+  expect(screen.getByLabelText("身份锁")).toHaveValue("后续远端身份锁");
 });

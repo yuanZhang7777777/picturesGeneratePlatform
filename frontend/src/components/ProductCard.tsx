@@ -10,7 +10,8 @@ const blockedText: Record<string, string> = { identity_needs_input: "请确认�
 type Draft = { name: string; brief: string; platform: string; market: string; sellerTier: string };
 
 function draftFromSku(sku: ProductSku): Draft {
-  return { name: sku.name, brief: sku.brief, platform: sku.overrides?.platform ?? "", market: sku.overrides?.market ?? "", sellerTier: sku.overrides?.sellerTier ?? "" };
+  const platform = sku.overrides?.platform ?? "";
+  return { name: sku.name, brief: sku.brief, platform, market: sku.overrides?.market ?? "", sellerTier: (platform || sku.effectiveConfig?.platform) === "tiktok" ? "" : sku.overrides?.sellerTier ?? "" };
 }
 
 export function ProductCard({ sku, assets, mergeableAssets, selected, onSelect, onMerge, onSave, onReload, onDeleteAsset, onDelete, disabled }: {
@@ -33,7 +34,7 @@ export function ProductCard({ sku, assets, mergeableAssets, selected, onSelect, 
       setDraft(next);
       setSavedDraft(next);
     }
-  }, [sku.id, sku.name, sku.brief, sku.overrides?.platform, sku.overrides?.market, sku.overrides?.sellerTier, dirty]);
+  }, [sku.id, sku.name, sku.brief, sku.overrides?.platform, sku.overrides?.market, sku.overrides?.sellerTier, sku.effectiveConfig?.platform, dirty]);
   useEffect(() => { if (detailsOpen) closeButton.current?.focus(); }, [detailsOpen]);
 
   const label = draft.name.trim() || "未命名商品";
@@ -43,11 +44,13 @@ export function ProductCard({ sku, assets, mergeableAssets, selected, onSelect, 
   const source = (value: string | null | undefined) => value ? "已单独设置" : "跟随项目";
   const submit = async (next = draft, resetAllOverrides = false) => {
     const payload: ClusterUpdateInput = {};
+    const nextSellerTier = (next.platform || effective?.platform) === "tiktok" ? "" : next.sellerTier;
+    const savedSellerTier = (savedDraft.platform || effective?.platform) === "tiktok" ? "" : savedDraft.sellerTier;
     if (next.name !== savedDraft.name) payload.name = next.name;
     if (next.brief !== savedDraft.brief) payload.prompt_override = next.brief;
     if (resetAllOverrides || next.platform !== savedDraft.platform) payload.platform_override = next.platform || null;
     if (resetAllOverrides || next.market !== savedDraft.market) payload.market_override = next.market || null;
-    if (resetAllOverrides || next.sellerTier !== savedDraft.sellerTier) payload.seller_tier_override = next.sellerTier ? next.sellerTier as "general" | "mall" : null;
+    if (resetAllOverrides || nextSellerTier !== savedSellerTier) payload.seller_tier_override = nextSellerTier ? nextSellerTier as "general" | "mall" : null;
     if (!Object.keys(payload).length) return;
     setSaving(true);
     setSaveError("");
@@ -107,17 +110,18 @@ export function ProductCard({ sku, assets, mergeableAssets, selected, onSelect, 
   </article>;
 }
 
-function ProductDetails({ closeButton, label, sku, assets, mergeableAssets, draft, effective, saving, saveError, onDraft, onSave, onReset, onPromptSave, onMerge, onDeleteAsset, onDelete, onClose, source }: { closeButton: React.RefObject<HTMLButtonElement | null>; label: string; sku: ProductSku; assets: ProductAsset[]; mergeableAssets: ProductAsset[]; draft: Draft; effective?: ProductSku["effectiveConfig"]; saving?: boolean; saveError: string; onDraft: (next: Draft) => void; onSave: () => void; onReset: () => void; onPromptSave: (payload: ClusterUpdateInput) => Promise<unknown>; onMerge: (assetId: string) => void; onDeleteAsset: (assetId: string) => void; onDelete: () => void; onClose: () => void; source: (value: string | null | undefined) => string }) {
+function ProductDetails({ closeButton, label, sku, assets, mergeableAssets, draft, effective, saving, saveError, onDraft, onSave, onReset, onPromptSave, onMerge, onDeleteAsset, onDelete, onClose, source }: { closeButton: React.RefObject<HTMLButtonElement | null>; label: string; sku: ProductSku; assets: ProductAsset[]; mergeableAssets: ProductAsset[]; draft: Draft; effective?: ProductSku["effectiveConfig"]; saving?: boolean; saveError: string; onDraft: (next: Draft) => void; onSave: () => void; onReset: () => void; onPromptSave: (payload: ClusterUpdateInput) => Promise<ClusterUpdateResult>; onMerge: (assetId: string) => void; onDeleteAsset: (assetId: string) => void; onDelete: () => void; onClose: () => void; source: (value: string | null | undefined) => string }) {
   useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; document.addEventListener("keydown", close); return () => document.removeEventListener("keydown", close); }, [onClose]);
   const sellerText = effective?.sellerTier === "mall" ? "Mall" : "普通店";
   const sellerSource = effective?.platform === "tiktok" ? "平台规则固定" : source(sku.overrides?.sellerTier);
+  const tiktok = (draft.platform || effective?.platform) === "tiktok";
   return <div className="fixed inset-0 z-40 bg-slate-950/20" role="presentation" onMouseDown={onClose}><aside aria-label={`${label} 商品详情`} aria-modal="true" className="absolute inset-y-0 right-0 w-full max-w-lg overflow-y-auto bg-white p-6 shadow-2xl" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
     <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品详情与 Prompt</p><h2 className="mt-1 text-xl font-semibold text-slate-950">{label}</h2></div><button ref={closeButton} className="secondary-button" type="button" onClick={onClose}>关闭</button></div>
     <div className="mt-5 rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><p>平台：{effective?.platform || "未设置"}（{source(sku.overrides?.platform)}）</p><p className="mt-1">国家：{effective?.market || "未设置"}（{source(sku.overrides?.market)}）</p><p className="mt-1">店铺类型：{sellerText}（{sellerSource}）</p></div>
     <label className="mt-5 block text-sm font-medium text-slate-700">平台<select aria-label="商品平台" className="mt-2" value={draft.platform} onChange={(event) => onDraft({ ...draft, platform: event.target.value })}><option value="">跟随项目</option><option value="shopee">Shopee</option><option value="tiktok">TikTok Shop</option></select></label>
     <label className="mt-4 block text-sm font-medium text-slate-700">国家/站点<input aria-label="商品国家" className="mt-2" value={draft.market} placeholder={effective?.market || "跟随项目"} onChange={(event) => onDraft({ ...draft, market: event.target.value.toUpperCase() })} /></label>
     <label className="mt-4 block text-sm font-medium text-slate-700">补充信息<textarea aria-label="商品补充信息" className="mt-2" value={draft.brief} placeholder="材质、功能、消费者或特别要求" onChange={(event) => onDraft({ ...draft, brief: event.target.value })} /></label>
-    <label className="mt-4 block text-sm font-medium text-slate-700">店铺类型<select aria-label="商品店铺类型" className="mt-2" value={draft.sellerTier} onChange={(event) => onDraft({ ...draft, sellerTier: event.target.value })}><option value="">跟随项目</option><option value="general">普通店</option><option value="mall">Mall</option></select></label>
+    {tiktok ? <p className="mt-4 text-sm text-slate-600">TikTok Shop 店铺类型固定为普通店，不能单独修改。</p> : <label className="mt-4 block text-sm font-medium text-slate-700">店铺类型<select aria-label="商品店铺类型" className="mt-2" value={draft.sellerTier} onChange={(event) => onDraft({ ...draft, sellerTier: event.target.value })}><option value="">跟随项目</option><option value="general">普通店</option><option value="mall">Mall</option></select></label>}
     {saveError && <p className="mt-3 text-sm text-amber-700">{saveError}</p>}
     <div className="mt-4 flex flex-wrap gap-2"><button className="primary-button" type="button" disabled={saving} onClick={onSave}>保存修改</button>{(sku.overrides?.platform || sku.overrides?.market || sku.overrides?.sellerTier || draft.platform || draft.market || draft.sellerTier) && <button className="secondary-button" type="button" disabled={saving} onClick={onReset}>恢复跟随项目</button>}</div>
     <div className="mt-5"><p className="text-sm font-semibold text-slate-700">参考图片</p><div className="mt-3 flex flex-wrap gap-3">{assets.map((asset, index) => <DraggableAsset key={asset.id} asset={asset} index={index} disabled={saving} onDelete={() => onDeleteAsset(asset.id)} />)}</div></div>
