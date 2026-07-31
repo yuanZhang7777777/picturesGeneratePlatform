@@ -27,7 +27,7 @@ Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worke
 
 登录使用 ERP：`ERP_LOGIN_URL` 接收用户输入的用户名和密码，平台只把返回的 Token 保存在服务端 session 中，不保存 ERP 密码。所有 ERP 登录成功用户都可进入平台；`PLATFORM_ADMIN_ERP_USERS` 用逗号分隔管理员 ERP 登录名，默认仅配置刘学城的登录名。
 
-SKU 商品资料导入使用当前登录用户的 ERP Token 调用 `CATALOG_QUERY_URL`，请求体只发送 `{"skuList": [...]}`。`CATALOG_ALLOWED_IMAGE_HOSTS` 仅接受逗号分隔的公网 IPv4/IPv6 字面量，不能填主机名；初始图片链接和每次重定向都必须命中该名单。单请求默认最多 `CATALOG_MAX_SKUS_PER_REQUEST=50`；其余下载门限为超时、重定向次数、最大字节数与最大像素数。发布前用受限测试 SKU 验证登录包络、Token 字段、过期行为、图片源 IP 白名单和私有归档；不能把原始商品资料响应、图片 URL 或 Token 写进日志。
+SKU 商品资料导入使用当前登录用户的 ERP Token 调用 `CATALOG_QUERY_URL`，请求体只发送 `{"skuList": [...]}`。`CATALOG_ALLOWED_IMAGE_HOSTS` 仅接受逗号分隔的公网 IPv4/IPv6 字面量，不能填主机名；当前 ERP 图片源必须包含 `180.167.156.35`，初始图片链接和每次重定向都必须命中该名单。单请求默认最多 `CATALOG_MAX_SKUS_PER_REQUEST=50`；其余下载门限为超时、重定向次数、最大字节数与最大像素数。发布前用受限测试 SKU 验证登录包络、Token 字段、过期行为、图片源 IP 白名单和私有归档；不能把原始商品资料响应、图片 URL 或 Token 写进日志。
 
 正式素材存储使用 `STORAGE_BACKEND=oss`，并配置 `OSS_ENDPOINT`、`OSS_BUCKET`、`OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` 和 `OSS_PREFIX=independent-image-platform`。原图、SKU 拉取图、生成结果和历史版本写入该 OSS 私有前缀；导出 ZIP 临时生成后由浏览器下载到员工本地，不在服务器或 OSS 长期保留。`LOCAL_MEDIA_ROOT` 仅用于开发和假模式回退。
 
@@ -48,7 +48,7 @@ python manage.py smoke_apimart_nodes
 
 不要把“入站访问端口”和“出站目的端口”混在一起：安全组里开放 `18000/19000` 是允许员工浏览器访问本服务器的预览入口；APIMart 的 `443` 是本服务器主动访问外部 HTTPS API 时的目的端口。当前 APIMart 出站网络阻塞已解除。
 
-2026-07-30 运行配置：ERP 登录与 SKU 商品资料查询使用 `103.198.125.2:16777`。当前已验证 ERP 登录接口网络可达并返回 JSON；真实员工账号成功登录与 SKU 商品图导入仍需通过浏览器人工登录或服务器端专用 smoke 账号变量验证。
+2026-07-31 运行配置：ERP 登录与 SKU 商品资料查询使用 `103.198.125.2:16777`，ERP 图片源白名单为 `180.167.156.35`。服务器已验证登录/查询主机和图片主机可达，并通过受控下载验证真实 ERP JPEG；完整的“员工浏览器登录 → SKU 导入 → OSS 归档”仍需浏览器 smoke。
 
 验收命令只输出连通状态，不得打印 `.env`、Token 或密钥：
 
