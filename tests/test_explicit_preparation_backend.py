@@ -528,6 +528,45 @@ def test_snapshot_exposes_preparation_contract_and_distinct_product_style(client
     assert sku["productStyle"] == "Product-only style"
 
 
+def test_snapshot_hides_schema_placeholder_identity_values(client):
+    from platform_app.models import Batch, Cluster
+
+    template, rules = make_global_configuration()
+    user = make_user()
+    batch = Batch.objects.create(
+        owner=user,
+        name="Snapshot placeholders",
+        output_template=template,
+        rule_profile=rules,
+    )
+    Cluster.objects.create(
+        batch=batch,
+        name="Product",
+        product_name="string",
+        preparation_status=Cluster.PreparationStatus.BLOCKED,
+        analysis_snapshot={
+            "identity": {
+                "product_name": "string",
+                "confidence": 0,
+                "product_profile": {
+                    "category": "string",
+                    "primary_appearance": "string",
+                    "shared_structure": ["string"],
+                },
+                "identity_lock": {"must_not_change": ["string"]},
+            },
+            "readiness": {"status": "blocked", "code": "identity_needs_input"},
+        },
+    )
+    client.force_login(user)
+
+    sku = client.get(reverse("api_project_snapshot", args=[batch.id])).json()["skus"][0]
+
+    assert sku["name"] == ""
+    assert sku["productName"] == ""
+    assert sku["identity"] == {"confidence": 0}
+
+
 def test_cluster_patch_accepts_platform_market_and_product_style(client):
     from platform_app.models import Batch, Cluster
 

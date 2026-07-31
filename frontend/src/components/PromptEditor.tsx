@@ -102,7 +102,10 @@ export function PromptEditor({
   const preparing = (preparation?.status ?? sku.preparationStatus) === "preparing";
   const progressTotal = preparation?.total || 7;
   const progressCurrent = Math.min(preparation?.current ?? 0, progressTotal);
-  const promptPlaceholder = preparing ? "正在生成这个槽位的 Prompt，生成后会自动加载到这里" : "预备生成后显示，可人工微调";
+  const stage = preparation?.stage ?? "";
+  const promptStage = ["N4", "N5", "N6", "N7"].includes(stage);
+  const progressLabel = promptStage ? "Prompt / 规则生成中" : "商品识别分析中";
+  const promptPlaceholder = preparing && !promptStage ? "商品识别和事实分析完成后，会自动生成并加载到这里" : preparing ? "正在生成这个槽位的 Prompt，生成后会自动加载到这里" : "预备生成后显示，可人工微调";
 
   return (
     <section className="mt-4 space-y-4">
@@ -151,7 +154,7 @@ export function PromptEditor({
       <section className="rounded-lg bg-slate-50 p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-slate-700">1+8 输出 Prompt</h3>
-          {preparing && <span className="text-xs font-semibold text-indigo-700">Prompt 生成中 {progressCurrent}/{progressTotal}</span>}
+          {preparing && <span className="text-xs font-semibold text-indigo-700">{progressLabel} {progressCurrent}/{progressTotal}</span>}
         </div>
         {preparing && <ProgressBar current={progressCurrent} total={progressTotal} />}
         <div className="mt-3 grid gap-3 md:grid-cols-2">

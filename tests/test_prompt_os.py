@@ -2,6 +2,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import connection
+from django.conf import settings
 from django.test.utils import CaptureQueriesContext
 
 
@@ -140,7 +141,7 @@ def test_confirm_generation_snapshots_selected_market_template_rule_and_prompt_a
     assert generation.prompt_version.cluster == cluster
     assert generation.prompt_version.node_name == "slot_prompt"
     assert generation.prompt_version.template_version == "builtin-v1"
-    assert generation.prompt_version.provider_model == "gpt-image-2"
+    assert generation.prompt_version.provider_model == settings.APIMART_PROMPT_MODEL
     assert generation.prompt_version.input_snapshot["market"] == "US"
     assert generation.prompt_version.evaluation["fact_policy"] == "traceable-inference"
 
@@ -288,7 +289,7 @@ def test_target_consumer_override_wins_over_infant_keyword():
 
     assert compiled["target_consumer"] == "adult"
     assert "Model persona: adult" in compiled["prompt"]
-    assert compiled["provider_model"] == "gpt-image-2"
+    assert compiled["provider_model"] == settings.APIMART_PROMPT_MODEL
     assert "provider_model" not in compiled["prompt"]
 
 
@@ -1884,6 +1885,121 @@ def test_n1_target_observation_requires_nonempty_visible_identity():
             },
             asset_id,
         )
+
+
+def test_n1_rejects_schema_placeholder_strings_as_identity_evidence():
+    from platform_app.services import _normalize_n1_observation
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+
+    with pytest.raises(ValueError, match="placeholder"):
+        _normalize_n1_observation(
+            strict_n1({
+                "asset_id": asset_id,
+                "asset_kind": "owned_product",
+                "image_role": "clean_product",
+                "contains_target_product": True,
+                "target_is_physical_product": True,
+                "target_visibility": 0,
+                "target_complete": True,
+                "background_complexity": "low",
+                "observed_identity": {
+                    "category_candidates": ["string"],
+                    "overall_shape": "string",
+                },
+                "reference_quality": 0,
+                "recommended_use": "reuse",
+                "candidate_product_name": "string",
+                "candidate_product_name_confidence": 0,
+            }),
+            asset_id,
+        )
+
+
+def test_blocked_identity_does_not_write_placeholder_product_name(tmp_path, settings):
+    import json
+
+    from platform_app.models import Asset, Batch, Cluster
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Blocked identity")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="b" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class PlaceholderIdentityClient(FakeAPIMartClient):
+        def observe_images(self, instruction, image_paths):
+            observed_asset_id = instruction.split("ASSET_ID=", 1)[1].splitlines()[0]
+            return {
+                "output_text": json.dumps(
+                    strict_n1({
+                        "asset_id": observed_asset_id,
+                        "asset_kind": "owned_product",
+                        "image_role": "clean_product",
+                        "contains_target_product": True,
+                        "target_is_physical_product": True,
+                        "target_visibility": 90,
+                        "target_complete": True,
+                        "background_complexity": "low",
+                        "observed_identity": {
+                            "category_candidates": ["chopsticks set"],
+                            "overall_shape": "two wooden chopsticks with a spoon in trays",
+                        },
+                        "reference_quality": 90,
+                        "recommended_use": "reuse",
+                        "candidate_product_name": "Chopsticks set",
+                        "candidate_product_name_confidence": 0.9,
+                    })
+                ),
+                "raw": {},
+            }
+
+        def optimize_prompt(self, payload):
+            if "NODE N2" in payload["text"]:
+                return {
+                    "output_text": json.dumps(
+                        strict_n2({
+                            "decision": "needs_input",
+                            "confidence": 0,
+                            "needs_input_reason": "Need a human product name.",
+                            "product_name": "string",
+                            "conflict_state": "unknown",
+                            "product_profile": {
+                                "category": "string",
+                                "primary_appearance": "",
+                            },
+                            "identity_lock": {"must_not_change": []},
+                            "primary_asset_id": None,
+                            "supporting_asset_ids": [],
+                            "standardization_mode": "reuse",
+                            "standardization_reason": "",
+                        })
+                    ),
+                    "raw": {},
+                }
+            return super().optimize_prompt(payload)
+
+    assert process_prompt_once(PlaceholderIdentityClient(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.BLOCKED
+    assert cluster.product_name == ""
+    assert cluster.name != "string"
+    assert cluster.analysis_snapshot["identity"]["product_name"] == ""
+    assert cluster.analysis_snapshot["identity"]["product_profile"]["category"] == ""
 
 
 def test_n2_continue_requires_nonempty_identity_lock_and_product_profile():

@@ -2224,7 +2224,7 @@ def compile_slot_prompt(
     *,
     batch=None,
     template=None,
-    provider_model="gpt-image-2",
+    provider_model=None,
     style_dna=None,
     slot_directive=None,
     visible_text_lines=None,
@@ -2330,7 +2330,7 @@ def compile_slot_prompt(
     return {
         "node_name": resolved_node_name,
         "template_version": node_version,
-        "provider_model": provider_model,
+        "provider_model": provider_model or settings.APIMART_PROMPT_MODEL,
         "target_consumer": consumer,
         "model_persona": consumer,
         "prompt": prompt,
@@ -2401,21 +2401,22 @@ def _repair_observation_json(
                     "Repeat the same owned-image observation using the same image evidence and input.",
                     observation_input,
                 ),
+                "Never copy schema placeholder words such as string. Every string value must be concrete visual evidence from the image.",
                 _json_repair_prompt(
                     text,
                     (
-                        'Required schema: {"asset_id":"string","image_role":"clean_product",'
+                        'Required schema: {"asset_id":"<asset id>","image_role":"clean_product",'
                         '"asset_kind":"owned_product","contains_target_product":true,'
                         '"target_is_physical_product":true,"target_visibility":0,'
                         '"target_complete":true,"background_complexity":"low",'
-                        '"observed_identity":{"category_candidates":["string"],'
-                        '"dominant_colors":[],"overall_shape":"string",'
+                        '"observed_identity":{"category_candidates":["concrete product category"],'
+                        '"dominant_colors":[],"overall_shape":"concrete visible shape",'
                         '"visible_material_cues":[],"logos_or_markings":[],"controls_ports_connectors":[],'
                         '"distinctive_parts":[],"count_observations":[]},'
                         '"observed_use_relationships":[],"non_target_objects":[],"package_or_text_clues":[],'
                         '"conflicts_with_confirmed_points":[],"reference_quality":0,'
                         '"recommended_use":"reuse","style_dna":null,"reason":"",'
-                        '"candidate_product_name":"string",'
+                        '"candidate_product_name":"concrete product name",'
                         '"candidate_product_name_confidence":0.0}.'
                     ),
                 ),
@@ -2442,10 +2443,41 @@ def _repair_slot_prompt_json(client, text, slots):
 
 def _string_list(value):
     if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
+        return [
+            str(item).strip()
+            for item in value
+            if str(item).strip() and not _is_schema_placeholder(item)
+        ]
     if isinstance(value, str) and value.strip():
-        return [value.strip()]
+        return [] if _is_schema_placeholder(value) else [value.strip()]
     return []
+
+
+def _is_schema_placeholder(value):
+    return isinstance(value, str) and value.strip().lower() == "string"
+
+
+def _clean_schema_placeholder(value):
+    if isinstance(value, str):
+        value = value.strip()
+        return "" if _is_schema_placeholder(value) else value
+    return value
+
+
+def _strip_schema_placeholders(value):
+    if isinstance(value, str):
+        return _clean_schema_placeholder(value)
+    if isinstance(value, list):
+        cleaned = [_strip_schema_placeholders(item) for item in value]
+        return [item for item in cleaned if item not in ("", None, [], {})]
+    if isinstance(value, dict):
+        cleaned = {key: _strip_schema_placeholders(item) for key, item in value.items()}
+        return {
+            key: item
+            for key, item in cleaned.items()
+            if item not in ("", None, [], {})
+        }
+    return value
 
 
 def _required_string(payload, field):
@@ -2486,7 +2518,7 @@ def _has_nonempty_value(value):
     if isinstance(value, (list, tuple, set)):
         return any(_has_nonempty_value(item) for item in value)
     if isinstance(value, str):
-        return bool(value.strip())
+        return bool(value.strip()) and not _is_schema_placeholder(value)
     return value is not None and value is not False
 
 
@@ -2521,7 +2553,7 @@ def _normalize_n1_observation(payload, expected_asset_id):
     if not isinstance(observed_identity, dict):
         raise ValueError("observed_identity must be an object")
     if contains_target and not _has_nonempty_value(observed_identity):
-        raise ValueError("observed_identity must contain visible identity evidence")
+        raise ValueError("observed_identity must contain visible identity evidence, not placeholder strings")
     if contains_target:
         category_candidates = observed_identity.get("category_candidates")
         if (
@@ -2535,9 +2567,21 @@ def _normalize_n1_observation(payload, expected_asset_id):
             raise ValueError(
                 "observed_identity.category_candidates must contain strings"
             )
+        category_candidates = [
+            item.strip()
+            for item in category_candidates
+            if item.strip() and not _is_schema_placeholder(item)
+        ]
+        if not category_candidates:
+            raise ValueError("observed_identity.category_candidates contain only placeholder strings")
         overall_shape = observed_identity.get("overall_shape")
         if not isinstance(overall_shape, str) or not overall_shape.strip():
             raise ValueError("observed_identity.overall_shape is required")
+        if _is_schema_placeholder(overall_shape):
+            raise ValueError("observed_identity.overall_shape cannot be a placeholder string")
+        observed_identity = copy.deepcopy(observed_identity)
+        observed_identity["category_candidates"] = category_candidates
+        observed_identity["overall_shape"] = overall_shape.strip()
     target_visibility = payload.get("target_visibility")
     if (
         isinstance(target_visibility, bool)
@@ -2552,6 +2596,8 @@ def _normalize_n1_observation(payload, expected_asset_id):
         or not 0 <= reference_quality <= 100
     ):
         raise ValueError("reference_quality must be an integer between 0 and 100")
+    if contains_target and (target_visibility == 0 or reference_quality == 0):
+        raise ValueError("visible product identity cannot be placeholder quality")
     for field in (
         "dominant_colors",
         "visible_material_cues",
@@ -2584,6 +2630,8 @@ def _normalize_n1_observation(payload, expected_asset_id):
     candidate_name = payload.get("candidate_product_name", payload.get("product_name"))
     if not isinstance(candidate_name, str) or not candidate_name.strip():
         raise ValueError("candidate_product_name is required")
+    if _is_schema_placeholder(candidate_name):
+        raise ValueError("candidate_product_name cannot be a placeholder string")
     candidate_confidence = payload.get(
         "candidate_product_name_confidence",
         payload.get("confidence"),
@@ -2639,32 +2687,38 @@ def _normalize_n2_identity(payload, valid_asset_ids):
         raise ValueError("product_profile must be an object")
     if not isinstance(identity_lock, dict):
         raise ValueError("identity_lock must be an object")
+    product_profile = copy.deepcopy(product_profile)
+    identity_lock = copy.deepcopy(identity_lock)
+    product_name = _clean_schema_placeholder(_required_string(payload, "product_name"))
     if decision == "continue":
         must_not_change = identity_lock.get("must_not_change")
-        if (
-            not isinstance(must_not_change, list)
-            or not must_not_change
-            or any(
-                not isinstance(item, str) or not item.strip()
-                for item in must_not_change
-            )
-        ):
+        must_not_change = _string_list(must_not_change)
+        identity_lock["must_not_change"] = must_not_change
+        if not must_not_change:
             raise ValueError(
                 "identity_lock.must_not_change must contain strings when decision is continue"
             )
-        category = product_profile.get("category")
-        if not isinstance(category, str) or not category.strip():
+        if not product_name:
+            raise ValueError("product_name cannot be a placeholder string when decision is continue")
+        category = _clean_schema_placeholder(product_profile.get("category"))
+        product_profile["category"] = category
+        if not isinstance(category, str) or not category:
             raise ValueError(
                 "product_profile.category is required when decision is continue"
             )
-        primary_appearance = product_profile.get("primary_appearance")
+        primary_appearance = _clean_schema_placeholder(product_profile.get("primary_appearance"))
+        product_profile["primary_appearance"] = primary_appearance
         if (
             not isinstance(primary_appearance, str)
-            or not primary_appearance.strip()
+            or not primary_appearance
         ):
             raise ValueError(
                 "product_profile.primary_appearance is required when decision is continue"
             )
+    else:
+        for field in ("category", "primary_appearance"):
+            if field in product_profile:
+                product_profile[field] = _clean_schema_placeholder(product_profile[field])
     for field in (
         "shared_structure",
         "visible_fixed_counts",
@@ -2674,6 +2728,11 @@ def _normalize_n2_identity(payload, valid_asset_ids):
         "known_conflicts",
     ):
         _required_list(product_profile, field)
+        product_profile[field] = [
+            item
+            for item in (_strip_schema_placeholders(product_profile[field]) or [])
+            if item not in ("", None, [], {})
+        ]
     for field in (
         "family_invariants",
         "primary_variant_attributes",
@@ -2683,6 +2742,11 @@ def _normalize_n2_identity(payload, valid_asset_ids):
         "must_not_change",
     ):
         _required_list(identity_lock, field)
+        identity_lock[field] = [
+            item
+            for item in (_strip_schema_placeholders(identity_lock[field]) or [])
+            if item not in ("", None, [], {})
+        ]
     primary_asset_id = payload.get("primary_asset_id")
     if primary_asset_id is not None:
         primary_asset_id = str(primary_asset_id)
@@ -2703,7 +2767,7 @@ def _normalize_n2_identity(payload, valid_asset_ids):
         {
             "decision": decision,
             "needs_input_reason": needs_input_reason.strip(),
-            "product_name": _required_string(payload, "product_name"),
+            "product_name": product_name,
             "confidence": _normalized_confidence(payload.get("confidence")),
             "conflict_state": conflict_state,
             "primary_asset_id": primary_asset_id,
@@ -3622,7 +3686,12 @@ def process_prompt_once(client=None, storage=None):
         confirmed_product_name = cluster.product_name.strip()
         if confirmed_product_name == "名称待确认":
             confirmed_product_name = ""
-        product_name = str(confirmed_product_name or identity.get("product_name") or "").strip()
+        if _is_schema_placeholder(confirmed_product_name):
+            confirmed_product_name = ""
+        identity_product_name = str(identity.get("product_name") or "").strip()
+        if identity["decision"] != "continue" or _is_schema_placeholder(identity_product_name):
+            identity_product_name = ""
+        product_name = str(confirmed_product_name or identity_product_name).strip()
         identity_lock = identity["identity_lock"]
         identity_facts = _identity_facts(identity)
         observed_facts = [
@@ -6243,6 +6312,11 @@ def serialize_project(batch):
             for slot in cluster_template.slots.order_by("order", "id")
         ]
         analysis = cluster.analysis_snapshot if isinstance(cluster.analysis_snapshot, dict) else {}
+        public_product_name = "" if cluster.product_name == "名称待确认" or _is_schema_placeholder(cluster.product_name) else cluster.product_name
+        public_identity = _strip_schema_placeholders(analysis.get("identity") or {})
+        public_analysis = copy.deepcopy(analysis)
+        if isinstance(public_analysis, dict):
+            public_analysis["identity"] = public_identity
         effective_config = _effective_config(batch, cluster)
         effective_config["resolution"] = effective_config["resolution"].upper()
         sku_assets = [serialized_assets[item.asset_id] for item in cluster_assets]
@@ -6250,8 +6324,8 @@ def serialize_project(batch):
             {
                 "id": str(cluster.id),
                 "sku": cluster.sku or "",
-                "name": "" if cluster.product_name == "名称待确认" else cluster.product_name,
-                "productName": "" if cluster.product_name == "名称待确认" else cluster.product_name,
+                "name": public_product_name,
+                "productName": public_product_name,
                 "productNameSource": analysis.get("product_name_source"),
                 "version": cluster.version,
                 "relationType": cluster.relation_type,
@@ -6279,10 +6353,10 @@ def serialize_project(batch):
                     "sellerTier": cluster.seller_tier_override,
                 },
                 "effectiveConfig": effective_config,
-                "identity": analysis.get("identity", {}),
+                "identity": public_identity,
                 "factLedger": analysis.get("fact_ledger", {}),
                 "marketingPlan": analysis.get("marketing_plan", {"plans": []}),
-                "analysisSnapshot": analysis,
+                "analysisSnapshot": public_analysis,
                 "prompts": prompt_slots,
                 "promptSlots": prompt_slots,
                 "generationProgress": {
