@@ -114,6 +114,40 @@ test("shows the operator dashboard without the old review center", async () => {
   expect(screen.queryByRole("link", { name: "审核中心" })).not.toBeInTheDocument();
 });
 
+test("redirects to login only after logout succeeds", async () => {
+  const assign = vi.fn();
+  vi.stubGlobal("location", { assign, origin: "http://localhost:3000" });
+  stubFetch(async (url) => {
+    if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf-for-test" });
+    if (url === "/logout/") return { ok: true, status: 200, redirected: true, url: "http://localhost:3000/login/" };
+    if (url.includes("/workspace/")) return response(200, { projects: [project] });
+    return response(200, project);
+  });
+  renderApp();
+
+  fireEvent.click(await screen.findByRole("button", { name: "退出登录" }));
+
+  await waitFor(() => expect(assign).toHaveBeenCalledWith("/login/"));
+});
+
+test("shows a logout error and stays on the page when logout fails", async () => {
+  const assign = vi.fn();
+  vi.stubGlobal("location", { assign, origin: "http://localhost:3000" });
+  stubFetch(async (url) => {
+    if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf-for-test" });
+    if (url === "/logout/") return response(500, { error: "logout unavailable" });
+    if (url.includes("/workspace/")) return response(200, { projects: [project] });
+    return response(200, project);
+  });
+  renderApp();
+
+  fireEvent.click(await screen.findByRole("button", { name: "退出登录" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("退出登录失败，请重试。");
+  expect(screen.getByRole("heading", { name: "工作台" })).toBeInTheDocument();
+  expect(assign).not.toHaveBeenCalled();
+});
+
 test("opens a unified project workspace from the dashboard", async () => {
   renderApp("/projects/project-demo");
 

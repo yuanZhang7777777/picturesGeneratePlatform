@@ -35,6 +35,15 @@ function isLoginResponse(response: JsonResponse) {
   return Boolean(response.redirected) || isAuthenticationUrl(response.url);
 }
 
+function isLogoutRedirect(response: JsonResponse) {
+  if (!response.redirected || !response.url) return false;
+  try {
+    return new URL(response.url, window.location.origin).pathname === "/login/";
+  } catch {
+    return false;
+  }
+}
+
 async function errorFor(response: JsonResponse) {
   if (isLoginResponse(response)) return new ApiError(401, "登录已失效或需修改密码", true);
   let message = `请求失败（${response.status}）`;
@@ -75,7 +84,7 @@ export async function logoutUser(): Promise<void> {
     headers: new Headers({ "X-CSRFToken": await csrfToken() }),
     credentials: "same-origin",
   });
-  if (!response.ok || isLoginResponse(response)) throw await errorFor(response);
+  if (!response.ok || (isLoginResponse(response) && !isLogoutRedirect(response))) throw await errorFor(response);
 }
 
 export async function loadWorkspace(): Promise<WorkspaceSnapshot> {

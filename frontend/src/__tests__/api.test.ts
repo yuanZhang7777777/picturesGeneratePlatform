@@ -49,7 +49,12 @@ test("obtains a CSRF token from the same-origin bootstrap endpoint before creati
 test("logs out with a CSRF-protected same-origin POST", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
-    .mockResolvedValueOnce({ ok: true, status: 204 });
+    .mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: "http://localhost:3000/login/",
+    });
   vi.stubGlobal("fetch", fetchMock);
 
   await expect(logoutUser()).resolves.toBeUndefined();

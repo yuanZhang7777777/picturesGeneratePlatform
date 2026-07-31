@@ -5,16 +5,19 @@ import { ApiError, logoutUser } from "./api";
 
 export function Shell({ children }: { children: ReactNode }) {
   const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
   const logout = async () => {
     setLoggingOut(true);
+    setLogoutError("");
     try {
       await logoutUser();
       window.location.assign("/login/");
     } catch {
       setLoggingOut(false);
+      setLogoutError("退出登录失败，请重试。");
     }
   };
-  return <div className="min-h-screen bg-slate-50 text-slate-900"><aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-slate-200 bg-white px-4 py-5 lg:flex"><Brand /><Navigation /></aside><div className="lg:pl-60"><header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-slate-200/80 bg-slate-50/90 px-5 backdrop-blur lg:px-8"><p className="text-sm text-slate-500">商品图生产中心</p><div className="flex items-center gap-3"><button className="text-sm font-semibold text-slate-600" type="button" disabled={loggingOut} onClick={() => void logout()}>退出登录</button><span className="grid size-8 place-items-center rounded-full bg-slate-900 text-xs font-semibold text-white">OP</span></div></header><nav className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 lg:hidden" aria-label="移动端主导航"><Navigation /></nav><main className="mx-auto max-w-7xl p-5 lg:p-8">{children}</main></div></div>;
+  return <div className="min-h-screen bg-slate-50 text-slate-900"><aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-slate-200 bg-white px-4 py-5 lg:flex"><Brand /><Navigation /></aside><div className="lg:pl-60"><header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-slate-200/80 bg-slate-50/90 px-5 backdrop-blur lg:px-8"><p className="text-sm text-slate-500">商品图生产中心</p><div className="flex items-center gap-3">{logoutError && <p className="text-sm text-rose-700" role="alert">{logoutError}</p>}<button className="text-sm font-semibold text-slate-600" type="button" disabled={loggingOut} onClick={() => void logout()}>退出登录</button><span className="grid size-8 place-items-center rounded-full bg-slate-900 text-xs font-semibold text-white">OP</span></div></header><nav className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 lg:hidden" aria-label="移动端主导航"><Navigation /></nav><main className="mx-auto max-w-7xl p-5 lg:p-8">{children}</main></div></div>;
 }
 
 function Brand() { return <Link to="/" className="mb-9 flex items-center gap-3 px-2 text-lg font-bold tracking-tight text-slate-950"><span className="grid size-8 place-items-center rounded-lg bg-indigo-600 text-sm text-white">图</span>Prompt OS</Link>; }
