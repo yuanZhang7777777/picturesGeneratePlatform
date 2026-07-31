@@ -93,6 +93,7 @@ export interface SkuImportResult {
 
 export interface ClusterUpdateInput {
   name?: string;
+  product_facts?: string;
   relation_type?: RelationType;
   identity_lock?: string;
   prompt_override?: string;
@@ -125,14 +126,37 @@ export interface ProductOverrides {
 export interface ProductSku {
   id: string;
   name: string;
+  productNameSource?: "ai" | "manual" | "erp" | "blank";
   sku?: string;
   relationType?: RelationType;
   assetIds: string[];
   assets?: ProductAsset[];
   facts: string;
+  productFacts?: string;
+  productStyle?: string;
   identityLock: string;
   brief: string;
   preparationStatus?: string;
+  preparation?: {
+    status: string;
+    stage?: string;
+    current: number;
+    total: number;
+    error?: string;
+  };
+  generationProgress?: { status?: string; current?: number; completed?: number; active?: number; failed?: number; total: number };
+  identity?: {
+    product_name?: string;
+    confidence?: number;
+    product_profile?: {
+      category?: string;
+      primary_appearance?: string;
+      shared_structure?: string[];
+      included_items?: string[];
+    };
+    identity_lock?: { must_not_change?: string[]; family_invariants?: string[] };
+  };
+  marketingPlan?: { plans?: CreativeBriefPlan[] };
   overrides?: ProductOverrides;
   effectiveConfig?: ProductConfiguration;
   version: number;
@@ -160,6 +184,37 @@ export interface Project {
 
 export interface WorkspaceSnapshot {
   projects: Project[];
+  currentUser?: { role: "admin" | "operator" };
+}
+
+export interface CreativeBriefPlan {
+  slot_order?: number;
+  decision_task?: string;
+  conversion_goal?: string;
+  main_scene?: string;
+  main_action?: string;
+}
+
+export interface PromptNodeTemplate {
+  id: string;
+  node_name: string;
+  version: string;
+  status: "draft" | "published" | "retired";
+  instruction: string;
+  user_message_template?: string;
+  output_schema: unknown;
+  model?: string | null;
+  platform_scope?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptNodeDraftInput {
+  node_name: string;
+  version: string;
+  instruction: string;
+  user_message_template?: string;
+  output_schema: unknown;
 }
 
 export interface ProjectInput {

@@ -12,8 +12,11 @@ export const developmentWorkspace: WorkspaceSnapshot = {
       name: "夏日家居上新",
       platform: "Shopee",
       market: "SG",
+      configurationStatus: "configured",
+      defaultConfig: { platform: "shopee", market: "SG", sellerTier: "general", size: "1:1", resolution: "1k", globalPrompt: "" },
       template: "商品基础套图",
-      size: "1:1 · 1K",
+      size: "1:1",
+      resolution: "1k",
       status: "running",
       updatedAt: "10 分钟前",
       assets: [

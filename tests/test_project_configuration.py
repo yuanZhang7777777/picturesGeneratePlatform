@@ -81,19 +81,19 @@ def test_name_only_project_uses_global_fallback_and_serializes_required_configur
 
     assert response.status_code == 201
     body = response.json()
-    assert body["configurationStatus"] == "required"
+    assert body["configurationStatus"] == "configured"
     assert body["defaultConfig"] == {
-        "platform": "",
-        "market": "",
+        "platform": "generic",
+        "market": "SEA",
         "sellerTier": "general",
         "size": "1:1",
-        "resolution": "1k",
+        "resolution": "1K",
         "globalPrompt": "",
     }
     from platform_app.models import Batch
 
     batch = Batch.objects.get(id=body["id"])
-    assert (batch.platform, batch.site, batch.market) == ("", "", "")
+    assert (batch.platform, batch.site, batch.market) == ("generic", "SEA", "SEA")
     assert batch.output_template_id == global_template.id
     assert batch.rule_profile_id == global_rules.id
 
@@ -149,7 +149,7 @@ def test_project_settings_only_requeues_products_with_changed_effective_configur
         "market": "VN",
         "sellerTier": "general",
         "size": "1:1",
-        "resolution": "1k",
+        "resolution": "1K",
         "globalPrompt": "",
     }
     assert body["template"] == vietnam_template.name
@@ -157,9 +157,9 @@ def test_project_settings_only_requeues_products_with_changed_effective_configur
     inherited.refresh_from_db()
     matching_override.refresh_from_db()
     assert batch.rule_profile_id == vietnam_rules.id
-    assert inherited.preparation_status == Cluster.PreparationStatus.PENDING
-    assert inherited.auto_generate is True
-    assert matching_override.preparation_status == Cluster.PreparationStatus.PENDING
+    assert inherited.preparation_status == Cluster.PreparationStatus.DRAFT
+    assert inherited.auto_generate is False
+    assert matching_override.preparation_status == Cluster.PreparationStatus.READY
     assert matching_override.auto_generate is True
     assert PromptVersion.objects.filter(cluster=inherited).count() == 1
 
@@ -223,7 +223,7 @@ def test_cluster_configuration_overrides_normalize_and_null_restores_inheritance
         "market": "",
         "sellerTier": "general",
         "size": "1:1",
-        "resolution": "1k",
+        "resolution": "1K",
         "globalPrompt": "",
     }
 
@@ -426,4 +426,5 @@ def test_settings_requeues_when_resolving_template_or_rule_changes(client):
 
     assert response.status_code == 200
     cluster.refresh_from_db()
-    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.preparation_status == Cluster.PreparationStatus.DRAFT
+    assert cluster.auto_generate is False

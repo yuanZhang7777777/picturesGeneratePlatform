@@ -158,7 +158,7 @@ test("opens a unified project workspace from the dashboard", async () => {
   renderApp("/projects/project-demo");
 
   expect(await screen.findByRole("heading", { name: "夏日家居上新" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "生产与结果" })).toHaveAttribute("href", "/projects/project-demo/results");
+  expect(screen.getByRole("link", { name: "生产结果" })).toHaveAttribute("href", "/projects/project-demo/results");
 });
 
 test("asks only for a project name before opening the project workbench", async () => {
@@ -169,12 +169,12 @@ test("asks only for a project name before opening the project workbench", async 
   expect(screen.queryByLabelText("市场")).not.toBeInTheDocument();
 });
 
-test("keeps project seller tier inside more settings", async () => {
+test("keeps platform and market directly in the compact toolbar", async () => {
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "项目默认配置" }));
-  fireEvent.click(screen.getByRole("button", { name: "项目更多设置" }));
-  expect(screen.getByLabelText("项目店铺类型")).toHaveValue("general");
+  expect(await screen.findByRole("button", { name: "Shopee 虾皮" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "新加坡" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByLabelText("项目店铺类型")).not.toBeInTheDocument();
 });
 
 test("keeps imports inside an initially collapsed add-product drawer", async () => {
@@ -338,35 +338,35 @@ test("marks ERP imports for automatic mode without generating before Prompt prep
   expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(false);
 });
 
-test("renders product cards with relation choice and prompt editing", async () => {
+test("renders product cards with inline identity and prompt editing", async () => {
   renderApp("/projects/project-demo");
 
-  expect(await screen.findByRole("img", { name: "商品参考图" })).toBeInTheDocument();
-  expect(screen.getByLabelText("商品名称")).toHaveValue("桌面护眼灯");
-  fireEvent.click(screen.getByRole("button", { name: "更多设置" }));
-  expect(screen.getByDisplayValue("一图一商品")).toBeInTheDocument();
-  expect(screen.getByLabelText("身份锁")).toHaveValue("深蓝色灯头");
+  expect(await screen.findByRole("img", { name: "桌面护眼灯 商品参考图" })).toBeInTheDocument();
+  expect(screen.getByLabelText("商品名称 桌面护眼灯")).toHaveValue("桌面护眼灯");
+  fireEvent.click(screen.getByRole("button", { name: "查看 桌面护眼灯 详情" }));
+  expect(screen.queryByLabelText("多图关系")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("商品身份")).toHaveValue("深蓝色灯头");
   expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("白底标准图 prompt");
 });
 
-test("saves edited product relation and prompts through the cluster endpoint", async () => {
+test("saves the editable product brief through the cluster endpoint", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "更多设置" }));
-  fireEvent.change(screen.getByLabelText("整套要求"), { target: { value: "更明亮的书桌场景" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
+  const brief = await screen.findByLabelText("创意 Brief 桌面护眼灯");
+  fireEvent.change(brief, { target: { value: "更明亮的书桌场景" } });
+  fireEvent.blur(brief);
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/clusters/sku-lamp/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/clusters/sku-lamp/"));
-  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ prompt_override: "更明亮的书桌场景" });
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ product_facts: "更明亮的书桌场景" });
 });
 
 test("starts generation for selected products and shows product and image counts", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  const button = await screen.findByRole("button", { name: "生成选中商品（1 个商品 / 9 张图）" });
+  const button = await screen.findByRole("button", { name: "正式生成（1）" });
   fireEvent.click(button);
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(true));
@@ -377,18 +377,18 @@ test("starts generation for selected products and shows product and image counts
 test("allows the only product to be deselected", async () => {
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("checkbox", { name: "生成 桌面护眼灯" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "选择 桌面护眼灯" }));
 
-  expect(screen.getByRole("button", { name: "生成选中商品（0 个商品 / 0 张图）" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "正式生成（0）" })).toBeDisabled();
 });
 
 test("keeps product details collapsed until requested", async () => {
   renderApp("/projects/project-demo");
 
-  await screen.findByRole("checkbox", { name: "生成 桌面护眼灯" });
-  expect(screen.queryByLabelText("身份锁")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "更多设置" }));
-  expect(screen.getByLabelText("身份锁")).toHaveValue("深蓝色灯头");
+  await screen.findByRole("checkbox", { name: "选择 桌面护眼灯" });
+  expect(screen.queryByLabelText("商品身份")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "查看 桌面护眼灯 详情" }));
+  expect(screen.getByLabelText("商品身份")).toHaveValue("深蓝色灯头");
 });
 
 test("keeps an unidentified product name empty instead of inserting status text", async () => {
@@ -402,19 +402,17 @@ test("keeps an unidentified product name empty instead of inserting status text"
   });
   renderApp("/projects/project-demo");
 
-  const input = await screen.findByPlaceholderText("可不填，AI 将根据图片识别");
+  const input = await screen.findByPlaceholderText("可不填，预备生成时识别");
   expect(input).toHaveValue("");
   expect(screen.queryByText("名称待确认")).not.toBeInTheDocument();
 });
 
-test("offers merge controls from the product detail drawer", async () => {
-  const fetchMock = stubFetch();
+test("offers draggable thumbnails from the inline product details", async () => {
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "更多设置" }));
-  fireEvent.click(await screen.findByRole("button", { name: "合并未分配图片 1" }));
-
-  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/merge/"))).toBe(true));
+  fireEvent.click(await screen.findByRole("button", { name: "查看 桌面护眼灯 详情" }));
+  expect(screen.getByRole("button", { name: "拖拽商品参考图 1" })).toHaveAttribute("aria-roledescription", "draggable");
+  expect(screen.getByRole("region", { name: "桌面护眼灯 商品详情" })).toBeInTheDocument();
 });
 
 test("renders fifty compact square product cards without expanding the workbench", async () => {
@@ -432,7 +430,7 @@ test("renders fifty compact square product cards without expanding the workbench
   renderApp("/projects/project-demo");
 
   await screen.findByDisplayValue("商品 50");
-  expect(screen.getAllByLabelText("商品名称")).toHaveLength(50);
+  expect(screen.getAllByRole("textbox", { name: /^商品名称 商品/ })).toHaveLength(50);
   expect(document.querySelector(".product-card-grid")).toBeInTheDocument();
 });
 

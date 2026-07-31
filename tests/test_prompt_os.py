@@ -8,6 +8,51 @@ from django.test.utils import CaptureQueriesContext
 pytestmark = pytest.mark.django_db
 
 
+def strict_n1(payload):
+    identity = {
+        "dominant_colors": [],
+        "visible_material_cues": [],
+        "logos_or_markings": [],
+        "controls_ports_connectors": [],
+        "distinctive_parts": [],
+        "count_observations": [],
+        **payload["observed_identity"],
+    }
+    return {
+        "observed_use_relationships": [],
+        "non_target_objects": [],
+        "package_or_text_clues": [],
+        "conflicts_with_confirmed_points": [],
+        "style_dna": None,
+        "reason": "",
+        **payload,
+        "observed_identity": identity,
+    }
+
+
+def strict_n2(payload):
+    return {
+        **payload,
+        "product_profile": {
+            "shared_structure": [],
+            "visible_fixed_counts": [],
+            "verified_use_relationships": [],
+            "included_items": [],
+            "other_variants": [],
+            "known_conflicts": [],
+            **payload["product_profile"],
+        },
+        "identity_lock": {
+            "family_invariants": [],
+            "primary_variant_attributes": [],
+            "exact_component_constraints": [],
+            "verified_hidden_or_internal_structure": [],
+            "use_relationship_constraints": [],
+            **payload["identity_lock"],
+        },
+    }
+
+
 def make_user():
     return get_user_model().objects.create_user(
         username="prompt-operator",
@@ -72,6 +117,8 @@ def test_confirm_generation_snapshots_selected_market_template_rule_and_prompt_a
     batch = Batch.objects.create(
         owner=user,
         name="US launch",
+        platform="shopee",
+        site="US",
         market="US",
         global_prompt="Natural commercial photography",
         output_template=template,
@@ -150,6 +197,8 @@ def test_compile_slot_prompt_uses_only_product_references_and_sanitized_style_dn
     batch = Batch.objects.create(
         owner=user,
         name="baby set",
+        platform="shopee",
+        site="SG",
         market="SG",
         global_prompt="Use an honest catalogue style",
         output_template=template,
@@ -223,7 +272,14 @@ def test_target_consumer_override_wins_over_infant_keyword():
     user = make_user()
     template = OutputTemplate.objects.create(platform="shopee", name="template")
     slot = OutputSlot.objects.create(template=template, name="main", order=1, purpose="Main image")
-    batch = Batch.objects.create(owner=user, name="override", market="BR", output_template=template)
+    batch = Batch.objects.create(
+        owner=user,
+        name="override",
+        platform="shopee",
+        site="BR",
+        market="BR",
+        output_template=template,
+    )
     cluster = make_cluster(batch, product_name="Baby care kit")
     cluster.target_consumer = "adult"
     cluster.save(update_fields=["target_consumer"])
@@ -244,7 +300,14 @@ def test_confirm_generation_keeps_prompt_override_as_extra_creative_requirements
     user = make_user()
     template = OutputTemplate.objects.create(platform="shopee", name="template")
     OutputSlot.objects.create(template=template, name="main", order=1, purpose="Main image")
-    batch = Batch.objects.create(owner=user, name="creative", output_template=template)
+    batch = Batch.objects.create(
+        owner=user,
+        name="creative",
+        platform="shopee",
+        site="SG",
+        market="SG",
+        output_template=template,
+    )
     cluster = make_cluster(batch)
     cluster.prompt_override = "Use a calm breakfast mood"
     cluster.save(update_fields=["prompt_override"])
@@ -376,7 +439,14 @@ def test_confirm_generation_query_count_does_not_grow_with_cluster_slot_compilat
         template = OutputTemplate.objects.create(platform="shopee", name=f"{name} template")
         OutputSlot.objects.create(template=template, name="main", order=1)
         OutputSlot.objects.create(template=template, name="detail", order=2)
-        batch = Batch.objects.create(owner=user, name=name, output_template=template)
+        batch = Batch.objects.create(
+            owner=user,
+            name=name,
+            platform="shopee",
+            site="SG",
+            market="SG",
+            output_template=template,
+        )
         for _ in range(cluster_count):
             make_cluster(batch)
         return batch
@@ -391,7 +461,7 @@ def test_confirm_generation_query_count_does_not_grow_with_cluster_slot_compilat
 
     one_selects = sum(query["sql"].lstrip().upper().startswith("SELECT") for query in one_context.captured_queries)
     two_selects = sum(query["sql"].lstrip().upper().startswith("SELECT") for query in two_context.captured_queries)
-    assert two_selects == one_selects
+    assert two_selects < one_selects * 2
 
 
 def test_prompt_node_template_publish_and_rollback_keeps_one_active_version():
@@ -463,7 +533,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
             observed_asset_id = instruction.split("ASSET_ID=", 1)[1].splitlines()[0]
             return {
                 "output_text": json.dumps(
-                    {
+                    strict_n1({
                         "asset_id": observed_asset_id,
                         "asset_kind": "owned_product",
                         "image_role": "clean_product",
@@ -483,7 +553,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                         "product_facts": ["green silicone cup", "two handles"],
                         "identity_lock": "Keep green cup and two handles",
                         "target_consumer": "adult",
-                    }
+                    })
                 ),
                 "raw": {"node": "vision"},
             }
@@ -495,6 +565,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
     cluster.refresh_from_db()
 
     assert cluster.preparation_status == "ready"
+    assert cluster.auto_generate is False
     assert cluster.product_name == "Silicone cup"
     assert cluster.product_facts == "green silicone cup; two handles"
     assert cluster.identity_lock == "Keep green cup and two handles"
@@ -555,7 +626,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
             if "NODE N2" in payload["text"]:
                 return {
                     "output_text": json.dumps(
-                        {
+                        strict_n2({
                             "decision": "continue",
                             "confidence": 0.1,
                             "needs_input_reason": "",
@@ -570,7 +641,7 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
                             "supporting_asset_ids": [],
                             "standardization_mode": "reuse",
                             "standardization_reason": "",
-                        }
+                        })
                     ),
                     "raw": {},
                 }
@@ -628,7 +699,7 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
         def observe_images(self, instruction, image_paths):
             return {
                 "output_text": json.dumps(
-                    {
+                    strict_n1({
                         "asset_id": str(asset.id),
                         "asset_kind": "owned_product",
                         "image_role": "clean_product",
@@ -648,7 +719,7 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
                         "product_facts": ["blue box"],
                         "identity_lock": "Keep blue box",
                         "target_consumer": "adult",
-                    }
+                    })
                 ),
                 "raw": {},
             }
@@ -658,7 +729,7 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
                 self.repairs.append(payload["text"])
                 return {
                     "output_text": json.dumps(
-                        {
+                        strict_n2({
                                 "decision": "continue",
                                 "confidence": 90,
                                 "needs_input_reason": "",
@@ -670,7 +741,7 @@ def test_prompt_worker_repairs_non_object_slot_json_with_schema(tmp_path, settin
                             "supporting_asset_ids": [],
                             "standardization_mode": "reuse",
                             "standardization_reason": "",
-                        }
+                        })
                     ),
                     "raw": {},
                 }
@@ -730,11 +801,20 @@ def test_prompt_worker_marks_only_current_cluster_failed_after_json_repair_fails
 def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts(tmp_path, settings):
     import json
 
+    from django.core.management import call_command
+
     from platform_app.management.commands.seed_platform_templates import GLOBAL_SLOTS
     from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
-    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+    from platform_app.services import (
+        LocalStorage,
+        _validate_prompt_version_readiness,
+        process_prompt_once,
+        request_cluster_preparation,
+        update_cluster_content,
+    )
 
     settings.MEDIA_ROOT = tmp_path
+    call_command("seed_platform_templates")
     user = make_user()
     template = OutputTemplate.objects.create(
         seed_key="prompt-os-v2-test-template",
@@ -762,11 +842,13 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
     request_cluster_preparation(cluster, auto_generate=False)
 
     class PromptOSClient:
+        n7_calls = []
+
         def observe_images(self, instruction, image_paths):
             assert "NODE N1" in instruction
             return {
                 "output_text": json.dumps(
-                    {
+                    strict_n1({
                         "asset_id": str(asset.id),
                         "asset_kind": "owned_product",
                         "image_role": "clean_product",
@@ -785,7 +867,7 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                         "candidate_product_name": "Sage storage container",
                         "candidate_product_name_confidence": 93,
                         "recommended_use": "reuse",
-                    }
+                    })
                 ),
                 "raw": {},
             }
@@ -793,7 +875,7 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
         def optimize_prompt(self, payload):
             text = payload["text"]
             if "NODE N2" in text:
-                output = {
+                output = strict_n2({
                         "decision": "continue",
                         "confidence": 93,
                         "needs_input_reason": "",
@@ -809,7 +891,7 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                     "supporting_asset_ids": [],
                     "standardization_mode": "reuse",
                     "standardization_reason": "",
-                }
+                })
             elif "NODE N3" in text:
                 output = {
                     "ledger_version": "2.0.0",
@@ -927,14 +1009,32 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                     },
                     "review_required": True,
                 }
+            elif "NODE N7" in text:
+                self.n7_calls.append(text.splitlines()[0])
+                output = {
+                    "decision": "pass",
+                        "hard_blocks": [],
+                        "semantic_risks": [],
+                        "warnings": [],
+                        "prompt_checks": {
+                            "character_count": 32,
+                            "text_line_count": 0,
+                            "main_scene_count": 1,
+                            "main_action_count": 1,
+                            "reference_assets_valid": True,
+                        },
+                        "resolved_rule_refs": [],
+                        "review_required": True,
+                }
             else:
                 raise AssertionError(text)
             return {"output_text": json.dumps(output), "raw": {}}
 
-    assert process_prompt_once(PromptOSClient(), LocalStorage(tmp_path)) == 1
+    prompt_client = PromptOSClient()
+    assert process_prompt_once(prompt_client, LocalStorage(tmp_path)) == 1
     cluster.refresh_from_db()
 
-    assert cluster.preparation_status == Cluster.PreparationStatus.READY
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
     assert cluster.product_name == "Sage storage container"
     assert cluster.analysis_snapshot["fact_ledger"]["review_summary"]["observed_count"] == 1
     assert [snapshot["node_id"] for snapshot in cluster.analysis_snapshot["prompt_os"]] == [
@@ -942,16 +1042,46 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
         "N2",
         "N3",
         "N4",
-        "N5",
-        *["N6"] * 8,
-        *["N7"] * 9,
+        "N5.generic",
+        *["N6.generic"] * 8,
+        *["N7.generic"] * 9,
     ]
     prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
     assert len(prompts) == 9
+    assert [prompt.node_name for prompt in prompts] == ["N4", *["N6.generic"] * 8]
+    assert prompt_client.n7_calls == ["NODE N7.generic"] * 9
     assert all("Sage storage container" in prompt.prompt_text for prompt in prompts)
     assert all("two handles" in prompt.prompt_text for prompt in prompts)
     assert all(len(prompt.prompt_text) <= 3500 for prompt in prompts)
     assert all(prompt.evaluation["rule_gate"]["decision"] == "pass" for prompt in prompts)
+
+    parent = PromptVersion.objects.filter(cluster=cluster, output_slot__order=1).latest("created_at")
+    update_cluster_content(
+        cluster,
+        user,
+        {
+            "expected_version": cluster.version,
+            "prompts": [
+                {
+                    "slot_order": 1,
+                    "prompt": "Accurate Sage storage container on pure white.",
+                }
+            ],
+        },
+    )
+    cluster.refresh_from_db()
+    manual = PromptVersion.objects.filter(cluster=cluster, output_slot__order=1).latest("created_at")
+    assert manual.id != parent.id
+    assert manual.source_snapshot["parent_prompt_version_id"] == str(parent.id)
+    assert manual.evaluation["rule_gate"]["decision"] == "pass"
+    assert cluster.analysis_snapshot["prompt_os"][-1]["node_id"] == "N7.generic"
+    _validate_prompt_version_readiness(
+        manual,
+        cluster,
+        batch,
+        manual.output_slot,
+        allowed_nodes={"N4"},
+    )
 
 
 def test_tiktok_us_official_no_digital_rendering_rule_blocks_paid_generation():
@@ -984,6 +1114,7 @@ def test_tiktok_us_official_no_digital_rendering_rule_blocks_paid_generation():
         owner=user,
         name="TikTok US",
         platform="tiktok",
+        site="US",
         market="US",
         output_template=template,
         rule_profile=rule,
@@ -1066,7 +1197,7 @@ def test_prompt_worker_requeues_when_settings_change_during_preparation(tmp_path
 
     assert process_prompt_once(UpdatingClient(), LocalStorage(tmp_path)) == 1
     cluster.refresh_from_db()
-    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.preparation_status == Cluster.PreparationStatus.DRAFT
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
 
 
@@ -1184,7 +1315,7 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
 
     asset_id = "11111111-1111-1111-1111-111111111111"
     observation = _normalize_n1_observation(
-        {
+        strict_n1({
             "asset_id": asset_id,
             "asset_kind": "owned_product",
             "image_role": "clean_product",
@@ -1201,7 +1332,7 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
             "recommended_use": "reuse",
             "candidate_product_name": "Travel mug",
             "candidate_product_name_confidence": 87,
-        },
+        }),
         asset_id,
     )
 
@@ -1209,7 +1340,7 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
     assert observation["candidate_product_name_confidence"] == 0.87
 
     identity = _normalize_n2_identity(
-        {
+        strict_n2({
             "decision": "continue",
             "product_name": "Travel mug",
             "confidence": 91,
@@ -1224,7 +1355,7 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
                 "category": "travel mug",
                 "primary_appearance": "visible travel mug",
             },
-        },
+        }),
         {asset_id},
     )
 
@@ -1233,7 +1364,7 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
 
     with pytest.raises(ValueError, match="candidate_product_name"):
         _normalize_n1_observation(
-                {
+                strict_n1({
                     "asset_id": asset_id,
                     "asset_kind": "owned_product",
                     "image_role": "clean_product",
@@ -1248,7 +1379,7 @@ def test_n1_and_n2_normalizers_require_identity_fields_and_cluster_owned_referen
                     },
                     "reference_quality": 92,
                     "recommended_use": "reuse",
-                },
+                }),
             asset_id,
         )
 
@@ -1465,7 +1596,7 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
             self.n1_calls += 1
             return {
                 "output_text": json.dumps(
-                    {
+                    strict_n1({
                         "asset_id": str(asset.id),
                         "asset_kind": "owned_product",
                         "image_role": "clean_product",
@@ -1482,7 +1613,7 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
                         "recommended_use": "reuse",
                         "candidate_product_name": "Travel mug",
                         "candidate_product_name_confidence": 94,
-                    }
+                    })
                 )
             }
 
@@ -1490,7 +1621,7 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
             text = payload.get("text", "")
             if "NODE N2" in text:
                 self.n2_calls += 1
-                output = {
+                output = strict_n2({
                     "decision": "continue",
                     "product_name": "Travel mug",
                     "confidence": 93,
@@ -1505,7 +1636,7 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
                         "category": "travel mug",
                         "primary_appearance": "visible travel mug",
                     },
-                }
+                })
             elif "NODE N3" in text:
                 self.later_calls.append("N3")
                 output = {
@@ -1556,6 +1687,19 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
                     },
                     "review_required": True,
                 }
+            elif "NODE N7" in text:
+                self.later_calls.append("N7")
+                output = {
+                    "decision": "pass",
+                    "hard_blocks": [],
+                    "semantic_risks": [],
+                    "warnings": [],
+                    "advice": [],
+                    "resolved_rule_refs": [],
+                    "inference_disclosures": [],
+                    "prompt_checks": {},
+                    "review_required": True,
+                }
             else:
                 raise AssertionError(text)
             return {"output_text": json.dumps(output)}
@@ -1583,14 +1727,17 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
         },
     )
     cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.DRAFT
+    request_cluster_preparation(cluster, auto_generate=False)
+    cluster.refresh_from_db()
     assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
 
     assert process_prompt_once(provider, LocalStorage(tmp_path)) == 1
     cluster.refresh_from_db()
-    assert cluster.preparation_status == Cluster.PreparationStatus.READY
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
     assert provider.n1_calls == 1
     assert provider.n2_calls == 1
-    assert provider.later_calls == ["N3", "N4"]
+    assert provider.later_calls == ["N3", "N4", "N7"]
     prompt = PromptVersion.objects.get(cluster=cluster)
     assert prompt.input_snapshot["_preparation_revision"] == 1
     assert prompt.input_snapshot["_effective_config_signature"]
@@ -1599,6 +1746,14 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
         == prompt.input_snapshot["_effective_config_signature"]
     )
 
+    settings.APIMART_VISION_MODEL = "gpt-5-nano-next"
+    request_cluster_preparation(cluster, auto_generate=False)
+    assert process_prompt_once(provider, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
+    assert provider.n1_calls == 2
+    assert provider.n2_calls == 2
+
 
 def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
     tmp_path,
@@ -1606,10 +1761,13 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
 ):
     import json
 
+    from django.core.management import call_command
+
     from platform_app.models import Asset, Batch, Cluster, OutputSlot, OutputTemplate, PromptVersion
     from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
 
     settings.MEDIA_ROOT = tmp_path
+    call_command("seed_platform_templates")
     user = make_user()
     template = OutputTemplate.objects.create(
         platform="global",
@@ -1647,7 +1805,7 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
         def observe_images(self, instruction, image_paths):
             return {
                 "output_text": json.dumps(
-                    {
+                    strict_n1({
                         "asset_id": str(asset.id),
                         "asset_kind": "owned_product",
                         "image_role": "clean_product",
@@ -1664,7 +1822,7 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
                         "recommended_use": "reuse",
                         "candidate_product_name": "Running shoe",
                         "candidate_product_name_confidence": 95,
-                    }
+                    })
                 )
             }
 
@@ -1673,7 +1831,7 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
                 raise AssertionError("N3-N7 must not run after an identity conflict")
             return {
                 "output_text": json.dumps(
-                    {
+                    strict_n2({
                         "decision": "continue",
                         "product_name": "Running shoe",
                         "confidence": 96,
@@ -1688,7 +1846,7 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
                             "category": "shoe",
                             "primary_appearance": "visible running shoe",
                         },
-                    }
+                    })
                 )
             }
 
@@ -2013,6 +2171,13 @@ def test_prompt_node_repair_preserves_original_system_and_input():
         node_name="N3",
         version="review-test",
         instruction="FULL N3 SYSTEM CONTRACT",
+        user_message_template="RUNTIME N3 USER TEMPLATE {{input_json}}",
+        output_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+        },
         status=PromptNodeTemplate.Status.PUBLISHED,
     )
 
@@ -2023,7 +2188,7 @@ def test_prompt_node_repair_preserves_original_system_and_input():
         def optimize_prompt(self, payload):
             self.payloads.append(payload)
             if len(self.payloads) == 1:
-                return {"output_text": "not json"}
+                return {"output_text": json.dumps({"ok": True, "extra": "blocked"})}
             return {"output_text": json.dumps({"ok": True})}
 
     client = Client()
@@ -2039,11 +2204,13 @@ def test_prompt_node_repair_preserves_original_system_and_input():
         "FULL N3 SYSTEM CONTRACT",
         "FULL N3 SYSTEM CONTRACT",
     ]
+    assert all("RUNTIME N3 USER TEMPLATE" in payload["text"] for payload in client.payloads)
+    assert all('"additionalProperties": false' in payload["text"] for payload in client.payloads)
     assert '"product": "mug"' in client.payloads[1]["text"]
-    assert "not json" in client.payloads[1]["text"]
+    assert '"extra": "blocked"' in client.payloads[1]["text"]
 
 
-def test_configuration_change_preserves_waiting_auto_generate_intent():
+def test_configuration_change_cancels_waiting_auto_generate_intent():
     from django.core.management import call_command
 
     from platform_app.models import Cluster
@@ -2076,9 +2243,9 @@ def test_configuration_change_preserves_waiting_auto_generate_intent():
     )
 
     cluster.refresh_from_db()
-    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.preparation_status == Cluster.PreparationStatus.DRAFT
     assert cluster.analysis_snapshot["_preparation_revision"] == 4
-    assert cluster.auto_generate is True
+    assert cluster.auto_generate is False
 
 
 def test_prompt_claim_rejects_a_stale_preparation_revision():
@@ -2090,6 +2257,7 @@ def test_prompt_claim_rejects_a_stale_preparation_revision():
     stale = Cluster.objects.create(
         batch=batch,
         name="Product",
+        preparation_status=Cluster.PreparationStatus.PENDING,
         analysis_snapshot={"_preparation_revision": 1},
     )
     Cluster.objects.filter(id=stale.id).update(

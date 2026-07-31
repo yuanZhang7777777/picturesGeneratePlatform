@@ -179,7 +179,7 @@ def test_csrf_bootstrap_and_project_creation_ignores_legacy_configuration(client
         batch = Batch.objects.get(id=response.json()["id"])
         assert batch.owner == user
         assert batch.output_template == baseline
-        assert (batch.platform, batch.site, batch.market) == ("", "", "")
+        assert (batch.platform, batch.site, batch.market) == ("generic", "SEA", "SEA")
         assert batch.seller_tier == "general"
 
     draft = post_json(
@@ -269,7 +269,8 @@ def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_pa
     assert sku["version"] == owner_cluster.version
     assert sku["facts"] == "BPA-free silicone"
     assert sku["identityLock"] == "Keep the sage green cup and two handles"
-    assert sku["brief"] == "Calm breakfast mood"
+    assert sku["brief"] == "BPA-free silicone"
+    assert sku["productStyle"] == "Calm breakfast mood"
     output = sku["outputs"][0]
     assert output["attempt"] == 1
     assert output["version"] == 1

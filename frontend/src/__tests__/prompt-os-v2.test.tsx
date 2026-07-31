@@ -69,8 +69,8 @@ test("shows the Prompt OS fact ledger and compliance block summary", () => {
   expect(screen.getByText("推断台账")).toBeInTheDocument();
   expect(screen.getByText("杯盖为绿色")).toBeInTheDocument();
   expect(screen.getByText("杯身可能为食品级塑料")).toBeInTheDocument();
-  expect(screen.getByText("confirmed · 100% · 低风险")).toBeInTheDocument();
-  expect(screen.getByText("inferred · 68% · 高风险")).toBeInTheDocument();
+  expect(screen.getByText("已确认 · 100% · 低风险")).toBeInTheDocument();
+  expect(screen.getByText("合理推断 · 68% · 高风险")).toBeInTheDocument();
   expect(screen.getByText("确认 1 · 观察 0 · 推断 1 · 高风险 1")).toBeInTheDocument();
   expect(screen.getByText("规则 / 合规阻断")).toBeInTheDocument();
   expect(screen.getByText(/高风险材质推断不得进入消费者文案/)).toBeInTheDocument();
@@ -104,13 +104,10 @@ test("posts edited prompts as a structured snake-case array", async () => {
   });
 });
 
-test("keeps dirty relation, identity, brief, and prompt drafts across a polling snapshot", () => {
+test("keeps dirty identity and prompt drafts across a polling snapshot", () => {
   const view = render(<PromptEditor sku={sku} onSave={() => undefined} />);
 
-  fireEvent.change(screen.getByLabelText("多图关系"), { target: { value: "same_product" } });
-  fireEvent.change(screen.getByLabelText("身份锁"), { target: { value: "保留本地身份锁" } });
-  fireEvent.change(screen.getByLabelText("整套要求"), { target: { value: "保留本地 Brief" } });
-  fireEvent.click(screen.getByText("9 槽 Prompt"));
+  fireEvent.change(screen.getByLabelText("商品身份"), { target: { value: "保留本地身份锁" } });
   fireEvent.change(screen.getByLabelText("01 白底标准图 Prompt"), { target: { value: "保留本地白底 Prompt" } });
 
   view.rerender(<PromptEditor sku={{
@@ -121,9 +118,7 @@ test("keeps dirty relation, identity, brief, and prompt drafts across a polling 
     prompts: [{ slotOrder: 1, slot: "白底标准图", text: "服务器 Prompt" }],
   }} onSave={() => undefined} />);
 
-  expect(screen.getByLabelText("多图关系")).toHaveValue("same_product");
-  expect(screen.getByLabelText("身份锁")).toHaveValue("保留本地身份锁");
-  expect(screen.getByLabelText("整套要求")).toHaveValue("保留本地 Brief");
+  expect(screen.getByLabelText("商品身份")).toHaveValue("保留本地身份锁");
   expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("保留本地白底 Prompt");
 });
 
@@ -131,25 +126,25 @@ test("keeps a successful prompt save while the parent still renders the old SKU 
   const onSave = vi.fn().mockResolvedValue({ id: "cluster-1", version: 4 });
   const view = render(<PromptEditor sku={sku} onSave={onSave} />);
 
-  fireEvent.change(screen.getByLabelText("身份锁"), { target: { value: "已保存身份锁" } });
+  fireEvent.change(screen.getByLabelText("商品身份"), { target: { value: "已保存身份锁" } });
   fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
   view.rerender(<PromptEditor sku={sku} onSave={onSave} />);
 
-  expect(screen.getByLabelText("身份锁")).toHaveValue("已保存身份锁");
+  expect(screen.getByLabelText("商品身份")).toHaveValue("已保存身份锁");
 });
 
 test("adopts the acknowledged SKU snapshot as the new prompt baseline", async () => {
   const onSave = vi.fn().mockResolvedValue({ id: "cluster-1", version: 4 });
   const view = render(<PromptEditor sku={sku} onSave={onSave} />);
 
-  fireEvent.change(screen.getByLabelText("身份锁"), { target: { value: "已保存身份锁" } });
+  fireEvent.change(screen.getByLabelText("商品身份"), { target: { value: "已保存身份锁" } });
   fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
 
   view.rerender(<PromptEditor sku={{ ...sku, version: 4, identityLock: "服务器确认身份锁" }} onSave={onSave} />);
-  expect(screen.getByLabelText("身份锁")).toHaveValue("服务器确认身份锁");
+  expect(screen.getByLabelText("商品身份")).toHaveValue("服务器确认身份锁");
 
   view.rerender(<PromptEditor sku={{ ...sku, version: 5, identityLock: "后续远端身份锁" }} onSave={onSave} />);
-  expect(screen.getByLabelText("身份锁")).toHaveValue("后续远端身份锁");
+  expect(screen.getByLabelText("商品身份")).toHaveValue("后续远端身份锁");
 });

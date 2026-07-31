@@ -3,6 +3,7 @@ from datetime import date
 from django.core.management.base import BaseCommand
 
 from platform_app.models import OutputSlot, OutputTemplate, PromptNodeTemplate, RuleProfile
+from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
 from platform_app.template_policy import STANDARD_PRODUCT_HERO_NAME, STANDARD_PRODUCT_HERO_PURPOSE
 
 
@@ -49,7 +50,7 @@ SHOPEE_TW_SOURCE = (
     "https://cdngarenanow-a.akamaihd.net/shopee/seller/seller_cms/"
     "7658bd13abe2ad617a834190a75ba1a5/%E8%9D%A6%E7%9A%AE%E5%95%86%E5%9F%8E%E4%B8%8A%E6%9E%B6%E8%A6%8F%E7%AF%84.pdf"
 )
-PROMPT_OS_VERSION = "2.1.0"
+PROMPT_OS_VERSION = "3.0.0"
 PROMPT_OS_NODES = {
     "N1": """
 你是商品视觉证据观察器。一次只观察一张图片，不做身份归并、营销策划、事实推断或图片生成。
@@ -281,14 +282,15 @@ class Command(BaseCommand):
     help = "Seed the global marketplace baseline and regional draft placeholders."
 
     def handle(self, *args, **options):
-        for node_name, instruction in PROMPT_OS_NODES.items():
+        for node_name, template_data in PROMPT_TEMPLATES.items():
             _, created = PromptNodeTemplate.objects.get_or_create(
                 node_name=node_name,
                 version=PROMPT_OS_VERSION,
                 defaults={
                     "status": PromptNodeTemplate.Status.PUBLISHED,
-                    "instruction": instruction,
-                    "output_schema": {"type": "object"},
+                    "instruction": template_data["instruction"],
+                    "user_message_template": template_data["user_message_template"],
+                    "output_schema": template_data["output_schema"],
                 },
             )
             if created:
@@ -298,6 +300,10 @@ class Command(BaseCommand):
                 ).exclude(version=PROMPT_OS_VERSION).update(
                     status=PromptNodeTemplate.Status.RETIRED
                 )
+        PromptNodeTemplate.objects.filter(
+            node_name__in=("N5", "N6", "N7"),
+            status=PromptNodeTemplate.Status.PUBLISHED,
+        ).update(status=PromptNodeTemplate.Status.RETIRED)
         template, created = OutputTemplate.objects.get_or_create(
             seed_key=GLOBAL_TEMPLATE_KEY,
             defaults={

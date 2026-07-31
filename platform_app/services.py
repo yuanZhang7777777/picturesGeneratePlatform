@@ -50,7 +50,7 @@ from .template_policy import (
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_TXT_BYTES = 256 * 1024
 BATCH_GENERATION_LIMIT = 300
-SUPPORTED_PLATFORMS = {"shopee", "tiktok"}
+SUPPORTED_PLATFORMS = {"generic", "shopee", "tiktok", "tiktok_shop"}
 SUPPORTED_SIZES = {"1:1", "3:4"}
 SUPPORTED_RESOLUTIONS = {"1k", "2k"}
 STYLE_DNA_VALUES = {
@@ -293,10 +293,22 @@ class FakeAPIMartClient:
                     "background_complexity": "low",
                     "observed_identity": {
                         "category_candidates": ["product"],
+                        "dominant_colors": [],
                         "overall_shape": "visible product silhouette",
+                        "visible_material_cues": [],
+                        "logos_or_markings": [],
+                        "controls_ports_connectors": [],
+                        "distinctive_parts": [],
+                        "count_observations": [],
                     },
+                    "observed_use_relationships": [],
+                    "non_target_objects": [],
+                    "package_or_text_clues": [],
+                    "conflicts_with_confirmed_points": [],
                     "reference_quality": 90,
                     "recommended_use": "reuse",
+                    "style_dna": None,
+                    "reason": "",
                     "candidate_product_name": "Demo product",
                     "candidate_product_name_confidence": 0.9,
                     "product_facts": ["visible product reference"],
@@ -327,8 +339,19 @@ class FakeAPIMartClient:
                 "product_profile": {
                     "category": "product",
                     "primary_appearance": "; ".join(observed_facts) or "visible reference",
+                    "shared_structure": [],
+                    "visible_fixed_counts": [],
+                    "verified_use_relationships": [],
+                    "included_items": [],
+                    "other_variants": [],
+                    "known_conflicts": [],
                 },
                 "identity_lock": {
+                    "family_invariants": [],
+                    "primary_variant_attributes": [],
+                    "exact_component_constraints": [],
+                    "verified_hidden_or_internal_structure": [],
+                    "use_relationship_constraints": [],
                     "must_not_change": [
                         str(observed.get("identity_lock") or "visible product identity")
                     ]
@@ -452,6 +475,24 @@ class FakeAPIMartClient:
                     "size": node_input.get("size", "1:1"),
                     "resolution": node_input.get("resolution", "1k"),
                 },
+                "review_required": True,
+            }
+        elif "NODE N7" in text:
+            deterministic = node_input.get("deterministic_gate", {})
+            hard_blocks = list(deterministic.get("hard_blocks", []))
+            output = {
+                "decision": "block" if hard_blocks else "pass",
+                "hard_blocks": hard_blocks,
+                "semantic_risks": [],
+                "warnings": [],
+                "prompt_checks": {
+                    "character_count": len(str(node_input.get("prompt") or "")),
+                    "text_line_count": 0,
+                    "main_scene_count": 1,
+                    "main_action_count": 1,
+                    "reference_assets_valid": True,
+                },
+                "resolved_rule_refs": list(deterministic.get("resolved_rule_refs", [])),
                 "review_required": True,
             }
         else:
@@ -748,8 +789,8 @@ def create_project(
     owner,
     *,
     name,
-    platform="",
-    market="",
+    platform="generic",
+    market="SEA",
     seller_tier="general",
     template=None,
     rule_profile=None,
@@ -823,8 +864,41 @@ def _effective_config(batch, cluster):
         "sellerTier": seller_tier if platform == "shopee" else Batch.SellerTier.GENERAL,
         "size": defaults["size"],
         "resolution": defaults["resolution"],
-        "globalPrompt": defaults["globalPrompt"],
+        "globalPrompt": cluster.prompt_override.strip() or defaults["globalPrompt"],
     }
+
+
+def _effective_cluster_resources(batch, cluster):
+    config = _effective_config(batch, cluster)
+    has_resource_override = any(
+        value is not None
+        for value in (
+            cluster.platform_override,
+            cluster.market_override,
+            cluster.seller_tier_override,
+        )
+    )
+    template = (
+        _default_output_template(
+            config["platform"],
+            config["market"],
+            config["sellerTier"],
+        )
+        if has_resource_override
+        else batch.output_template
+        or _default_output_template(
+            config["platform"],
+            config["market"],
+            config["sellerTier"],
+        )
+    )
+    rule_profile = (
+        _default_rule_profile(config["platform"], config["market"])
+        if has_resource_override
+        else batch.rule_profile
+        or _default_rule_profile(config["platform"], config["market"])
+    )
+    return template, rule_profile, config
 
 
 def _required_config_value(payload, field, *, uppercase=False):
@@ -842,6 +916,8 @@ def _optional_config_value(payload, field, current, fallback):
     if not isinstance(value, str):
         raise TypeError(f"{field} must be a string")
     value = value.strip()
+    if field == "resolution":
+        value = value.lower()
     if not value:
         return current or fallback
     allowed = {"size": SUPPORTED_SIZES, "resolution": SUPPORTED_RESOLUTIONS}[field]
@@ -873,8 +949,12 @@ def _invalidate_preparation(cluster):
     snapshot = copy.deepcopy(cluster.analysis_snapshot) if isinstance(cluster.analysis_snapshot, dict) else {}
     snapshot["_preparation_revision"] = _preparation_revision(snapshot) + 1
     cluster.analysis_snapshot = snapshot
-    cluster.preparation_status = Cluster.PreparationStatus.PENDING
+    cluster.preparation_status = Cluster.PreparationStatus.DRAFT
     cluster.preparation_error = ""
+    cluster.preparation_stage = "draft"
+    cluster.preparation_current = 0
+    cluster.preparation_total = 7
+    cluster.auto_generate = False
 
 
 def _preparation_is_current(cluster_id, revision):
@@ -903,19 +983,79 @@ def _persist_prompt_terminal(
             return False
         for values in prompt_values:
             PromptVersion.objects.create(cluster=locked, created_by=user, **values)
-        update_fields = ["analysis_snapshot", "preparation_status", "preparation_error", "updated_at"]
+        previous = locked.analysis_snapshot if isinstance(locked.analysis_snapshot, dict) else {}
+        history = copy.deepcopy(previous.get("_preparation_history", []))
+        if previous.get("identity") or previous.get("prompt_os"):
+            history.append(
+                {
+                    "preparation_revision": _preparation_revision(previous),
+                    "observations": copy.deepcopy(previous.get("observations", [])),
+                    "identity": copy.deepcopy(previous.get("identity", {})),
+                    "fact_ledger": copy.deepcopy(previous.get("fact_ledger", {})),
+                    "marketing_plan": copy.deepcopy(previous.get("marketing_plan", {})),
+                    "prompt_os": copy.deepcopy(previous.get("prompt_os", [])),
+                }
+            )
+        if history:
+            analysis["_preparation_history"] = history
+        update_fields = [
+            "analysis_snapshot",
+            "preparation_status",
+            "preparation_error",
+            "preparation_stage",
+            "preparation_current",
+            "preparation_total",
+            "updated_at",
+        ]
         for field, value in (cluster_updates or {}).items():
             setattr(locked, field, value)
             update_fields.append(field)
         locked.analysis_snapshot = analysis
         locked.preparation_status = status
         locked.preparation_error = error
+        if status == Cluster.PreparationStatus.READY:
+            locked.preparation_stage = "ready"
+            locked.preparation_current = locked.preparation_total
+        elif status == Cluster.PreparationStatus.BLOCKED:
+            locked.preparation_stage = "blocked"
         locked.save(update_fields=list(dict.fromkeys(update_fields)))
         return True
 
 
+def _set_preparation_progress(cluster_id, revision, stage, current):
+    snapshot = Cluster.objects.filter(
+        id=cluster_id,
+        preparation_status=Cluster.PreparationStatus.PREPARING,
+    ).values_list("analysis_snapshot", flat=True).first()
+    if _preparation_revision(snapshot) != revision:
+        return
+    Cluster.objects.filter(id=cluster_id).update(
+        preparation_stage=stage,
+        preparation_current=current,
+        preparation_total=7,
+        updated_at=timezone.now(),
+    )
+
+
 def _configuration_signature(batch, cluster):
-    return _effective_config(batch, cluster), batch.output_template_id, batch.rule_profile_id
+    template, rule_profile, config = _effective_cluster_resources(batch, cluster)
+    has_resource_override = any(
+        value is not None
+        for value in (
+            cluster.platform_override,
+            cluster.market_override,
+            cluster.seller_tier_override,
+        )
+    )
+    return (
+        config,
+        template.id if has_resource_override and template is not None else batch.output_template_id,
+        (
+            rule_profile.id
+            if has_resource_override and rule_profile is not None
+            else batch.rule_profile_id
+        ),
+    )
 
 
 @transaction.atomic
@@ -927,7 +1067,7 @@ def update_project_settings(batch, payload):
     if platform not in SUPPORTED_PLATFORMS:
         raise ValueError("unsupported platform")
     market = _required_config_value(payload, "market", uppercase=True)
-    seller_tier = _required_config_value(payload, "seller_tier").lower()
+    seller_tier = str(payload.get("seller_tier", locked.seller_tier or Batch.SellerTier.GENERAL)).strip().lower()
     if seller_tier not in Batch.SellerTier.values:
         raise ValueError("seller_tier must be general or mall")
     if platform != "shopee":
@@ -973,6 +1113,9 @@ def update_project_settings(batch, payload):
             update_fields=[
                 "preparation_status",
                 "preparation_error",
+                "preparation_stage",
+                "preparation_current",
+                "preparation_total",
                 "analysis_snapshot",
                 "auto_generate",
                 "updated_at",
@@ -1066,11 +1209,17 @@ def request_cluster_preparation(cluster, *, auto_generate):
     locked.auto_generate = bool(auto_generate)
     locked.preparation_status = Cluster.PreparationStatus.PENDING
     locked.preparation_error = ""
+    locked.preparation_stage = "queued"
+    locked.preparation_current = 0
+    locked.preparation_total = 7
     locked.save(
         update_fields=[
             "auto_generate",
             "preparation_status",
             "preparation_error",
+            "preparation_stage",
+            "preparation_current",
+            "preparation_total",
             "updated_at",
         ]
     )
@@ -1137,7 +1286,8 @@ def register_uploaded_asset(batch, filename, content, content_type, *, mode=None
         height=height,
     )
     cluster = Cluster.create_for_asset(batch=batch, asset=asset)
-    request_cluster_preparation(cluster, auto_generate=mode == Batch.ImportMode.AUTO)
+    if mode == Batch.ImportMode.AUTO:
+        request_cluster_preparation(cluster, auto_generate=True)
     if batch.status == Batch.Status.DRAFT or batch.last_import_mode != mode:
         batch.status = Batch.Status.ORGANIZING
         batch.last_import_mode = mode
@@ -1408,6 +1558,7 @@ def import_skus(batch, skus, *, erp_token=None, catalog_client=None, image_downl
                                 sku=sku,
                                 name=product_name or sku,
                                 product_name=product_name,
+                                analysis_snapshot={"product_name_source": "erp"},
                             )
                             ClusterAsset.objects.create(
                                 cluster=cluster,
@@ -1415,20 +1566,37 @@ def import_skus(batch, skus, *, erp_token=None, catalog_client=None, image_downl
                                 role=ClusterAsset.Role.PRIMARY,
                                 order=1,
                             )
-                            request_cluster_preparation(cluster, auto_generate=mode == Batch.ImportMode.AUTO)
+                            if mode == Batch.ImportMode.AUTO:
+                                request_cluster_preparation(cluster, auto_generate=True)
                             if locked_batch.status == Batch.Status.DRAFT:
                                 locked_batch.status = Batch.Status.ORGANIZING
                         else:
-                            request_cluster_preparation(cluster, auto_generate=mode == Batch.ImportMode.AUTO)
+                            if mode == Batch.ImportMode.AUTO:
+                                request_cluster_preparation(cluster, auto_generate=True)
                         if locked_batch.status == Batch.Status.DRAFT or locked_batch.last_import_mode != mode:
                             locked_batch.status = Batch.Status.ORGANIZING
                             locked_batch.last_import_mode = mode
                             locked_batch.save(update_fields=["status", "last_import_mode", "updated_at"])
-                        if product_name and cluster.product_name != product_name:
+                        if (
+                            product_name
+                            and cluster.product_name in {"", "名称待确认"}
+                            and cluster.product_name != product_name
+                        ):
                             cluster.product_name = product_name
                             cluster.name = product_name
+                            analysis = copy.deepcopy(cluster.analysis_snapshot)
+                            analysis["product_name_source"] = "erp"
+                            cluster.analysis_snapshot = analysis
                             cluster.version += 1
-                            cluster.save(update_fields=["product_name", "name", "version", "updated_at"])
+                            cluster.save(
+                                update_fields=[
+                                    "product_name",
+                                    "name",
+                                    "analysis_snapshot",
+                                    "version",
+                                    "updated_at",
+                                ]
+                            )
                         item = _create_sku_import_item(
                             locked_batch,
                             sku,
@@ -1479,7 +1647,11 @@ def _promote_primary_if_needed(cluster):
             "version",
             "preparation_status",
             "preparation_error",
+            "preparation_stage",
+            "preparation_current",
+            "preparation_total",
             "analysis_snapshot",
+            "auto_generate",
             "updated_at",
         ]
     )
@@ -1565,7 +1737,11 @@ def merge_asset_into_cluster(asset, target_cluster, expected_version=None):
         update_fields=[
             "preparation_status",
             "preparation_error",
+            "preparation_stage",
+            "preparation_current",
+            "preparation_total",
             "analysis_snapshot",
+            "auto_generate",
             "updated_at",
         ]
     )
@@ -1727,8 +1903,23 @@ def _slot_scope(slot):
     return "cover" if is_standard_product_hero_slot(slot) else "gallery"
 
 
-def _applicable_rules(batch, slot):
-    profiles = getattr(batch, "_prompt_rule_profiles", None)
+def _applicable_rules(
+    batch,
+    slot,
+    *,
+    effective_config=None,
+    rule_profile=None,
+):
+    config = effective_config or _default_config(batch)
+    selected_profile = rule_profile if rule_profile is not None else batch.rule_profile
+    cache = getattr(batch, "_prompt_rule_profiles_by_config", {})
+    cache_key = (
+        config["platform"],
+        str(config.get("market") or "").upper(),
+        str(config.get("sellerTier") or "general").lower(),
+        str(selected_profile.id) if selected_profile is not None else None,
+    )
+    profiles = cache.get(cache_key)
     if profiles is None:
         profiles = []
         internal = RuleProfile.objects.filter(
@@ -1736,17 +1927,18 @@ def _applicable_rules(batch, slot):
             status=RuleProfile.Status.PUBLISHED,
         ).first()
         platform_baseline = RuleProfile.objects.filter(
-            platform=batch.platform,
+            platform=config["platform"],
             site="",
             status=RuleProfile.Status.PUBLISHED,
         ).order_by("-checked_at", "-version", "-id").first()
-        for profile in (internal, platform_baseline, batch.rule_profile):
+        for profile in (internal, platform_baseline, selected_profile):
             if profile is not None and profile.id not in {item.id for item in profiles}:
                 profiles.append(profile)
-        batch._prompt_rule_profiles = profiles
-    market = (batch.market or batch.site or "").upper()
+        cache[cache_key] = profiles
+        batch._prompt_rule_profiles_by_config = cache
+    market = str(config.get("market") or "").upper()
     scope = _slot_scope(slot)
-    allowed_tiers = {"general", batch.seller_tier}
+    allowed_tiers = {"general", str(config.get("sellerTier") or "general").lower()}
     rules = []
     seen = set()
     for profile in profiles:
@@ -1791,9 +1983,23 @@ def _identity_text(value):
     return str(value or "").strip()
 
 
-def evaluate_prompt_rule_gate(batch, slot, prompt, *, visible_text_lines=None, references=None):
+def evaluate_prompt_rule_gate(
+    batch,
+    slot,
+    prompt,
+    *,
+    visible_text_lines=None,
+    references=None,
+    effective_config=None,
+    rule_profile=None,
+):
     visible_text_lines = [str(line).strip() for line in (visible_text_lines or []) if str(line).strip()]
-    rules = _applicable_rules(batch, slot)
+    rules = _applicable_rules(
+        batch,
+        slot,
+        effective_config=effective_config,
+        rule_profile=rule_profile,
+    )
     hard_blocks = []
     if len(prompt) > 3500:
         hard_blocks.append("prompt.max_3500_characters")
@@ -1844,10 +2050,95 @@ def _prompt_node_contract(node_name):
         return node_template.instruction, node_template.version
     if not settings.APIMART_FAKE_MODE:
         raise ValueError(f"published {node_name} prompt node template is required")
-    instruction = TEST_NODE_INSTRUCTIONS.get(node_name)
+    instruction = TEST_NODE_INSTRUCTIONS.get(node_name.split(".", 1)[0])
     if not instruction:
         raise ValueError(f"test prompt node template is not defined for {node_name}")
     return instruction, "test-v1"
+
+
+def _render_node_user_message(node_name, instruction, payload):
+    node_template = _published_prompt_node(node_name)
+    template = (
+        node_template.user_message_template.strip()
+        if node_template is not None
+        else ""
+    )
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    output_schema = (
+        json.dumps(node_template.output_schema, ensure_ascii=False, sort_keys=True)
+        if node_template is not None and node_template.output_schema
+        else ""
+    )
+    if "{{input_json}}" in template:
+        template = template.replace("{{input_json}}", serialized)
+        serialized = ""
+    if "{{output_schema}}" in template:
+        template = template.replace("{{output_schema}}", output_schema)
+        output_schema = ""
+    return "\n".join(
+        part
+        for part in (
+            f"NODE {node_name}",
+            instruction,
+            template,
+            f"OUTPUT_SCHEMA={output_schema}" if output_schema else "",
+            "Return exactly one JSON object without Markdown or commentary.",
+            serialized,
+        )
+        if part
+    )
+
+
+def _validate_json_schema(value, schema, path="output"):
+    if not isinstance(schema, dict) or not schema:
+        return
+    if "oneOf" in schema:
+        errors = []
+        for candidate in schema["oneOf"]:
+            try:
+                _validate_json_schema(value, candidate, path)
+                break
+            except ValueError as exc:
+                errors.append(str(exc))
+        else:
+            raise ValueError(f"{path} does not match any allowed schema")
+        return
+    expected = schema.get("type")
+    expected_types = expected if isinstance(expected, list) else [expected] if expected else []
+    checks = {
+        "object": lambda item: isinstance(item, dict),
+        "array": lambda item: isinstance(item, list),
+        "string": lambda item: isinstance(item, str),
+        "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
+        "number": lambda item: isinstance(item, (int, float)) and not isinstance(item, bool),
+        "boolean": lambda item: isinstance(item, bool),
+        "null": lambda item: item is None,
+    }
+    if expected_types and not any(checks[kind](value) for kind in expected_types if kind in checks):
+        raise ValueError(f"{path} must be {expected}")
+    if "enum" in schema and value not in schema["enum"]:
+        raise ValueError(f"{path} must be one of {schema['enum']}")
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        for field in schema.get("required", []):
+            if field not in value:
+                raise ValueError(f"{path}.{field} is required")
+        if schema.get("additionalProperties") is False:
+            extra = set(value) - set(properties)
+            if extra:
+                raise ValueError(f"{path} contains unsupported fields: {', '.join(sorted(extra))}")
+        for field, item in value.items():
+            if field in properties:
+                _validate_json_schema(item, properties[field], f"{path}.{field}")
+    elif isinstance(value, list) and isinstance(schema.get("items"), dict):
+        for index, item in enumerate(value):
+            _validate_json_schema(item, schema["items"], f"{path}[{index}]")
+
+
+def _validate_prompt_node_schema(node_name, value):
+    node_template = _published_prompt_node(node_name)
+    if node_template is not None:
+        _validate_json_schema(value, node_template.output_schema)
 
 
 def _prompt_node_template_binding(node_name, version):
@@ -1873,6 +2164,7 @@ def _prompt_node_template_binding(node_name, version):
             )
         content = {
             "instruction": node_template.instruction,
+            "user_message_template": node_template.user_message_template,
             "output_schema": node_template.output_schema,
         }
         return {
@@ -1882,7 +2174,7 @@ def _prompt_node_template_binding(node_name, version):
             "content_hash": _snapshot_hash(content),
         }
     if settings.APIMART_FAKE_MODE and version in {"test-v1", "builtin-v1"}:
-        instruction = TEST_NODE_INSTRUCTIONS.get(node_name)
+        instruction = TEST_NODE_INSTRUCTIONS.get(node_name.split(".", 1)[0])
         if not instruction:
             raise ValueError(f"test prompt node template is not defined for {node_name}")
         return {
@@ -1894,6 +2186,16 @@ def _prompt_node_template_binding(node_name, version):
             ),
         }
     raise ValueError(f"published {node_name}/{version} prompt node template is required")
+
+
+def _platform_prompt_node(base_node, platform):
+    platform = str(platform or "generic").lower()
+    suffix = "shopee" if platform == "shopee" else "tiktok" if platform in {"tiktok", "tiktok_shop"} else "generic"
+    return f"{base_node}.{suffix}"
+
+
+def _node_family(node_name):
+    return str(node_name or "").split(".", 1)[0]
 
 
 def _image_request_snapshot(*, size, resolution, model=None):
@@ -1932,16 +2234,23 @@ def compile_slot_prompt(
     node_template=_UNSET,
 ):
     batch = batch or cluster.batch
-    template = template or slot.template
-    effective_config = _effective_config(batch, cluster)
+    effective_template, effective_rules, effective_config = _effective_cluster_resources(
+        batch, cluster
+    )
+    template = template or effective_template
     market = effective_config["market"]
     size = effective_config["size"] or template.default_size
     resolution = effective_config["resolution"] or template.default_resolution
     consumer = target_consumer_for_cluster(cluster)
     sanitized_style_dna = _cluster_style_dna(cluster, style_dna)
     template_snapshot = _template_snapshot(template, slot)
-    rule_snapshot = _rule_snapshot(batch.rule_profile)
-    applicable_rules = _applicable_rules(batch, slot)
+    rule_snapshot = _rule_snapshot(effective_rules)
+    applicable_rules = _applicable_rules(
+        batch,
+        slot,
+        effective_config=effective_config,
+        rule_profile=effective_rules,
+    )
     rule_snapshot["resolved_rules"] = applicable_rules
     references = _reference_snapshot(cluster)
     resolved_node_name, node_version, node_instruction = _prompt_node(node_name, node_template)
@@ -1989,8 +2298,6 @@ def compile_slot_prompt(
         prompt_lines.append(f"Creative direction: {str(slot_directive).strip()}")
     if visible_text_lines:
         prompt_lines.append(f"Visible text (exactly these lines): {json.dumps(visible_text_lines, ensure_ascii=False)}")
-    if node_instruction:
-        prompt_lines.append(f"Node instruction: {node_instruction}")
     input_snapshot = {
         "market": market,
         "product_name": cluster.product_name,
@@ -2017,6 +2324,8 @@ def compile_slot_prompt(
         prompt,
         visible_text_lines=visible_text_lines,
         references=references,
+        effective_config=effective_config,
+        rule_profile=effective_rules,
     )
     return {
         "node_name": resolved_node_name,
@@ -2087,8 +2396,11 @@ def _repair_observation_json(
                 "NODE N1",
                 f"ASSET_ID={observation_input['asset_id']}",
                 system_instruction,
-                "Repeat the same owned-image observation using the same image evidence and input.",
-                json.dumps(observation_input, ensure_ascii=False, sort_keys=True),
+                _render_node_user_message(
+                    "N1",
+                    "Repeat the same owned-image observation using the same image evidence and input.",
+                    observation_input,
+                ),
                 _json_repair_prompt(
                     text,
                     (
@@ -2097,8 +2409,12 @@ def _repair_observation_json(
                         '"target_is_physical_product":true,"target_visibility":0,'
                         '"target_complete":true,"background_complexity":"low",'
                         '"observed_identity":{"category_candidates":["string"],'
-                        '"overall_shape":"string"},"reference_quality":0,'
-                        '"recommended_use":"reuse",'
+                        '"dominant_colors":[],"overall_shape":"string",'
+                        '"visible_material_cues":[],"logos_or_markings":[],"controls_ports_connectors":[],'
+                        '"distinctive_parts":[],"count_observations":[]},'
+                        '"observed_use_relationships":[],"non_target_objects":[],"package_or_text_clues":[],'
+                        '"conflicts_with_confirmed_points":[],"reference_quality":0,'
+                        '"recommended_use":"reuse","style_dna":null,"reason":"",'
                         '"candidate_product_name":"string",'
                         '"candidate_product_name_confidence":0.0}.'
                     ),
@@ -2155,6 +2471,13 @@ def _required_string_list(payload, field):
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError(f"{field} must be an array of strings")
     return [item.strip() for item in value if item.strip()]
+
+
+def _required_list(payload, field):
+    value = payload.get(field)
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be an array")
+    return value
 
 
 def _has_nonempty_value(value):
@@ -2229,6 +2552,35 @@ def _normalize_n1_observation(payload, expected_asset_id):
         or not 0 <= reference_quality <= 100
     ):
         raise ValueError("reference_quality must be an integer between 0 and 100")
+    for field in (
+        "dominant_colors",
+        "visible_material_cues",
+        "logos_or_markings",
+        "controls_ports_connectors",
+        "distinctive_parts",
+    ):
+        _required_list(observed_identity, field)
+    count_observations = _required_list(observed_identity, "count_observations")
+    for item in count_observations:
+        if not isinstance(item, dict):
+            raise ValueError("observed_identity.count_observations items must be objects")
+        if not isinstance(item.get("part"), str):
+            raise ValueError("observed_identity.count_observations.part must be a string")
+        count = item.get("count")
+        if count is not None and (isinstance(count, bool) or not isinstance(count, int) or count < 0):
+            raise ValueError("observed_identity.count_observations.count must be a non-negative integer or null")
+        _normalized_confidence(item.get("confidence"), "observed_identity.count_observations.confidence")
+    for field in (
+        "observed_use_relationships",
+        "non_target_objects",
+        "package_or_text_clues",
+        "conflicts_with_confirmed_points",
+    ):
+        _required_list(payload, field)
+    if "style_dna" not in payload or payload["style_dna"] is not None:
+        raise ValueError("style_dna must be null for owned product assets")
+    if not isinstance(payload.get("reason"), str):
+        raise ValueError("reason must be a string")
     candidate_name = payload.get("candidate_product_name", payload.get("product_name"))
     if not isinstance(candidate_name, str) or not candidate_name.strip():
         raise ValueError("candidate_product_name is required")
@@ -2313,6 +2665,24 @@ def _normalize_n2_identity(payload, valid_asset_ids):
             raise ValueError(
                 "product_profile.primary_appearance is required when decision is continue"
             )
+    for field in (
+        "shared_structure",
+        "visible_fixed_counts",
+        "verified_use_relationships",
+        "included_items",
+        "other_variants",
+        "known_conflicts",
+    ):
+        _required_list(product_profile, field)
+    for field in (
+        "family_invariants",
+        "primary_variant_attributes",
+        "exact_component_constraints",
+        "verified_hidden_or_internal_structure",
+        "use_relationship_constraints",
+        "must_not_change",
+    ):
+        _required_list(identity_lock, field)
     primary_asset_id = payload.get("primary_asset_id")
     if primary_asset_id is not None:
         primary_asset_id = str(primary_asset_id)
@@ -2467,10 +2837,17 @@ def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs,
     if str(primary_asset_id) != str(identity.get("primary_asset_id")):
         raise ValueError("reference_plan primary_asset_id must match N2")
     supporting = reference_plan.get("supporting_asset_ids")
-    if not isinstance(supporting, list) or [str(item) for item in supporting] != [
-        str(item) for item in identity.get("supporting_asset_ids", [])
-    ]:
-        raise ValueError("reference_plan supporting_asset_ids must match N2")
+    if not isinstance(supporting, list):
+        raise ValueError("reference_plan supporting_asset_ids must be an array")
+    supporting = [str(item) for item in supporting]
+    approved_supporting = {str(item) for item in identity.get("supporting_asset_ids", [])}
+    if hero:
+        if supporting != [str(item) for item in identity.get("supporting_asset_ids", [])]:
+            raise ValueError("reference_plan supporting_asset_ids must match N2")
+    elif len(supporting) > 1 or len(supporting) != len(set(supporting)) or any(
+        item not in approved_supporting for item in supporting
+    ):
+        raise ValueError("marketing reference_plan allows at most one N2-approved supporting asset")
     fact_ids = {item["fact_id"] for item in ledger["facts"]}
     inferred_ids = {
         item["fact_id"] for item in ledger["facts"] if item["fact_class"] == "inferred"
@@ -2611,6 +2988,109 @@ def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
     return normalized
 
 
+def _normalize_n7_semantic(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("N7 output must be an object")
+    decision = _required_string(payload, "decision")
+    if decision not in {"pass", "block"}:
+        raise ValueError("N7 decision must be pass or block")
+    normalized = copy.deepcopy(payload)
+    for field in ("hard_blocks", "semantic_risks", "warnings", "resolved_rule_refs"):
+        normalized[field] = _required_string_list(payload, field)
+    if not isinstance(payload.get("prompt_checks"), dict):
+        raise ValueError("N7 prompt_checks must be an object")
+    if payload.get("review_required") is not True:
+        raise ValueError("N7 review_required must be true")
+    normalized["decision"] = decision
+    normalized["review_required"] = True
+    return normalized
+
+
+def _merge_n7_gate(deterministic_gate, semantic_gate):
+    merged = copy.deepcopy(deterministic_gate)
+    semantic_blocks = list(semantic_gate.get("hard_blocks", []))
+    merged["hard_blocks"] = list(
+        dict.fromkeys([*merged.get("hard_blocks", []), *semantic_blocks])
+    )
+    for field in ("semantic_risks", "warnings", "advice", "prompt_checks", "inference_disclosures"):
+        merged[field] = copy.deepcopy(semantic_gate.get(field, [] if field != "prompt_checks" else {}))
+    merged["resolved_rule_refs"] = list(
+        dict.fromkeys(
+            [
+                *merged.get("resolved_rule_refs", []),
+                *semantic_gate.get("resolved_rule_refs", []),
+            ]
+        )
+    )
+    if semantic_gate.get("decision") == "block" and not semantic_blocks:
+        merged["hard_blocks"].append("semantic_n7_block")
+    merged["decision"] = "block" if merged["hard_blocks"] else "pass"
+    return merged
+
+
+def _run_final_n7_gate(
+    client,
+    cluster,
+    batch,
+    slot,
+    prompt,
+    references,
+    *,
+    deterministic_gate,
+    lineage,
+    node_template_binding,
+    image_request,
+    marketing_plan=None,
+    hero_generation=None,
+    parent_prompt_version=None,
+    structural_asset_id=None,
+):
+    _, effective_rules, effective_config = _effective_cluster_resources(batch, cluster)
+    n7_node = _platform_prompt_node("N7", effective_config["platform"])
+    gate_input = {
+        "slot_order": slot.order,
+        "prompt": prompt,
+        "rule_snapshot": _current_rule_bundle_snapshot(
+            batch,
+            slot,
+            cluster=cluster,
+            effective_config=effective_config,
+            rule_profile=effective_rules,
+        ),
+        "marketing_plan": marketing_plan,
+        "reference_snapshot": list(references),
+        "structural_asset_id": str(
+            structural_asset_id
+            if structural_asset_id is not None
+            else (cluster.analysis_snapshot or {}).get("identity", {}).get("primary_asset_id")
+        ),
+        "prompt_node_template": node_template_binding,
+        "image_request": image_request,
+        "hero_generation_id": str(hero_generation.id) if hero_generation else None,
+        "parent_prompt_version_id": (
+            str(parent_prompt_version.id) if parent_prompt_version else None
+        ),
+        "lineage": lineage,
+        "deterministic_gate": copy.deepcopy(deterministic_gate),
+    }
+    semantic_gate = _prompt_node_json(
+        client,
+        n7_node,
+        "Review semantic risks for this final slot request. Preserve every deterministic hard block and add risks or blocks only when supported by the supplied facts and rules.",
+        gate_input,
+        normalize=_normalize_n7_semantic,
+    )
+    gate = _merge_n7_gate(deterministic_gate, semantic_gate)
+    snapshot = _node_snapshot(
+        n7_node,
+        settings.APIMART_PROMPT_MODEL,
+        gate_input,
+        gate,
+        slot_id=slot.id,
+    )
+    return gate, snapshot
+
+
 def _slot_prompt_map(payload):
     slots = payload.get("slots")
     if not isinstance(slots, list):
@@ -2639,7 +3119,7 @@ def _node_snapshot(node_id, model_id, input_snapshot, output_snapshot, *, slot_i
     node_template = _published_prompt_node(node_id)
     prompt_version = (
         node_template.version
-        if node_template is not None and model_id != "deterministic-rule-engine"
+        if node_template is not None
         else "deterministic-v2.0.0"
         if model_id == "deterministic-rule-engine"
         else "builtin-v2.0.0"
@@ -2664,14 +3144,7 @@ def _node_snapshot(node_id, model_id, input_snapshot, output_snapshot, *, slot_i
 
 def _prompt_node_json(client, node_id, instruction, payload, normalize=None, repair=None):
     system_instruction, _ = _prompt_node_contract(node_id)
-    node_text = "\n".join(
-        [
-            f"NODE {node_id}",
-            instruction,
-            "Return exactly one JSON object without Markdown or commentary.",
-            json.dumps(payload, ensure_ascii=False, sort_keys=True),
-        ]
-    )
+    node_text = _render_node_user_message(node_id, instruction, payload)
     response = client.optimize_prompt(
         {
             "system": system_instruction,
@@ -2696,9 +3169,11 @@ def _prompt_node_json(client, node_id, instruction, payload, normalize=None, rep
             }
         )
     )
-    if normalize is None:
-        return _provider_json(response, repair)
-    return _validated_provider_json(response, normalize, repair)
+    def validate(value):
+        _validate_prompt_node_schema(node_id, value)
+        return normalize(value) if normalize is not None else value
+
+    return _validated_provider_json(response, validate, repair)
 
 
 def _identity_facts(identity):
@@ -2824,9 +3299,99 @@ def _effective_config_signature(batch, cluster):
     return _snapshot_hash(_configuration_signature(batch, cluster))
 
 
-def _current_rule_bundle_snapshot(batch, slot):
-    snapshot = _rule_snapshot(batch.rule_profile)
-    snapshot["resolved_rules"] = _applicable_rules(batch, slot)
+def _runtime_node_bindings(node_names):
+    nodes = []
+    for node_name in node_names:
+        template = _published_prompt_node(node_name)
+        if template is None:
+            instruction, version = _prompt_node_contract(node_name)
+            nodes.append(
+                {
+                    "node_name": node_name,
+                    "version": version,
+                    "content_hash": _snapshot_hash(
+                        {"instruction": instruction, "output_schema": {}}
+                    ),
+                }
+            )
+        else:
+            nodes.append(
+                {
+                    "node_name": node_name,
+                    "version": template.version,
+                    "content_hash": _snapshot_hash(
+                        {
+                            "instruction": template.instruction,
+                            "user_message_template": template.user_message_template,
+                            "output_schema": template.output_schema,
+                        }
+                    ),
+                }
+            )
+    return nodes
+
+
+def _identity_runtime_contract_fingerprint():
+    return _snapshot_hash(
+        {
+            "nodes": _runtime_node_bindings(["N1", "N2"]),
+            "vision_model": settings.APIMART_VISION_MODEL,
+            "prompt_model": settings.APIMART_PROMPT_MODEL,
+        }
+    )
+
+
+def _prompt_runtime_contract_fingerprint(batch, cluster):
+    config = _effective_config(batch, cluster)
+    return _snapshot_hash(
+        {
+            "nodes": _runtime_node_bindings(
+                [
+                    "N1",
+                    "N2",
+                    "N3",
+                    "N4",
+                    _platform_prompt_node("N5", config["platform"]),
+                    _platform_prompt_node("N6", config["platform"]),
+                    _platform_prompt_node("N7", config["platform"]),
+                ]
+            ),
+            "vision_model": settings.APIMART_VISION_MODEL,
+            "prompt_model": settings.APIMART_PROMPT_MODEL,
+            "image_model": settings.APIMART_IMAGE_MODEL,
+        }
+    )
+
+
+def cluster_preparation_is_current(cluster):
+    analysis = cluster.analysis_snapshot if isinstance(cluster.analysis_snapshot, dict) else {}
+    return (
+        cluster.preparation_status == Cluster.PreparationStatus.READY
+        and analysis.get("_runtime_contract_fingerprint")
+        == _prompt_runtime_contract_fingerprint(cluster.batch, cluster)
+    )
+
+
+def _current_rule_bundle_snapshot(
+    batch,
+    slot,
+    *,
+    cluster=None,
+    effective_config=None,
+    rule_profile=None,
+):
+    if cluster is not None and (effective_config is None or rule_profile is None):
+        _, resolved_profile, resolved_config = _effective_cluster_resources(batch, cluster)
+        effective_config = effective_config or resolved_config
+        rule_profile = rule_profile or resolved_profile
+    selected_profile = rule_profile if rule_profile is not None else batch.rule_profile
+    snapshot = _rule_snapshot(selected_profile)
+    snapshot["resolved_rules"] = _applicable_rules(
+        batch,
+        slot,
+        effective_config=effective_config,
+        rule_profile=selected_profile,
+    )
     return snapshot
 
 
@@ -2834,7 +3399,10 @@ def _preparation_lineage(cluster, batch, slot, *, cluster_assets=None, template=
     cluster_assets = cluster_assets or list(
         cluster.cluster_assets.select_related("asset").order_by("order", "id")
     )
-    template = template or batch.output_template or _global_fallback_template()
+    effective_template, effective_rules, effective_config = _effective_cluster_resources(
+        batch, cluster
+    )
+    template = template or effective_template
     return {
         "preparation_revision": _preparation_revision(cluster.analysis_snapshot),
         "cluster_version": cluster.version,
@@ -2842,7 +3410,16 @@ def _preparation_lineage(cluster, batch, slot, *, cluster_assets=None, template=
         "effective_config_signature": _effective_config_signature(batch, cluster),
         "template_content_hash": _snapshot_hash(_template_snapshot(template, slot)),
         "rule_bundle_content_hash": _snapshot_hash(
-            _current_rule_bundle_snapshot(batch, slot)
+            _current_rule_bundle_snapshot(
+                batch,
+                slot,
+                cluster=cluster,
+                effective_config=effective_config,
+                rule_profile=effective_rules,
+            )
+        ),
+        "runtime_contract_fingerprint": _prompt_runtime_contract_fingerprint(
+            batch, cluster
         ),
     }
 
@@ -2895,6 +3472,9 @@ def _claim_prompt_cluster(candidate):
     ).update(
         preparation_status=Cluster.PreparationStatus.PREPARING,
         preparation_error="",
+        preparation_stage="N1",
+        preparation_current=0,
+        preparation_total=7,
         updated_at=timezone.now(),
     )
     if not claimed:
@@ -2922,6 +3502,7 @@ def process_prompt_once(client=None, storage=None):
         return 0
     claimed_revision = _preparation_revision(cluster.analysis_snapshot)
     try:
+        _set_preparation_progress(cluster.id, claimed_revision, "N1", 0)
         cluster_assets = list(cluster.cluster_assets.select_related("asset").order_by("order", "id"))
         image_relations = [
             relation for relation in cluster_assets if relation.asset.kind == Asset.Kind.IMAGE
@@ -2934,6 +3515,8 @@ def process_prompt_once(client=None, storage=None):
         reuse_identity = (
             isinstance(identity_revision, dict)
             and identity_revision.get("signature") == current_identity_signature
+            and identity_revision.get("runtime_contract_fingerprint")
+            == _identity_runtime_contract_fingerprint()
             and isinstance(previous.get("observations"), list)
             and isinstance(previous.get("identity"), dict)
         )
@@ -2965,8 +3548,11 @@ def process_prompt_once(client=None, storage=None):
                                     "NODE N1",
                                     f"ASSET_ID={relation.asset_id}",
                                     observation_system,
-                                    "Observe only visible product evidence in this single owned-product image.",
-                                    "Return strict JSON with visible identity, candidate product name, confidence, role, and reference quality.",
+                                    _render_node_user_message(
+                                        "N1",
+                                        "Observe only visible product evidence in this single owned-product image. Return strict JSON with visible identity, candidate product name, confidence, role, and reference quality.",
+                                        observation_input,
+                                    ),
                                 ]
                             ),
                             [image_path],
@@ -3021,6 +3607,7 @@ def process_prompt_once(client=None, storage=None):
                 "max_supporting_images": 3,
             }
             valid_asset_ids = {str(relation.asset_id) for relation in image_relations}
+            _set_preparation_progress(cluster.id, claimed_revision, "N2", 1)
             identity = _prompt_node_json(
                 client,
                 "N2",
@@ -3066,8 +3653,14 @@ def process_prompt_once(client=None, storage=None):
                 "cluster_version": cluster.version,
                 "asset_ids": [str(relation.asset_id) for relation in image_relations],
                 "preparation_revision": claimed_revision,
+                "runtime_contract_fingerprint": _identity_runtime_contract_fingerprint(),
             },
             "_preparation_revision": claimed_revision,
+            "product_name_source": (
+                previous.get("product_name_source") or "manual"
+                if confirmed_product_name
+                else "ai"
+            ),
         }
         if identity["decision"] != "continue" or identity["conflict_state"] == "conflict":
             code = (
@@ -3092,6 +3685,9 @@ def process_prompt_once(client=None, storage=None):
             return 1
 
         effective_config = _effective_config(cluster.batch, cluster)
+        n5_node = _platform_prompt_node("N5", effective_config["platform"])
+        n6_node = _platform_prompt_node("N6", effective_config["platform"])
+        n7_node = _platform_prompt_node("N7", effective_config["platform"])
         if not _effective_config_ready(effective_config):
             analysis["readiness"] = {
                 "status": "waiting",
@@ -3112,6 +3708,7 @@ def process_prompt_once(client=None, storage=None):
 
         config_signature = _effective_config_signature(cluster.batch, cluster)
         approved_references = _identity_reference_paths(cluster_assets, identity)
+        _set_preparation_progress(cluster.id, claimed_revision, "N3", 2)
         ledger_input = {
             "product_name": product_name,
             "confirmed_points": _string_list(product_facts),
@@ -3148,7 +3745,9 @@ def process_prompt_once(client=None, storage=None):
             _node_snapshot("N3", settings.APIMART_PROMPT_MODEL, ledger_input, ledger)
         )
 
-        template = cluster.batch.output_template or _global_fallback_template()
+        template, effective_rules, effective_config = _effective_cluster_resources(
+            cluster.batch, cluster
+        )
         slots = list(template.slots.order_by("order", "id"))
         hero_slot = standard_product_hero_slot(template)
         if hero_slot is None:
@@ -3157,7 +3756,13 @@ def process_prompt_once(client=None, storage=None):
         marketing_slots = [slot for slot in generated_slots if slot.id != hero_slot.id]
         compiled_by_slot = {}
 
-        hero_rules = _applicable_rules(cluster.batch, hero_slot)
+        _set_preparation_progress(cluster.id, claimed_revision, "N4", 3)
+        hero_rules = _applicable_rules(
+            cluster.batch,
+            hero_slot,
+            effective_config=effective_config,
+            rule_profile=effective_rules,
+        )
         hero_rule_refs = {
             str(rule.get("rule_id")) for rule in hero_rules if rule.get("rule_id")
         }
@@ -3216,6 +3821,7 @@ def process_prompt_once(client=None, storage=None):
 
         marketing_plan = {"plans": []}
         if marketing_slots:
+            _set_preparation_progress(cluster.id, claimed_revision, "N5", 4)
             fact_ids = {item["fact_id"] for item in ledger["facts"]}
             inference_ids = {
                 item["fact_id"]
@@ -3241,7 +3847,7 @@ def process_prompt_once(client=None, storage=None):
             }
             marketing_plan = _prompt_node_json(
                 client,
-                "N5",
+                n5_node,
                 "Plan one distinct purchase-decision scene for every supplied marketing slot. Vary scene family, environment, camera, action, and composition.",
                 marketing_input,
                 normalize=lambda value: _normalize_n5_plans(
@@ -3252,11 +3858,17 @@ def process_prompt_once(client=None, storage=None):
                 ),
             )
             node_snapshots.append(
-                _node_snapshot("N5", settings.APIMART_PROMPT_MODEL, marketing_input, marketing_plan)
+                _node_snapshot(n5_node, settings.APIMART_PROMPT_MODEL, marketing_input, marketing_plan)
             )
             plans = {plan["slot_order"]: plan for plan in marketing_plan["plans"]}
+            _set_preparation_progress(cluster.id, claimed_revision, "N6", 5)
             for slot in marketing_slots:
-                slot_rules = _applicable_rules(cluster.batch, slot)
+                slot_rules = _applicable_rules(
+                    cluster.batch,
+                    slot,
+                    effective_config=effective_config,
+                    rule_profile=effective_rules,
+                )
                 slot_rule_refs = {
                     str(rule.get("rule_id"))
                     for rule in slot_rules
@@ -3292,7 +3904,7 @@ def process_prompt_once(client=None, storage=None):
                 }
                 slot_plan = _prompt_node_json(
                     client,
-                    "N6",
+                    n6_node,
                     f"SLOT_ORDER={slot.order}\nCompile one localized image instruction for this slot with one scene, one main action, and at most three visible text lines.",
                     slot_input,
                     normalize=lambda value, order=slot.order, refs=slot_rule_refs: _normalize_n6_prompt(
@@ -3305,7 +3917,7 @@ def process_prompt_once(client=None, storage=None):
                 )
                 node_snapshots.append(
                     _node_snapshot(
-                        "N6",
+                        n6_node,
                         settings.APIMART_PROMPT_MODEL,
                         slot_input,
                         slot_plan,
@@ -3321,7 +3933,7 @@ def process_prompt_once(client=None, storage=None):
                     visible_text_lines=slot_plan["visible_text_lines"],
                     main_scene=slot_plan["main_scene"],
                     main_action=slot_plan["main_action"],
-                    node_name="N6",
+                    node_name=n6_node,
                 )
                 compiled_by_slot[slot.id]["reference_snapshot"] = approved_references
                 compiled_by_slot[slot.id]["input_snapshot"][
@@ -3329,6 +3941,7 @@ def process_prompt_once(client=None, storage=None):
                 ] = approved_references
                 compiled_by_slot[slot.id]["node_output"] = slot_plan
 
+        _set_preparation_progress(cluster.id, claimed_revision, "N7", 6)
         gate_blocks = []
         prompt_values = []
         for slot in slots:
@@ -3350,6 +3963,8 @@ def process_prompt_once(client=None, storage=None):
                     slot,
                     prompt_text,
                     references=final_references,
+                    effective_config=effective_config,
+                    rule_profile=effective_rules,
                 )
                 compiled = {
                     "node_name": "source_passthrough",
@@ -3358,7 +3973,13 @@ def process_prompt_once(client=None, storage=None):
                     "prompt": prompt_text,
                     "reference_snapshot": final_references,
                     "template_snapshot": _template_snapshot(template, slot),
-                    "rule_snapshot": _current_rule_bundle_snapshot(cluster.batch, slot),
+                    "rule_snapshot": _current_rule_bundle_snapshot(
+                        cluster.batch,
+                        slot,
+                        cluster=cluster,
+                        effective_config=effective_config,
+                        rule_profile=effective_rules,
+                    ),
                     "input_snapshot": {"source_asset_id": str(source_relation.asset_id)},
                     "evaluation": {"fact_policy": "source-passthrough", "rule_gate": gate},
                     "size": cluster.batch.size or template.default_size,
@@ -3374,6 +3995,8 @@ def process_prompt_once(client=None, storage=None):
                     prompt_text,
                     visible_text_lines=compiled["node_output"]["visible_text_lines"],
                     references=final_references,
+                    effective_config=effective_config,
+                    rule_profile=effective_rules,
                 )
             if (
                 slot in marketing_slots
@@ -3401,23 +4024,19 @@ def process_prompt_once(client=None, storage=None):
                 size=compiled["size"],
                 resolution=compiled["resolution"],
             )
-            gate_input = {
-                "slot_order": slot.order,
-                "prompt": prompt_text,
-                "rule_snapshot": compiled["rule_snapshot"],
-                "marketing_plan": marketing_plan if slot in marketing_slots else None,
-                "reference_snapshot": final_references,
-                "structural_asset_id": str(identity["primary_asset_id"]),
-                "prompt_node_template": node_template_binding,
-                "image_request": image_request,
-                "lineage": lineage,
-            }
-            gate_snapshot = _node_snapshot(
-                "N7",
-                "deterministic-rule-engine",
-                gate_input,
-                gate,
-                slot_id=slot.id,
+            gate, gate_snapshot = _run_final_n7_gate(
+                client,
+                cluster,
+                cluster.batch,
+                slot,
+                prompt_text,
+                final_references,
+                deterministic_gate=gate,
+                lineage=lineage,
+                node_template_binding=node_template_binding,
+                image_request=image_request,
+                marketing_plan=marketing_plan if slot in marketing_slots else None,
+                structural_asset_id=identity["primary_asset_id"],
             )
             node_snapshots.append(gate_snapshot)
             gate = copy.deepcopy(gate)
@@ -3468,6 +4087,9 @@ def process_prompt_once(client=None, storage=None):
             "prompt_os": node_snapshots,
             "_preparation_revision": claimed_revision,
             "_effective_config_signature": config_signature,
+            "_runtime_contract_fingerprint": _prompt_runtime_contract_fingerprint(
+                cluster.batch, cluster
+            ),
             "readiness": {
                 "status": "blocked" if gate_blocks else "ready",
                 "code": "rule_gate_blocked" if gate_blocks else "ready",
@@ -3484,6 +4106,10 @@ def process_prompt_once(client=None, storage=None):
         cluster.refresh_from_db()
         if cluster.auto_generate and not gate_blocks:
             ensure_cluster_generations(cluster, cluster.batch.owner)
+            Cluster.objects.filter(id=cluster.id).update(
+                auto_generate=False,
+                updated_at=timezone.now(),
+            )
         return 1
     except Exception as exc:
         with transaction.atomic():
@@ -3491,7 +4117,8 @@ def process_prompt_once(client=None, storage=None):
             if locked.preparation_status == Cluster.PreparationStatus.PREPARING and _preparation_revision(locked.analysis_snapshot) == claimed_revision:
                 locked.preparation_status = Cluster.PreparationStatus.FAILED
                 locked.preparation_error = _sanitize_provider_text(str(exc))
-                locked.save(update_fields=["preparation_status", "preparation_error", "updated_at"])
+                locked.preparation_stage = "failed"
+                locked.save(update_fields=["preparation_status", "preparation_error", "preparation_stage", "updated_at"])
         return 1
 
 
@@ -3533,12 +4160,10 @@ def reserve_generation_usage(user, count):
 
 def preflight_batch(batch, user, template=None):
     template = template or batch.output_template or _global_fallback_template()
+    clusters = list(batch.clusters.filter(archived_at__isnull=True))
+    cluster_count = len(clusters)
     slot_count = template.slots.count()
-    generated_slots = [
-        slot for slot in template.slots.order_by("order", "id") if not is_source_product_photo_slot(slot)
-    ]
-    cluster_count = batch.clusters.filter(archived_at__isnull=True).count()
-    generation_count = cluster_count * len(generated_slots)
+    generation_count = 0
     org_used = _used_generations_today()
     user_used = _used_generations_today(user)
     user_limit = user.daily_generation_limit or settings.USER_DAILY_GENERATION_LIMIT
@@ -3548,17 +4173,30 @@ def preflight_batch(batch, user, template=None):
 
     if cluster_count == 0:
         blocking_errors.append("batch has no image clusters")
-    hero_slot = standard_product_hero_slot(template)
-    if hero_slot is None or not is_standard_product_hero_slot(hero_slot):
-        blocking_errors.append("output template requires a standard product hero")
-    for slot in generated_slots:
-        for rule in _applicable_rules(batch, slot):
-            rule_id = str(rule.get("rule_id") or "")
-            if (
-                str(rule.get("severity") or "") in {"HARD_PLATFORM", "HARD_MALL"}
-                and rule_id.endswith(".no_digital_rendering")
+    for cluster in clusters:
+        cluster_template, cluster_rules, cluster_config = _effective_cluster_resources(
+            batch, cluster
+        )
+        slots = list(cluster_template.slots.order_by("order", "id"))
+        slot_count = max(slot_count, len(slots))
+        generated_slots = [slot for slot in slots if not is_source_product_photo_slot(slot)]
+        generation_count += len(generated_slots)
+        hero_slot = standard_product_hero_slot(cluster_template)
+        if hero_slot is None or not is_standard_product_hero_slot(hero_slot):
+            blocking_errors.append("output template requires a standard product hero")
+        for slot in generated_slots:
+            for rule in _applicable_rules(
+                batch,
+                slot,
+                effective_config=cluster_config,
+                rule_profile=cluster_rules,
             ):
-                blocking_errors.append(rule_id)
+                rule_id = str(rule.get("rule_id") or "")
+                if (
+                    str(rule.get("severity") or "") in {"HARD_PLATFORM", "HARD_MALL"}
+                    and rule_id.endswith(".no_digital_rendering")
+                ):
+                    blocking_errors.append(rule_id)
     if generation_count > BATCH_GENERATION_LIMIT:
         blocking_errors.append("batch generation limit exceeded")
     if settings.GENERATION_QUOTAS_ENABLED:
@@ -3601,7 +4239,7 @@ def _same_slot_n7_snapshot(cluster, slot, snapshot_id):
     for snapshot in reversed(snapshots):
         if (
             snapshot.get("snapshot_id") == snapshot_id
-            and snapshot.get("node_id") == "N7"
+            and _node_family(snapshot.get("node_id")) == "N7"
             and snapshot.get("slot_id") == str(slot.id)
         ):
             return snapshot
@@ -3618,6 +4256,9 @@ def _validate_prompt_version_readiness(
     allowed_nodes=None,
     image_request=None,
 ):
+    template, effective_rules, effective_config = _effective_cluster_resources(
+        batch, cluster
+    )
     if prompt_version is None or not prompt_version.prompt_text.strip():
         raise ValueError("Current approved PromptVersion is required before generation")
     if (
@@ -3625,7 +4266,9 @@ def _validate_prompt_version_readiness(
         or prompt_version.output_slot_id != slot.id
     ):
         raise ValueError("PromptVersion must belong to the current product and slot")
-    if allowed_nodes and prompt_version.node_name not in allowed_nodes:
+    if slot.template_id != template.id:
+        raise ValueError("PromptVersion output template is stale")
+    if allowed_nodes and _node_family(prompt_version.node_name) not in allowed_nodes:
         expected = "/".join(sorted(allowed_nodes))
         raise ValueError(f"Current PromptVersion must come from {expected}")
 
@@ -3657,11 +4300,8 @@ def _validate_prompt_version_readiness(
             if is_source_product_photo_slot(slot)
             else settings.APIMART_IMAGE_MODEL
         ),
-        size=batch.size or (batch.output_template or slot.template).default_size,
-        resolution=(
-            batch.resolution
-            or (batch.output_template or slot.template).default_resolution
-        ),
+        size=effective_config["size"] or template.default_size,
+        resolution=effective_config["resolution"] or template.default_resolution,
     )
     if prompt_version.provider_model != image_request["model"]:
         raise ValueError("PromptVersion image model does not match the actual request")
@@ -3752,26 +4392,34 @@ def _validate_generation_readiness(generation, cluster=None, batch=None):
     )
     if generation.prompt_text != prompt_version.prompt_text:
         raise ValueError("Generation submission readiness prompt snapshot is inconsistent")
-    template = batch.output_template or slot.template
+    template, effective_rules, effective_config = _effective_cluster_resources(
+        batch, cluster
+    )
     if template.status != OutputTemplate.Status.PUBLISHED:
         raise ValueError("Generation submission readiness template is not published")
     if (
-        batch.rule_profile_id
-        and batch.rule_profile.status != RuleProfile.Status.PUBLISHED
+        effective_rules is not None
+        and effective_rules.status != RuleProfile.Status.PUBLISHED
     ):
         raise ValueError("Generation submission readiness rule profile is not published")
     if generation.template_snapshot != _template_snapshot(template, slot):
         raise ValueError("Generation submission readiness template content is stale")
-    if generation.rule_snapshot != _current_rule_bundle_snapshot(batch, slot):
+    if generation.rule_snapshot != _current_rule_bundle_snapshot(
+        batch,
+        slot,
+        cluster=cluster,
+        effective_config=effective_config,
+        rule_profile=effective_rules,
+    ):
         raise ValueError("Generation submission readiness rule content is stale")
-    if prompt_version.node_name in {"N8", "N9"}:
+    if _node_family(prompt_version.node_name) in {"N8", "N9"}:
         parent_id = prompt_version.source_snapshot.get("parent_prompt_version_id")
         parent = PromptVersion.objects.filter(
             id=parent_id,
             cluster=cluster,
             output_slot=slot,
         ).first()
-        if parent is None or parent.node_name not in {"N4", "N6", "N8", "N9"}:
+        if parent is None or _node_family(parent.node_name) not in {"N4", "N6", "N8", "N9"}:
             raise ValueError("Generation submission readiness follow-up lineage is invalid")
     return prompt_version
 
@@ -3801,6 +4449,7 @@ def _latest_current_completed_hero(cluster, batch, template):
 
 
 def _ensure_source_passthrough_generation(cluster, batch, template, slot, user):
+    _, effective_rules, effective_config = _effective_cluster_resources(batch, cluster)
     prompt_version = _approved_prompt_for_slot(cluster, batch, slot)
     source_asset_id = prompt_version.input_snapshot.get("source_asset_id")
     relation = (
@@ -3850,11 +4499,17 @@ def _ensure_source_passthrough_generation(cluster, batch, template, slot, user):
         attempt=latest_attempt(cluster, slot) + 1,
         status=Generation.Status.COMPLETED,
         prompt_text=prompt,
-        size=batch.size or template.default_size,
-        resolution=batch.resolution or template.default_resolution,
+        size=effective_config["size"] or template.default_size,
+        resolution=effective_config["resolution"] or template.default_resolution,
         reference_snapshot=references,
         template_snapshot=_template_snapshot(template, slot),
-        rule_snapshot=_current_rule_bundle_snapshot(batch, slot),
+        rule_snapshot=_current_rule_bundle_snapshot(
+            batch,
+            slot,
+            cluster=cluster,
+            effective_config=effective_config,
+            rule_profile=effective_rules,
+        ),
         completed_at=timezone.now(),
     )
     source_data = LocalStorage().read(relation.asset.storage_path)
@@ -3932,6 +4587,7 @@ def _create_gated_prompt_version(
     size=None,
     resolution=None,
     image_model=None,
+    client=None,
 ):
     references = list(references)
     prompt_text, input_snapshot = apply_standard_product_hero_policy(
@@ -3951,7 +4607,9 @@ def _create_gated_prompt_version(
         node_name,
         template_version,
     )
-    template = batch.output_template or slot.template
+    template, effective_rules, effective_config = _effective_cluster_resources(
+        batch, cluster
+    )
     image_request = _image_request_snapshot(
         model=(
             image_model
@@ -3961,8 +4619,8 @@ def _create_gated_prompt_version(
                 else settings.APIMART_IMAGE_MODEL
             )
         ),
-        size=size or batch.size or template.default_size,
-        resolution=resolution or batch.resolution or template.default_resolution,
+        size=size or effective_config["size"] or template.default_size,
+        resolution=resolution or effective_config["resolution"] or template.default_resolution,
     )
     identity = cluster.analysis_snapshot.get("identity", {})
     structural_asset_id = identity.get("primary_asset_id")
@@ -3973,27 +4631,25 @@ def _create_gated_prompt_version(
         visible_text_lines=structured_output.get("visible_text_lines")
         or structured_output.get("node_output", {}).get("visible_text_lines"),
         references=references,
+        effective_config=effective_config,
+        rule_profile=effective_rules,
     )
-    gate_input = {
-        "slot_order": slot.order,
-        "prompt": prompt_text,
-        "rule_snapshot": _current_rule_bundle_snapshot(batch, slot),
-        "reference_snapshot": references,
-        "structural_asset_id": str(structural_asset_id),
-        "prompt_node_template": node_template_binding,
-        "image_request": image_request,
-        "hero_generation_id": str(hero_generation.id) if hero_generation else None,
-        "parent_prompt_version_id": (
-            str(parent_prompt_version.id) if parent_prompt_version else None
-        ),
-        "lineage": lineage,
-    }
-    gate_snapshot = _node_snapshot(
-        "N7",
-        "deterministic-rule-engine",
-        gate_input,
-        gate,
-        slot_id=slot.id,
+    client = client or (
+        FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient()
+    )
+    gate, gate_snapshot = _run_final_n7_gate(
+        client,
+        cluster,
+        batch,
+        slot,
+        prompt_text,
+        references,
+        deterministic_gate=gate,
+        lineage=lineage,
+        node_template_binding=node_template_binding,
+        image_request=image_request,
+        hero_generation=hero_generation,
+        parent_prompt_version=parent_prompt_version,
     )
     analysis = copy.deepcopy(cluster.analysis_snapshot)
     analysis.setdefault("prompt_os", []).append(gate_snapshot)
@@ -4006,6 +4662,8 @@ def _create_gated_prompt_version(
         "effective_config_signature": lineage["effective_config_signature"],
         "lineage": lineage,
     }
+    if gate["decision"] != "pass" or gate["hard_blocks"]:
+        raise ValueError(", ".join(gate["hard_blocks"]) or "N7 semantic review blocked the prompt")
 
     for snapshot in (input_snapshot, source_snapshot, structured_output):
         snapshot["_preparation_revision"] = lineage["preparation_revision"]
@@ -4051,20 +4709,20 @@ def ensure_cluster_generations(
     )
     if locked.archived_at is not None:
         raise ValueError("Product is archived")
-    template = batch.output_template or _global_fallback_template()
+    template, effective_rules, effective_config = _effective_cluster_resources(
+        batch, locked
+    )
     if template.status != OutputTemplate.Status.PUBLISHED:
         raise ValueError("output template must be published before generation")
-    if batch.rule_profile_id and batch.rule_profile.status != RuleProfile.Status.PUBLISHED:
+    if effective_rules is not None and effective_rules.status != RuleProfile.Status.PUBLISHED:
         raise ValueError("rule profile must be published before generation")
-    if batch.output_template_id != template.id:
-        batch.output_template = template
     if not batch.market:
         batch.market = batch.site
     if not batch.size:
         batch.size = template.default_size
     if not batch.resolution:
         batch.resolution = template.default_resolution
-    batch.save(update_fields=["output_template", "market", "size", "resolution", "updated_at"])
+    batch.save(update_fields=["market", "size", "resolution", "updated_at"])
 
     requested = {int(order) for order in slot_orders} if slot_orders else None
     slots = list(template.slots.order_by("order", "id"))
@@ -4165,11 +4823,17 @@ def ensure_cluster_generations(
                 attempt=latest_attempt(locked, slot) + 1,
                 status=Generation.Status.QUEUED,
                 prompt_text=prompt_version.prompt_text,
-                size=batch.size or template.default_size,
-                resolution=batch.resolution or template.default_resolution,
+                size=effective_config["size"] or template.default_size,
+                resolution=effective_config["resolution"] or template.default_resolution,
                 reference_snapshot=references,
                 template_snapshot=_template_snapshot(template, slot),
-                rule_snapshot=_current_rule_bundle_snapshot(batch, slot),
+                rule_snapshot=_current_rule_bundle_snapshot(
+                    batch,
+                    slot,
+                    cluster=locked,
+                    effective_config=effective_config,
+                    rule_profile=effective_rules,
+                ),
             )
         )
     Batch.objects.filter(id=batch.id).update(status=Batch.Status.QUEUED, updated_at=timezone.now())
@@ -4480,10 +5144,11 @@ def _authorized_generation_references(generation, cluster, batch):
         ]
         hero = None
     else:
+        effective_template, _, _ = _effective_cluster_resources(batch, cluster)
         current_hero = _latest_current_completed_hero(
             cluster,
             batch,
-            batch.output_template or generation.output_slot.template,
+            effective_template,
         )
         gate = generation.prompt_version.evaluation.get("rule_gate", {})
         n7 = _same_slot_n7_snapshot(
@@ -4626,9 +5291,8 @@ def _seal_generation_submission(generation_id):
 
 
 def _lock_submission_dependencies(generation, cluster, batch):
-    hero_slot = standard_product_hero_slot(
-        batch.output_template or generation.output_slot.template
-    )
+    effective_template, _, _ = _effective_cluster_resources(batch, cluster)
+    hero_slot = standard_product_hero_slot(effective_template)
     if hero_slot is not None:
         hero_ids = list(
             Generation.objects.select_for_update()
@@ -4951,7 +5615,7 @@ def update_cluster_content(cluster, user, payload):
     prompts = payload.get("prompts", [])
     if not isinstance(prompts, list):
         raise TypeError("prompts must be an array")
-    template = locked.batch.output_template or _global_fallback_template()
+    template, _, _ = _effective_cluster_resources(locked.batch, locked)
     slots = {slot.order: slot for slot in template.slots.order_by("order", "id")}
     prepared_prompts = []
     for item in prompts:
@@ -4969,22 +5633,12 @@ def update_cluster_content(cluster, user, payload):
         prompt = str(item.get("prompt") or "").strip()
         if not prompt:
             raise ValueError(f"prompt for slot {order} cannot be empty")
-        input_snapshot = {
-            "manual_edit": True,
-            "cluster_version": locked.version,
-            "reference_snapshot": _reference_snapshot(locked),
-            "analysis_snapshot_hash": _snapshot_hash(locked.analysis_snapshot),
-        }
+        parent_prompt = _approved_prompt_for_slot(locked, locked.batch, slot)
+        input_snapshot = copy.deepcopy(parent_prompt.input_snapshot)
+        input_snapshot["manual_edit"] = True
+        input_snapshot["parent_prompt_version_id"] = str(parent_prompt.id)
         prompt, input_snapshot = apply_standard_product_hero_policy(slot, prompt, input_snapshot)
-        gate = evaluate_prompt_rule_gate(
-            locked.batch,
-            slot,
-            prompt,
-            references=input_snapshot["reference_snapshot"],
-        )
-        if gate["decision"] != "pass":
-            raise ValueError(", ".join(gate["hard_blocks"]))
-        prepared_prompts.append((slot, prompt, input_snapshot, gate))
+        prepared_prompts.append((slot, prompt, input_snapshot, parent_prompt))
 
     effective_before = _configuration_signature(locked.batch, locked)
     content_changed = False
@@ -4996,6 +5650,9 @@ def update_cluster_content(cluster, user, payload):
             locked.product_name = product_name
             if product_name:
                 locked.name = product_name
+            analysis = copy.deepcopy(locked.analysis_snapshot)
+            analysis["product_name_source"] = "manual"
+            locked.analysis_snapshot = analysis
             content_changed = True
     if "relation_type" in payload:
         relation_type = str(payload["relation_type"] or "")
@@ -5033,32 +5690,10 @@ def update_cluster_content(cluster, user, payload):
         if locked.seller_tier_override != value:
             locked.seller_tier_override = value
     configuration_changed = effective_before != _configuration_signature(locked.batch, locked)
+    if prepared_prompts and (configuration_changed or content_changed):
+        raise ValueError("prepare the updated product before editing slot prompts")
     if configuration_changed or (content_changed and not prepared_prompts):
-        if configuration_changed:
-            _invalidate_preparation(locked)
-        else:
-            locked.preparation_status = Cluster.PreparationStatus.PENDING
-            locked.preparation_error = ""
-            locked.analysis_snapshot = {}
-    for slot, prompt, input_snapshot, gate in prepared_prompts:
-        PromptVersion.objects.create(
-            cluster=locked,
-            output_slot=slot,
-            created_by=user,
-            node_name="manual_edit",
-            template_version="manual-v1",
-            provider_model="gpt-image-2",
-            prompt_text=prompt,
-            input_snapshot=input_snapshot,
-            structured_output={
-                "manual_edit": True,
-                "prompt": prompt,
-                "slot_order": slot.order,
-                "rule_gate": gate,
-            },
-            evaluation={"fact_policy": "human-reviewed", "rule_gate": gate},
-            source_snapshot=input_snapshot,
-        )
+        _invalidate_preparation(locked)
     locked.version += 1
     locked.save(
         update_fields=[
@@ -5073,12 +5708,38 @@ def update_cluster_content(cluster, user, payload):
             "relation_type",
             "preparation_status",
             "preparation_error",
+            "preparation_stage",
+            "preparation_current",
+            "preparation_total",
             "analysis_snapshot",
             "auto_generate",
             "version",
             "updated_at",
         ]
     )
+    for slot, prompt, input_snapshot, parent_prompt in prepared_prompts:
+        references = list(parent_prompt.input_snapshot.get("reference_snapshot", []))
+        _create_gated_prompt_version(
+            cluster=locked,
+            batch=locked.batch,
+            slot=slot,
+            user=user,
+            node_name=parent_prompt.node_name,
+            template_version=parent_prompt.template_version,
+            provider_model=parent_prompt.provider_model,
+            prompt_text=prompt,
+            input_snapshot=input_snapshot,
+            structured_output={
+                **copy.deepcopy(parent_prompt.structured_output),
+                "manual_edit": True,
+                "prompt": prompt,
+                "slot_order": slot.order,
+            },
+            source_snapshot=copy.deepcopy(parent_prompt.source_snapshot),
+            references=references,
+            parent_prompt_version=parent_prompt,
+            fact_policy="human-reviewed",
+        )
     return locked
 
 
@@ -5528,6 +6189,7 @@ def serialize_project(batch):
     ]
     skus = []
     for cluster in batch.clusters.filter(archived_at__isnull=True).order_by("created_at", "id"):
+        cluster_template, _, _ = _effective_cluster_resources(batch, cluster)
         cluster_assets = list(
             cluster.cluster_assets.select_related("asset")
             .filter(asset__archived_at__isnull=True)
@@ -5568,6 +6230,21 @@ def serialize_project(batch):
             if result is not None:
                 output["imageUrl"] = reverse("api_result_media", args=[result.id])
             outputs.append(output)
+        prompt_slots = [
+            {
+                "slotOrder": slot.order,
+                "slot": slot.name,
+                "text": latest_prompts[slot.id].prompt_text if slot.id in latest_prompts else "",
+                "promptVersionId": (
+                    str(latest_prompts[slot.id].id) if slot.id in latest_prompts else None
+                ),
+                "readOnly": is_source_product_photo_slot(slot),
+            }
+            for slot in cluster_template.slots.order_by("order", "id")
+        ]
+        analysis = cluster.analysis_snapshot if isinstance(cluster.analysis_snapshot, dict) else {}
+        effective_config = _effective_config(batch, cluster)
+        effective_config["resolution"] = effective_config["resolution"].upper()
         sku_assets = [serialized_assets[item.asset_id] for item in cluster_assets]
         skus.append(
             {
@@ -5575,40 +6252,51 @@ def serialize_project(batch):
                 "sku": cluster.sku or "",
                 "name": "" if cluster.product_name == "名称待确认" else cluster.product_name,
                 "productName": "" if cluster.product_name == "名称待确认" else cluster.product_name,
+                "productNameSource": analysis.get("product_name_source"),
                 "version": cluster.version,
                 "relationType": cluster.relation_type,
                 "preparationStatus": cluster.preparation_status,
+                "preparation": {
+                    "status": cluster.preparation_status,
+                    "stage": cluster.preparation_stage,
+                    "current": cluster.preparation_current,
+                    "total": cluster.preparation_total,
+                    "error": cluster.preparation_error,
+                },
                 "importStatus": (
                     latest_imports[cluster.sku].status if cluster.sku in latest_imports else "manual"
                 ),
                 "assetIds": [str(item.asset_id) for item in cluster_assets],
                 "assets": sku_assets,
                 "facts": cluster.product_facts,
+                "productFacts": cluster.product_facts,
                 "identityLock": cluster.identity_lock,
-                "brief": cluster.prompt_override,
+                "brief": cluster.product_facts,
+                "productStyle": cluster.prompt_override,
                 "overrides": {
                     "platform": cluster.platform_override,
                     "market": cluster.market_override,
                     "sellerTier": cluster.seller_tier_override,
                 },
-                "effectiveConfig": _effective_config(batch, cluster),
-                "analysisSnapshot": cluster.analysis_snapshot,
-                "prompts": [
-                    {
-                        "slotOrder": slot.order,
-                        "slot": slot.name,
-                        "text": latest_prompts[slot.id].prompt_text if slot.id in latest_prompts else "",
-                        "promptVersionId": (
-                            str(latest_prompts[slot.id].id) if slot.id in latest_prompts else None
-                        ),
-                        "readOnly": is_source_product_photo_slot(slot),
-                    }
-                    for slot in template.slots.order_by("order", "id")
-                ],
+                "effectiveConfig": effective_config,
+                "identity": analysis.get("identity", {}),
+                "factLedger": analysis.get("fact_ledger", {}),
+                "marketingPlan": analysis.get("marketing_plan", {"plans": []}),
+                "analysisSnapshot": analysis,
+                "prompts": prompt_slots,
+                "promptSlots": prompt_slots,
+                "generationProgress": {
+                    "completed": sum(item["status"] == "completed" for item in outputs),
+                    "active": sum(item["status"] in {"queued", "running"} for item in outputs),
+                    "failed": sum(item["status"] == "failed" for item in outputs),
+                    "total": len(outputs),
+                },
                 "outputs": outputs,
             }
         )
     preflight = preflight_batch(batch, batch.owner, template)
+    default_config = _default_config(batch)
+    default_config["resolution"] = default_config["resolution"].upper()
     return {
         "id": str(batch.id),
         "name": batch.name,
@@ -5616,9 +6304,10 @@ def serialize_project(batch):
         "market": batch.market or batch.site,
         "sellerTier": batch.seller_tier,
         "configurationStatus": "configured" if batch.platform and (batch.market or batch.site) else "required",
-        "defaultConfig": _default_config(batch),
+        "defaultConfig": default_config,
         "template": template.name,
         "size": batch.size,
+        "resolution": (batch.resolution or "1k").upper(),
         "status": _project_status(batch.status),
         "updatedAt": batch.updated_at.isoformat(),
         "assets": list(serialized_assets.values()),

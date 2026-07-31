@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { ClusterUpdateInput, ClusterUpdateResult, ProductPrompt, ProductSku, RelationType, RuleGateMessage } from "../types";
+import { slotLabel } from "../labels";
+import type { ClusterUpdateInput, ClusterUpdateResult, ProductPrompt, ProductSku, RuleGateMessage } from "../types";
 
 const defaultPrompts = [
   "白底标准图",
@@ -16,9 +17,7 @@ const defaultPrompts = [
 const riskLabels: Record<string, string> = { low: "低风险", medium: "中风险", high: "高风险" };
 
 type PromptDraft = {
-  relationType: RelationType;
   identityLock: string;
-  brief: string;
   prompts: ProductPrompt[];
 };
 
@@ -28,9 +27,7 @@ function promptsFromSku(sku: ProductSku) {
 
 function draftFromSku(sku: ProductSku): PromptDraft {
   return {
-    relationType: sku.relationType ?? "single_product",
     identityLock: sku.identityLock,
-    brief: sku.brief,
     prompts: promptsFromSku(sku),
   };
 }
@@ -73,7 +70,7 @@ export function PromptEditor({
       setDraft(next);
       setSavedDraft(next);
     }
-  }, [sku.id, sku.version, sku.relationType, sku.identityLock, sku.brief, sku.prompts, dirty]);
+  }, [sku.id, sku.version, sku.identityLock, sku.prompts, dirty]);
 
   const updatePrompt = (slotOrder: number, text: string) => {
     setDraft((current) => ({ ...current, prompts: current.prompts.map((prompt) => prompt.slotOrder === slotOrder ? { ...prompt, text } : prompt) }));
@@ -82,9 +79,7 @@ export function PromptEditor({
     const next = draft;
     try {
       const result = await onSave({
-        relation_type: next.relationType,
         identity_lock: next.identityLock,
-        prompt_override: next.brief,
         prompts: next.prompts
           .filter((prompt) => !prompt.readOnly && prompt.text.trim())
           .map((prompt) => ({ slot_order: prompt.slotOrder, prompt: prompt.text })),
@@ -120,7 +115,7 @@ export function PromptEditor({
               <article className="rounded-md bg-white px-3 py-2" key={fact.fact_id}>
                 <p className="text-sm text-slate-800">{fact.statement}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {fact.fact_class} · {Math.round(fact.confidence * 100)}% · {riskLabels[fact.risk_level] ?? `${fact.risk_level}风险`}
+                  {{ confirmed: "已确认", observed: "已观察", inferred: "合理推断" }[fact.fact_class]} · {Math.round(fact.confidence * 100)}% · {riskLabels[fact.risk_level] ?? "待复核"}
                 </p>
                 {fact.evidence_refs.length > 0 && <p className="mt-1 text-xs text-slate-400">来源：{fact.evidence_refs.join("、")}</p>}
                 {fact.review_note && <p className="mt-1 text-xs text-amber-700">{fact.review_note}</p>}
@@ -144,27 +139,15 @@ export function PromptEditor({
         </section>
       )}
       <label className="block text-sm font-medium text-slate-700">
-        <span className="mb-2 block">多图关系</span>
-        <select value={draft.relationType} onChange={(event) => setDraft((current) => ({ ...current, relationType: event.target.value as RelationType }))}>
-          <option value="single_product">一图一商品</option>
-          <option value="same_product">同商品参考</option>
-          <option value="variant_group">多色/多款组合</option>
-        </select>
+        <span className="mb-2 block">商品身份</span>
+        <textarea aria-label="商品身份" value={draft.identityLock} onChange={(event) => setDraft((current) => ({ ...current, identityLock: event.target.value }))} />
       </label>
-      <label className="block text-sm font-medium text-slate-700">
-        <span className="mb-2 block">身份锁</span>
-        <textarea value={draft.identityLock} onChange={(event) => setDraft((current) => ({ ...current, identityLock: event.target.value }))} />
-      </label>
-      <label className="block text-sm font-medium text-slate-700">
-        <span className="mb-2 block">整套要求</span>
-        <textarea value={draft.brief} onChange={(event) => setDraft((current) => ({ ...current, brief: event.target.value }))} />
-      </label>
-      <details className="rounded-lg bg-slate-50 p-3">
-        <summary className="cursor-pointer text-sm font-semibold text-slate-700">9 槽 Prompt</summary>
-        <div className="mt-3 grid gap-3">
+      <section className="rounded-lg bg-slate-50 p-3">
+        <h3 className="text-sm font-semibold text-slate-700">1+8 输出 Prompt</h3>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
           {draft.prompts.map((prompt) => (
             <label className="block text-sm font-medium text-slate-700" key={prompt.slotOrder}>
-              <span className="mb-2 block">{String(prompt.slotOrder).padStart(2, "0")} {prompt.slot} Prompt</span>
+              <span className="mb-2 block">{String(prompt.slotOrder).padStart(2, "0")} {slotLabel(prompt.slot, prompt.slotOrder)} Prompt</span>
               <textarea
                 disabled={prompt.readOnly}
                 value={prompt.text}
@@ -173,7 +156,7 @@ export function PromptEditor({
             </label>
           ))}
         </div>
-      </details>
+      </section>
       <button
         className="secondary-button"
         disabled={disabled}

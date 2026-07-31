@@ -96,9 +96,23 @@ def test_seed_creates_verified_rule_profiles_and_vietnam_general_template():
         (1, "Seller original product photo"),
         (2, "Standard white-background product hero"),
     ]
-    prompt_nodes = PromptNodeTemplate.objects.filter(version="2.1.0", status="published")
+    prompt_nodes = PromptNodeTemplate.objects.filter(version="3.0.0", status="published")
     assert set(prompt_nodes.values_list("node_name", flat=True)) == {
-        f"N{index}" for index in range(1, 10)
+        "N1",
+        "N2",
+        "N3",
+        "N4",
+        "N8",
+        "N9",
+        "N5.generic",
+        "N6.generic",
+        "N7.generic",
+        "N5.shopee",
+        "N6.shopee",
+        "N7.shopee",
+        "N5.tiktok",
+        "N6.tiktok",
+        "N7.tiktok",
     }
     for prompt_node in prompt_nodes:
         assert len(prompt_node.instruction) >= 300
@@ -118,7 +132,7 @@ def test_seed_publishes_new_prompt_version_without_overwriting_old_version():
     call_command("seed_platform_templates")
 
     old.refresh_from_db()
-    current = PromptNodeTemplate.objects.get(node_name="N1", version="2.1.0")
+    current = PromptNodeTemplate.objects.get(node_name="N1", version="3.0.0")
     assert old.status == PromptNodeTemplate.Status.RETIRED
     assert old.instruction == "administrator preserved instruction"
     assert current.status == PromptNodeTemplate.Status.PUBLISHED

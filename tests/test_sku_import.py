@@ -153,6 +153,10 @@ def test_sku_import_keeps_success_when_another_sku_fails_and_exposes_plan_snapsh
     }
     cluster = Cluster.objects.get(batch=batch, sku="OK-1")
     assert cluster.product_name == "Travel mug"
+    assert cluster.analysis_snapshot["product_name_source"] == "erp"
+    assert cluster.preparation_status == Cluster.PreparationStatus.DRAFT
+    from platform_app.services import _claim_prompt_cluster
+    assert _claim_prompt_cluster(cluster) is None
     assert cluster.assets.count() == 1
     assert list(SkuImportItem.objects.filter(batch=batch).values_list("sku", "status")) == [
         ("OK-1", SkuImportItem.Status.IMPORTED),
@@ -163,6 +167,7 @@ def test_sku_import_keeps_success_when_another_sku_fails_and_exposes_plan_snapsh
     sku = snapshot["skus"][0]
     assert sku["sku"] == "OK-1"
     assert sku["productName"] == "Travel mug"
+    assert sku["productNameSource"] == "erp"
     assert sku["importStatus"] == "imported"
     assert snapshot["skuImports"] == [failed_item, imported_item]
     assert len(snapshot["templateSlots"]) == 9
@@ -313,15 +318,27 @@ def test_sku_reimport_does_not_duplicate_cluster_or_image(tmp_path, settings):
     settings.CATALOG_ALLOWED_IMAGE_HOSTS = ("8.8.8.8",)
     _, batch = make_batch()
 
-    for _ in range(2):
-        import_skus(
-            batch,
-            ["OK-1"],
-            catalog_client=FakeCatalogClient(),
-            image_downloader=lambda url: (image_bytes(), "image/png"),
-        )
+    import_skus(
+        batch,
+        ["OK-1"],
+        catalog_client=FakeCatalogClient(),
+        image_downloader=lambda url: (image_bytes(), "image/png"),
+    )
+    cluster = Cluster.objects.get(batch=batch, sku="OK-1")
+    cluster.product_name = "Employee name"
+    cluster.analysis_snapshot = {"product_name_source": "manual"}
+    cluster.save(update_fields=["product_name", "analysis_snapshot"])
+    import_skus(
+        batch,
+        ["OK-1"],
+        catalog_client=FakeCatalogClient(),
+        image_downloader=lambda url: (image_bytes(), "image/png"),
+    )
 
     assert Cluster.objects.filter(batch=batch, sku="OK-1").count() == 1
+    cluster.refresh_from_db()
+    assert cluster.product_name == "Employee name"
+    assert cluster.analysis_snapshot["product_name_source"] == "manual"
     assert Asset.objects.filter(batch=batch).count() == 1
     assert SkuImportItem.objects.filter(batch=batch, sku="OK-1").count() == 2
 

@@ -1,5 +1,5 @@
 import { developmentWorkspace } from "./mock-data";
-import type { ClusterUpdateInput, ClusterUpdateResult, ImportMode, PreflightResult, ProductConfiguration, Project, ProjectInput, ReviewInput, RevisionInput, SkuImportResult, WorkspaceSnapshot } from "./types";
+import type { ClusterUpdateInput, ClusterUpdateResult, ImportMode, PreflightResult, ProductConfiguration, Project, ProjectInput, PromptNodeDraftInput, PromptNodeTemplate, ReviewInput, RevisionInput, SkuImportResult, WorkspaceSnapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public authRequired = false) {
@@ -138,11 +138,17 @@ export function updateProjectSettings(projectId: string, input: ProductConfigura
     body: JSON.stringify({
       platform: input.platform,
       market: input.market.trim().toUpperCase(),
-      seller_tier: input.sellerTier,
       size: input.size,
       resolution: input.resolution,
       global_prompt: input.globalPrompt,
     }),
+  });
+}
+
+export function prepareProject(projectId: string, clusterIds: string[]) {
+  return jsonRequest<{ items: { cluster_id: string; status: string; stage?: string; code?: string }[] }>(`/api/projects/${projectId}/prepare/`, {
+    method: "POST",
+    body: JSON.stringify({ cluster_ids: clusterIds }),
   });
 }
 
@@ -223,6 +229,25 @@ export function mergeAsset(clusterId: string, assetId: string, expectedVersion: 
   return jsonRequest(`/api/clusters/${clusterId}/merge/`, {
     method: "POST",
     body: JSON.stringify({ asset_id: assetId, expected_version: expectedVersion }),
+  });
+}
+
+export function splitAsset(assetId: string) {
+  return jsonRequest(`/api/assets/${assetId}/split/`, { method: "POST", body: "{}" });
+}
+
+export function loadPromptNodes() {
+  return jsonRequest<{ nodes: PromptNodeTemplate[] }>("/api/admin/prompt-nodes/");
+}
+
+export function createPromptNodeDraft(input: PromptNodeDraftInput) {
+  return jsonRequest<PromptNodeTemplate>("/api/admin/prompt-nodes/", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function publishPromptNode(nodeName: string, version: string) {
+  return jsonRequest<PromptNodeTemplate>("/api/admin/prompt-nodes/publish/", {
+    method: "POST",
+    body: JSON.stringify({ node_name: nodeName, version }),
   });
 }
 

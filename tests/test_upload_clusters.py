@@ -293,19 +293,23 @@ def test_asset_relation_changes_invalidate_prompt_preparation(tmp_path, settings
     Cluster.objects.filter(id=target.id).update(
         preparation_status=Cluster.PreparationStatus.READY,
         analysis_snapshot={"_preparation_revision": 5},
+        auto_generate=True,
     )
 
     merge_asset_into_cluster(second, target, expected_version=target.version)
 
     target.refresh_from_db()
-    assert target.preparation_status == Cluster.PreparationStatus.PENDING
+    assert target.preparation_status == Cluster.PreparationStatus.DRAFT
+    assert target.auto_generate is False
     assert target.analysis_snapshot["_preparation_revision"] == 6
 
     Cluster.objects.filter(id=target.id).update(
         preparation_status=Cluster.PreparationStatus.READY,
+        auto_generate=True,
     )
     move_asset_to_new_cluster(second)
 
     target.refresh_from_db()
-    assert target.preparation_status == Cluster.PreparationStatus.PENDING
+    assert target.preparation_status == Cluster.PreparationStatus.DRAFT
+    assert target.auto_generate is False
     assert target.analysis_snapshot["_preparation_revision"] == 7

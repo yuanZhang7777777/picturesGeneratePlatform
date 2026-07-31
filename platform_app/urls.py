@@ -25,6 +25,21 @@ urlpatterns = [
         name="api_project_settings",
     ),
     path(
+        "api/projects/<uuid:batch_id>/prepare/",
+        views.api_project_prepare,
+        name="api_project_prepare",
+    ),
+    path(
+        "api/admin/prompt-nodes/",
+        views.api_admin_prompt_nodes,
+        name="api_admin_prompt_nodes",
+    ),
+    path(
+        "api/admin/prompt-nodes/publish/",
+        views.api_admin_prompt_nodes_publish,
+        name="api_admin_prompt_nodes_publish",
+    ),
+    path(
         "api/projects/<uuid:batch_id>/assets/",
         views.api_upload_assets,
         name="api_project_upload_assets",

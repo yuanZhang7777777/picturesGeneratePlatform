@@ -94,7 +94,7 @@ export function ImportPanel({
 
   return <section className="surface overflow-visible p-5" aria-label="添加商品面板">
     <div className="mb-4 flex gap-2 border-b border-slate-100">
-      <button type="button" className={`pb-3 text-sm font-semibold ${tab === "images" ? "border-b-2 border-indigo-600 text-indigo-700" : "text-slate-500"}`} onClick={() => setTab("images")}>图片 / 文件夹</button>
+      <button type="button" className={`pb-3 text-sm font-semibold ${tab === "images" ? "border-b-2 border-indigo-600 text-indigo-700" : "text-slate-500"}`} onClick={() => setTab("images")}>图片/文件夹</button>
       <button type="button" className={`pb-3 text-sm font-semibold ${tab === "erp" ? "border-b-2 border-indigo-600 text-indigo-700" : "text-slate-500"}`} onClick={() => setTab("erp")}>ERP SKU</button>
     </div>
     {tab === "images" ? <>

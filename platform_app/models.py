@@ -140,9 +140,9 @@ class Batch(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="batches")
     name = models.CharField(max_length=200)
-    platform = models.CharField(max_length=40, default="shopee")
-    site = models.CharField(max_length=40, default="SG")
-    market = models.CharField(max_length=40, blank=True)
+    platform = models.CharField(max_length=40, default="generic")
+    site = models.CharField(max_length=40, default="SEA")
+    market = models.CharField(max_length=40, blank=True, default="SEA")
     seller_tier = models.CharField(
         max_length=20,
         choices=SellerTier.choices,
@@ -162,8 +162,8 @@ class Batch(models.Model):
         null=True,
         blank=True,
     )
-    size = models.CharField(max_length=20, blank=True)
-    resolution = models.CharField(max_length=20, blank=True)
+    size = models.CharField(max_length=20, blank=True, default="1:1")
+    resolution = models.CharField(max_length=20, blank=True, default="1k")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     global_prompt = models.TextField(blank=True)
     confirmed_generation_key = models.UUIDField(null=True, blank=True, unique=True)
@@ -243,6 +243,7 @@ class Cluster(models.Model):
         VARIANT_GROUP = "variant_group", "Variant group"
 
     class PreparationStatus(models.TextChoices):
+        DRAFT = "draft", "Draft"
         PENDING = "pending", "Pending"
         PREPARING = "preparing", "Preparing"
         READY = "ready", "Ready"
@@ -269,9 +270,12 @@ class Cluster(models.Model):
     preparation_status = models.CharField(
         max_length=20,
         choices=PreparationStatus.choices,
-        default=PreparationStatus.PENDING,
+        default=PreparationStatus.DRAFT,
     )
     preparation_error = models.TextField(blank=True)
+    preparation_stage = models.CharField(max_length=20, default="draft")
+    preparation_current = models.PositiveSmallIntegerField(default=0)
+    preparation_total = models.PositiveSmallIntegerField(default=7)
     analysis_snapshot = models.JSONField(default=dict, blank=True)
     auto_generate = models.BooleanField(default=False)
     version = models.PositiveIntegerField(default=1)
@@ -446,6 +450,7 @@ class PromptNodeTemplate(models.Model):
     version = models.CharField(max_length=40, default="v1")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     instruction = models.TextField()
+    user_message_template = models.TextField(blank=True)
     output_schema = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

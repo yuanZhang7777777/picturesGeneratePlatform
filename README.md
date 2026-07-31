@@ -2,15 +2,15 @@
 
 状态：阶段 1“批量整理工作台可用化”已完成，阶段 2 的 ERP 图片源修复、退出登录和明确的单/多图/文件夹入口已部署到 2 号云服务器 `18083` 预览入口；项目/商品平台与国家配置仍在推进。当前入口仍是测试预览，不是面向 100 名员工的正式 HTTPS 发布。唯一执行顺序见[分阶段交付路线图](docs/superpowers/plans/2026-07-31-phased-delivery-roadmap.md)。
 
-本项目面向公司内部运营人员，提供“上传图片/文件夹”和“ERP SKU”两个并列入口。每次导入可选择“导入并自动出图”或“导入后整理”；两种模式共用逐图观察、身份归并、推断台账、营销策划、规则闸门、9 图生产、人工审核、单张修改、历史版本和本地批量导出。默认套图为 1 张白底图 + 8 张营销图；Shopee VN 普通店为真实原图 + 白底图 + 7 张营销图。Django 负责登录、权限、任务和数据；`frontend/` 中的 React + TypeScript + Vite 工作台由 Caddy 同源提供静态文件，并由 Caddy 代理 Django API、认证、后台、健康检查和旧 `/batches/` 链接重定向。
+本项目面向公司内部运营人员，提供“上传图片/文件夹”和“ERP SKU”两个并列入口。每次导入可选择“导入并自动出图”或“导入后整理”：整理模式只保存素材和商品卡，员工主动点击“预备生成”才执行逐图观察、身份归并、事实台账、营销策划和规则闸门；自动模式复用相同 N1–N7 链路并在通过后继续生产。默认套图为 1 张白底图 + 8 张营销图；Shopee VN 普通店为真实原图 + 白底图 + 7 张营销图。Django 负责登录、权限、任务和数据；`frontend/` 中的 React + TypeScript + Vite 工作台由 Caddy 同源提供静态文件，并由 Caddy 代理 Django API、认证、后台、健康检查和旧 `/batches/` 链接重定向。
 
 ERP SKU 是两个一级入口之一：`POST /api/projects/{id}/sku-import/` 接受最多 50 条 SKU，服务端使用当前登录用户的 ERP Token 查询商品名和产品图，并把图片归档到私有存储；失败项逐条记录，不阻塞同批其他 SKU。商品资料查询地址、图片源公网 IP 字面量白名单、ERP 登录和 OSS 配置见 [运行手册](docs/runbook.md)，真实目录服务的 Token 过期契约仍需在发布环境验证。
 
 核心任务模型：
 
 ```text
-上传批次
-  └─ 商品集群（每张源图默认一个，拖拽后可共同作为同商品参考或多色/多款组合）
+项目
+  └─ 商品卡（每张源图默认一个；拖整卡合并，拖单图移动或拆分）
       └─ 输出图片任务
           └─ 重做版本
 ```
@@ -58,7 +58,7 @@ React 开发模式与 Docker 预览是两条路径：前者运行 Django 与 `np
 ## 规则、模板与结果
 
 - 平台规则和套图模板只能由管理员在同源 `/admin/` 路径维护和发布，并记录官方来源、核对日期、适用平台/站点和版本。
-- N1–N9 当前发布完整的 Prompt OS `2.1.0` 核心提示词；DeepSeek 节点通过真正的 `system` 消息接收，不使用一句职责摘要。`3500` 字符限制只作用于最终单图生成/修改 Prompt。
+- Prompt OS v3 共用 N1–N4/N8/N9 事实链，并分别发布 generic、shopee、tiktok 的 N5–N7 营销链；DeepSeek 节点通过真正的 `system` 消息接收完整模板，不使用一句职责摘要。`3500` 字符限制只作用于最终单图生成/修改 Prompt。
 - 人工或 ERP 已确认的商品名不会再被 N2 低置信度推翻；N5 对 APIMart 实测的营销计划包络做确定性归一化，Schema 不完整时只允许修复一次。
 - 正式种子包含全局 9 图模板、Shopee/TikTok 官网主规则包，以及已验证的 Shopee VN、Shopee TW Mall、TikTok US 覆盖规则。未配置国家复用对应平台官网主规则包并标记 fallback；未验证项不能被宣称为自动合规。
 - 竞品图只能经批准的 `gpt-5-nano-2025-08-07` 视觉观察器形成抽象策略，不能作为生成参考图、商品事实、生产 Prompt、导出内容或上传至 `gpt-image-2`。
@@ -76,7 +76,7 @@ React 开发模式与 Docker 预览是两条路径：前者运行 Django 与 `np
 - [当前唯一推进计划：分阶段交付路线图](docs/superpowers/plans/2026-07-31-phased-delivery-roadmap.md)
 - [双速 AI 商品出图平台最终设计](docs/superpowers/specs/2026-07-30-dual-speed-product-platform-design.md)
 - [历史：Prompt OS v2 P0 实施计划](docs/superpowers/plans/2026-07-30-commerce-prompt-os-v2-p0-implementation.md)
-- [Prompt OS v2 九节点契约](docs/superpowers/specs/节点prompt设定初稿.md)
+- [Prompt OS v3 九节点契约](docs/superpowers/specs/节点prompt设定初稿.md)
 - [主 Agent `/goal` 任务书](docs/project/LEADER-GOAL-DUAL-SPEED-PLATFORM.md)
 - [后端、安全与部署历史基线](docs/specs/2026-07-28-independent-image-platform-design.md)
 - [顶级 AI 商品出图平台调研与产品重设](docs/research/2026-07-29-top-image-platform-redesign-research.md)

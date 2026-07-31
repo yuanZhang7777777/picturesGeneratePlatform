@@ -1,31 +1,70 @@
-import { useEffect, useRef, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useEffect, useState } from "react";
 
 import { ApiError } from "../api";
-import { PromptEditor } from "./PromptEditor";
+import { commonMarkets, extraMarkets, marketLabel, marketValue, platformLabel, platforms, stageLabels } from "../labels";
 import type { ClusterUpdateInput, ClusterUpdateResult, ProductAsset, ProductSku } from "../types";
+import { PromptEditor } from "./PromptEditor";
 
-const statusText: Record<string, string> = { pending: "等待 AI 识别", preparing: "AI 正在识别", ready: "可生成", blocked: "需要确认", failed: "需要处理" };
-const blockedText: Record<string, string> = { identity_needs_input: "请确认商品身份或补充商品名称", identity_conflict: "图片与商品名称可能不一致，请确认后修改", configuration_required: "请先设置平台和国家", rule_gate_blocked: "请修改与平台规则冲突的商品信息" };
-type Draft = { name: string; brief: string; platform: string; market: string; sellerTier: string };
+type Draft = { name: string; productFacts: string; productStyle: string; platform: string; market: string };
 
 function draftFromSku(sku: ProductSku): Draft {
-  const platform = sku.overrides?.platform ?? "";
-  return { name: sku.name, brief: sku.brief, platform, market: sku.overrides?.market ?? "", sellerTier: (platform || sku.effectiveConfig?.platform) === "tiktok" ? "" : sku.overrides?.sellerTier ?? "" };
+  return {
+    name: sku.name,
+    productFacts: sku.productFacts ?? sku.facts ?? "",
+    productStyle: sku.productStyle ?? sku.brief ?? "",
+    platform: sku.overrides?.platform ?? sku.effectiveConfig?.platform ?? "generic",
+    market: sku.overrides?.market ?? sku.effectiveConfig?.market ?? "SEA",
+  };
 }
 
-export function ProductCard({ sku, assets, mergeableAssets, selected, onSelect, onMerge, onSave, onReload, onDeleteAsset, onDelete, disabled }: {
-  sku: ProductSku; assets: ProductAsset[]; mergeableAssets: ProductAsset[]; selected: boolean; onSelect: (checked: boolean) => void; onMerge: (assetId: string) => void; onSave: (payload: ClusterUpdateInput, expectedVersion: number) => Promise<ClusterUpdateResult>; onReload: () => Promise<unknown> | void; onDeleteAsset: (assetId: string) => void; onDelete: () => void; disabled?: boolean;
+function progressText(sku: ProductSku) {
+  const generation = sku.generationProgress;
+  const generated = generation?.completed ?? generation?.current ?? 0;
+  const generationTotal = generation?.total ?? 0;
+  const failed = generation?.failed ?? 0;
+  const failureText = failed ? ` · 有 ${failed} 张失败` : "";
+  if (generation?.active || (generation?.status && !["idle", "completed", "failed"].includes(generation.status) && generated + failed < generationTotal)) return `出图中 · ${generated}/${generationTotal}${failureText}`;
+  if (failed) return `出图已结束 · ${generated}/${generationTotal}${failureText}`;
+  if (generationTotal && generated === generationTotal) return `出图完成 · ${generated}/${generationTotal}`;
+  const preparation = sku.preparation;
+  const status = preparation?.status ?? sku.preparationStatus ?? "pending";
+  if (status === "ready") return `预备完成 · ${preparation?.total || 7}/${preparation?.total || 7}`;
+  if (status === "preparing") {
+    const stage = preparation?.stage ?? "";
+    return `预备生成中${stage ? ` · ${stage} ${stageLabels[stage] ?? "处理中"}` : ""} · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
+  }
+  if (status === "blocked") return `预备受阻${preparation?.error ? ` · ${preparation.error}` : ""}`;
+  if (status === "failed") return `预备失败${preparation?.error ? ` · ${preparation.error}` : ""}`;
+  return `待预备生成 · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
+}
+
+export function ProductCard({ sku, assets, selected, expanded = false, onOpen = () => undefined, onClose = () => undefined, onSelect, onSave, onReload, onDeleteAsset, onDelete, disabled }: {
+  sku: ProductSku;
+  assets: ProductAsset[];
+  mergeableAssets?: ProductAsset[];
+  selected: boolean;
+  expanded?: boolean;
+  onOpen?: () => void;
+  onClose?: () => void;
+  onSelect: (checked: boolean) => void;
+  onMerge?: (assetId: string) => void;
+  onSave: (payload: ClusterUpdateInput, expectedVersion: number) => Promise<ClusterUpdateResult>;
+  onReload: () => Promise<unknown> | void;
+  onDeleteAsset: (assetId: string) => void;
+  onDelete: () => void;
+  disabled?: boolean;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: sku.id, disabled });
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const draggable = useDraggable({ id: `cluster:${sku.id}`, data: { type: "cluster", clusterId: sku.id }, disabled });
+  const droppable = useDroppable({ id: `cluster:${sku.id}`, data: { type: "cluster", clusterId: sku.id }, disabled });
   const [draft, setDraft] = useState(() => draftFromSku(sku));
   const [savedDraft, setSavedDraft] = useState(() => draftFromSku(sku));
   const [currentVersion, setCurrentVersion] = useState(sku.version);
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
-  const closeButton = useRef<HTMLButtonElement>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
+  const label = draft.name.trim() || "未命名商品";
+  const nameSourceText = sku.productNameSource === "ai" ? "AI 识别，可修改" : sku.productNameSource === "erp" ? "来自 ERP" : "";
 
   useEffect(() => { setCurrentVersion(sku.version); }, [sku.id, sku.version]);
   useEffect(() => {
@@ -34,104 +73,93 @@ export function ProductCard({ sku, assets, mergeableAssets, selected, onSelect, 
       setDraft(next);
       setSavedDraft(next);
     }
-  }, [sku.id, sku.name, sku.brief, sku.overrides?.platform, sku.overrides?.market, sku.overrides?.sellerTier, sku.effectiveConfig?.platform, dirty]);
-  useEffect(() => { if (detailsOpen) closeButton.current?.focus(); }, [detailsOpen]);
+  }, [sku.id, sku.name, sku.productFacts, sku.facts, sku.productStyle, sku.brief, sku.overrides?.platform, sku.overrides?.market, sku.effectiveConfig?.platform, sku.effectiveConfig?.market, dirty]);
 
-  const label = draft.name.trim() || "未命名商品";
-  const status = sku.preparationStatus ?? "pending";
-  const blocked = sku.analysisSnapshot?.readiness?.code;
-  const effective = sku.effectiveConfig;
-  const source = (value: string | null | undefined) => value ? "已单独设置" : "跟随项目";
-  const submit = async (next = draft, resetAllOverrides = false) => {
+  const submit = async () => {
     const payload: ClusterUpdateInput = {};
-    const nextSellerTier = (next.platform || effective?.platform) === "tiktok" ? "" : next.sellerTier;
-    const savedSellerTier = (savedDraft.platform || effective?.platform) === "tiktok" ? "" : savedDraft.sellerTier;
-    if (next.name !== savedDraft.name) payload.name = next.name;
-    if (next.brief !== savedDraft.brief) payload.prompt_override = next.brief;
-    if (resetAllOverrides || next.platform !== savedDraft.platform) payload.platform_override = next.platform || null;
-    if (resetAllOverrides || next.market !== savedDraft.market) payload.market_override = next.market || null;
-    if (resetAllOverrides || nextSellerTier !== savedSellerTier) payload.seller_tier_override = nextSellerTier ? nextSellerTier as "general" | "mall" : null;
+    if (draft.name !== savedDraft.name) payload.name = draft.name;
+    if (draft.productFacts !== savedDraft.productFacts) payload.product_facts = draft.productFacts;
+    if (draft.productStyle !== savedDraft.productStyle) payload.prompt_override = draft.productStyle;
+    if (draft.platform !== savedDraft.platform) payload.platform_override = draft.platform;
+    if (draft.market !== savedDraft.market) payload.market_override = draft.market;
     if (!Object.keys(payload).length) return;
     setSaving(true);
     setSaveError("");
     try {
       const result = await onSave(payload, currentVersion);
       setCurrentVersion(result.version);
-      setSavedDraft(next);
+      setSavedDraft(draft);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setSaveError("商品信息已更新，请保留修改后重试");
         void onReload();
-      } else {
-        setSaveError(error instanceof Error ? error.message : "保存失败，请重试");
-      }
+      } else setSaveError(error instanceof Error ? error.message : "保存失败，请重试");
     } finally {
       setSaving(false);
     }
-  };
-  const resetOverrides = () => {
-    const next = { ...draft, platform: "", market: "", sellerTier: "" };
-    setDraft(next);
-    void submit(next, true);
   };
   const savePrompt = async (payload: ClusterUpdateInput) => {
-    setSaving(true);
-    setSaveError("");
-    try {
-      const result = await onSave(payload, currentVersion);
-      setCurrentVersion(result.version);
-      return result;
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        setSaveError("商品信息已更新，请保留修改后重试");
-        void onReload();
-      } else {
-        setSaveError(error instanceof Error ? error.message : "保存失败，请重试");
-      }
-      throw error;
-    } finally {
-      setSaving(false);
-    }
+    const result = await onSave(payload, currentVersion);
+    setCurrentVersion(result.version);
+    return result;
   };
+  const style = draggable.transform ? { transform: `translate3d(${draggable.transform.x}px, ${draggable.transform.y}px, 0)` } : undefined;
+  const setCardRef = (node: HTMLElement | null) => { draggable.setNodeRef(node); droppable.setNodeRef(node); };
 
-  return <article ref={setNodeRef} className={`surface product-card aspect-square min-w-0 overflow-hidden ${isOver ? "ring-2 ring-indigo-500" : ""}`}>
-    <div className="relative h-[58%] bg-slate-100">
-      {assets.length > 1 && <span className="absolute inset-x-3 bottom-1 top-3 rounded-xl border border-slate-300 bg-slate-200" />}
-      {assets[0]?.imageUrl ? <img className={assets.length > 1 ? "relative h-[calc(100%-0.75rem)] w-[calc(100%-0.75rem)] object-cover" : "relative size-full object-cover"} src={assets[0].imageUrl} alt="商品参考图" /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
-      {assets.length > 1 && <span className="absolute bottom-3 left-3 rounded-full bg-slate-950/80 px-2.5 py-1 text-xs font-semibold text-white">共 {assets.length} 张</span>}
-      <label className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm"><input aria-label={`生成 ${label}`} className="size-4" type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} />生成</label>
-    </div>
-    <div className="flex h-[42%] min-h-0 flex-col gap-1.5 p-3">
-      <input aria-label="商品名称" className="h-8 min-h-0 font-semibold" value={draft.name} placeholder="可不填，AI 将根据图片识别" onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-      <p className="truncate text-xs text-slate-500">{effective?.platform || "未设置平台"} · {effective?.market || "未设置国家"} · {effective?.sellerTier === "mall" ? "Mall" : "普通店"}</p>
-      <div className="mt-auto flex items-center justify-between gap-2 text-xs"><span className={status === "blocked" ? "font-semibold text-amber-700" : "text-slate-500"}>{status === "blocked" ? blockedText[blocked ?? ""] ?? "请查看商品详情后处理" : statusText[status] ?? status}</span><button className="text-sm font-semibold text-indigo-700" type="button" onClick={() => setDetailsOpen(true)}>更多设置</button></div>
-    </div>
-    {detailsOpen && <ProductDetails closeButton={closeButton} label={label} sku={sku} assets={assets} mergeableAssets={mergeableAssets} draft={draft} effective={effective} saving={saving || disabled} saveError={saveError} onDraft={setDraft} onSave={() => void submit()} onReset={resetOverrides} onPromptSave={savePrompt} onMerge={onMerge} onDeleteAsset={onDeleteAsset} onDelete={onDelete} onClose={() => setDetailsOpen(false)} source={source} />}
-  </article>;
+  return <div className={expanded ? "product-card-expanded-row" : "min-w-0"} data-expanded-product={expanded ? sku.id : undefined}>
+    <article
+      ref={setCardRef}
+      style={style}
+      {...draggable.listeners}
+      {...draggable.attributes}
+      data-dnd-activator
+      role="group"
+      aria-label={`${label} 商品卡片（可拖拽合并）`}
+      className={`surface product-card aspect-square min-w-0 overflow-hidden ${droppable.isOver ? "ring-2 ring-indigo-500" : ""}`}
+      onClick={(event) => { if (!(event.target as HTMLElement).closest("input,select,textarea,button,summary,a")) onOpen(); }}
+    >
+      <div className="relative h-[42%] bg-slate-100">
+        {assets.length > 1 && <span className="absolute inset-x-3 bottom-1 top-3 rounded-xl border border-slate-300 bg-slate-200" />}
+        {assets[0]?.imageUrl ? <img className="relative size-full object-cover" src={assets[0].imageUrl} alt={`${label} 商品参考图`} /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
+        <span className="absolute bottom-2 left-2 rounded-full bg-slate-950/80 px-2 py-1 text-xs font-semibold text-white">{assets.length > 1 ? `堆叠 ${assets.length} 张` : `${assets.length} 张`}</span>
+        <label className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm"><input aria-label={`选择 ${label}`} className="size-4" type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} />选择</label>
+      </div>
+      <div className="flex h-[58%] min-h-0 flex-col gap-1 overflow-y-auto p-2.5">
+        <input aria-label={`商品名称 ${label}`} className="h-8 min-h-8 font-semibold" value={draft.name} placeholder="可不填，预备生成时识别" onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void submit()} />
+        {nameSourceText && <p className="text-[11px] text-slate-500">{nameSourceText}</p>}
+        <div className="grid grid-cols-2 gap-1.5">
+          <select aria-label={`商品平台 ${label}`} className="h-8 min-h-8 py-1 text-xs" value={draft.platform} onChange={(event) => setDraft({ ...draft, platform: event.target.value })} onBlur={() => void submit()}>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select>
+          <span><input aria-label={`商品市场 ${label}`} className="h-8 min-h-8 py-1 text-xs" list={`product-market-options-${sku.id}`} value={marketLabel(draft.market)} onChange={(event) => setDraft({ ...draft, market: marketValue(event.target.value) })} onBlur={() => void submit()} /><datalist id={`product-market-options-${sku.id}`}>{[...commonMarkets, ...extraMarkets].map(([code, text]) => <option key={code} value={text} />)}</datalist></span>
+        </div>
+        <textarea aria-label={`创意 Brief ${label}`} className="min-h-12 resize-none py-1.5 text-xs" value={draft.productFacts} placeholder="补充材质、功能或使用要求" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void submit()} />
+        <details className="rounded-lg bg-slate-50 px-2 py-1">
+          <summary className="cursor-pointer text-xs font-medium text-slate-600">单品风格（选填）</summary>
+          <textarea aria-label={`单品风格 ${label}`} className="mt-1 min-h-12 resize-none py-1.5 text-xs" value={draft.productStyle} onChange={(event) => setDraft({ ...draft, productStyle: event.target.value })} onBlur={() => void submit()} />
+        </details>
+        {saveError && <p className="text-xs text-amber-700">{saveError}</p>}
+        <div className="mt-auto flex items-center justify-between gap-2 text-xs"><span className="truncate text-slate-600">{progressText(sku)}</span><button className="shrink-0 font-semibold text-indigo-700" type="button" onClick={onOpen}>查看 {label} 详情</button></div>
+      </div>
+    </article>
+    {expanded && <section className="surface product-card-expanded-detail min-w-0 overflow-y-auto p-5" role="region" aria-label={`${label} 商品详情`}>
+      <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品身份、事实与 1+8 Prompt</p><h2 className="mt-1 text-xl font-semibold">{label}</h2><p className="mt-1 text-sm text-slate-500">{platformLabel(draft.platform)} · {marketLabel(draft.market)}</p></div><button className="secondary-button" type="button" onClick={onClose}>收起</button></div>
+      <div className="mt-4 flex flex-wrap gap-3">{assets.map((asset, index) => <DraggableAsset key={asset.id} asset={asset} index={index} disabled={saving || disabled} onDelete={() => onDeleteAsset(asset.id)} />)}</div>
+      <IdentitySummary sku={sku} />
+      <PromptEditor sku={sku} onSave={savePrompt} disabled={saving || disabled} />
+      <button className="mt-4 text-sm font-semibold text-rose-700" type="button" disabled={saving || disabled} onClick={() => { if (window.confirm(`删除“${label}”？有历史结果时只会归档。`)) onDelete(); }}>删除商品</button>
+    </section>}
+  </div>;
 }
 
-function ProductDetails({ closeButton, label, sku, assets, mergeableAssets, draft, effective, saving, saveError, onDraft, onSave, onReset, onPromptSave, onMerge, onDeleteAsset, onDelete, onClose, source }: { closeButton: React.RefObject<HTMLButtonElement | null>; label: string; sku: ProductSku; assets: ProductAsset[]; mergeableAssets: ProductAsset[]; draft: Draft; effective?: ProductSku["effectiveConfig"]; saving?: boolean; saveError: string; onDraft: (next: Draft) => void; onSave: () => void; onReset: () => void; onPromptSave: (payload: ClusterUpdateInput) => Promise<ClusterUpdateResult>; onMerge: (assetId: string) => void; onDeleteAsset: (assetId: string) => void; onDelete: () => void; onClose: () => void; source: (value: string | null | undefined) => string }) {
-  useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; document.addEventListener("keydown", close); return () => document.removeEventListener("keydown", close); }, [onClose]);
-  const sellerText = effective?.sellerTier === "mall" ? "Mall" : "普通店";
-  const sellerSource = effective?.platform === "tiktok" ? "平台规则固定" : source(sku.overrides?.sellerTier);
-  const tiktok = (draft.platform || effective?.platform) === "tiktok";
-  return <div className="fixed inset-0 z-40 bg-slate-950/20" role="presentation" onMouseDown={onClose}><aside aria-label={`${label} 商品详情`} aria-modal="true" className="absolute inset-y-0 right-0 w-full max-w-lg overflow-y-auto bg-white p-6 shadow-2xl" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
-    <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品详情与 Prompt</p><h2 className="mt-1 text-xl font-semibold text-slate-950">{label}</h2></div><button ref={closeButton} className="secondary-button" type="button" onClick={onClose}>关闭</button></div>
-    <div className="mt-5 rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><p>平台：{effective?.platform || "未设置"}（{source(sku.overrides?.platform)}）</p><p className="mt-1">国家：{effective?.market || "未设置"}（{source(sku.overrides?.market)}）</p><p className="mt-1">店铺类型：{sellerText}（{sellerSource}）</p></div>
-    <label className="mt-5 block text-sm font-medium text-slate-700">平台<select aria-label="商品平台" className="mt-2" value={draft.platform} onChange={(event) => onDraft({ ...draft, platform: event.target.value })}><option value="">跟随项目</option><option value="shopee">Shopee</option><option value="tiktok">TikTok Shop</option></select></label>
-    <label className="mt-4 block text-sm font-medium text-slate-700">国家/站点<input aria-label="商品国家" className="mt-2" value={draft.market} placeholder={effective?.market || "跟随项目"} onChange={(event) => onDraft({ ...draft, market: event.target.value.toUpperCase() })} /></label>
-    <label className="mt-4 block text-sm font-medium text-slate-700">补充信息<textarea aria-label="商品补充信息" className="mt-2" value={draft.brief} placeholder="材质、功能、消费者或特别要求" onChange={(event) => onDraft({ ...draft, brief: event.target.value })} /></label>
-    {tiktok ? <p className="mt-4 text-sm text-slate-600">TikTok Shop 店铺类型固定为普通店，不能单独修改。</p> : <label className="mt-4 block text-sm font-medium text-slate-700">店铺类型<select aria-label="商品店铺类型" className="mt-2" value={draft.sellerTier} onChange={(event) => onDraft({ ...draft, sellerTier: event.target.value })}><option value="">跟随项目</option><option value="general">普通店</option><option value="mall">Mall</option></select></label>}
-    {saveError && <p className="mt-3 text-sm text-amber-700">{saveError}</p>}
-    <div className="mt-4 flex flex-wrap gap-2"><button className="primary-button" type="button" disabled={saving} onClick={onSave}>保存修改</button>{(sku.overrides?.platform || sku.overrides?.market || sku.overrides?.sellerTier || draft.platform || draft.market || draft.sellerTier) && <button className="secondary-button" type="button" disabled={saving} onClick={onReset}>恢复跟随项目</button>}</div>
-    <div className="mt-5"><p className="text-sm font-semibold text-slate-700">参考图片</p><div className="mt-3 flex flex-wrap gap-3">{assets.map((asset, index) => <DraggableAsset key={asset.id} asset={asset} index={index} disabled={saving} onDelete={() => onDeleteAsset(asset.id)} />)}</div></div>
-    {mergeableAssets.length > 0 && <div className="mt-5"><p className="text-sm font-semibold text-slate-700">添加已有图片</p>{mergeableAssets.map((asset, index) => <button className="mt-2 mr-3 text-sm font-semibold text-indigo-700" disabled={saving} key={asset.id} onClick={() => onMerge(asset.id)}>合并未分配图片 {index + 1}</button>)}</div>}
-    <div className="mt-6 border-t border-slate-100 pt-5"><PromptEditor sku={sku} onSave={onPromptSave} disabled={saving} /><button className="mt-4 text-sm font-semibold text-rose-700" type="button" disabled={saving} onClick={() => { if (window.confirm(`删除“${label}”？有历史结果时只会归档。`)) onDelete(); }}>删除商品</button></div>
-  </aside></div>;
+function IdentitySummary({ sku }: { sku: ProductSku }) {
+  const identity = sku.identity;
+  const profile = identity?.product_profile;
+  const lock = identity?.identity_lock;
+  if (!identity || (!profile?.category && !profile?.primary_appearance && !lock?.must_not_change?.length)) return null;
+  return <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4" role="region" aria-label="商品身份卡"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-slate-800">商品身份卡</h3>{typeof identity.confidence === "number" && <span className="text-xs text-slate-500">识别置信度 {Math.round(identity.confidence * 100)}%</span>}</div><dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">{identity.product_name && <div><dt className="text-xs text-slate-500">商品名称</dt><dd>{identity.product_name}</dd></div>}{profile?.category && <div><dt className="text-xs text-slate-500">商品类别</dt><dd>{profile.category}</dd></div>}{profile?.primary_appearance && <div><dt className="text-xs text-slate-500">主要外观</dt><dd>{profile.primary_appearance}</dd></div>}{profile?.shared_structure?.length ? <div><dt className="text-xs text-slate-500">共同结构</dt><dd>{profile.shared_structure.join("、")}</dd></div> : null}{lock?.must_not_change?.length ? <div className="sm:col-span-2"><dt className="text-xs text-slate-500">不可改变</dt><dd>{lock.must_not_change.join("、")}</dd></div> : null}</dl></section>;
 }
 
 function DraggableAsset({ asset, index, onDelete, disabled }: { asset: ProductAsset; index: number; onDelete: () => void; disabled?: boolean }) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: asset.id, disabled });
-  const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
-  return <div className="relative size-20 shrink-0"><button ref={setNodeRef} style={style} {...listeners} {...attributes} aria-label={`拖拽商品参考图 ${index + 1}`} className="size-20 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">{asset.imageUrl ? <img className="size-full object-cover" src={asset.imageUrl} alt={`商品参考图 ${index + 1}`} /> : <span className="grid size-full place-items-center text-xs text-slate-400">待预览</span>}</button><button aria-label={`删除商品参考图 ${index + 1}`} className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-slate-950 text-xs text-white" type="button" disabled={disabled} onClick={(event) => { event.stopPropagation(); if (window.confirm(`删除第 ${index + 1} 张商品参考图？`)) onDelete(); }}>×</button></div>;
+  const draggable = useDraggable({ id: `asset:${asset.id}`, data: { type: "asset", assetId: asset.id }, disabled });
+  const style = draggable.transform ? { transform: `translate3d(${draggable.transform.x}px, ${draggable.transform.y}px, 0)` } : undefined;
+  return <div className="relative size-20 shrink-0"><button ref={draggable.setNodeRef} style={style} {...draggable.listeners} {...draggable.attributes} data-dnd-activator aria-label={`拖拽商品参考图 ${index + 1}`} className="size-20 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">{asset.imageUrl ? <img className="size-full object-cover" src={asset.imageUrl} alt={`商品参考图 ${index + 1}`} /> : <span className="grid size-full place-items-center text-xs text-slate-400">待预览</span>}</button><button aria-label={`删除商品参考图 ${index + 1}`} className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-slate-950 text-xs text-white" type="button" disabled={disabled} onClick={() => { if (window.confirm(`删除第 ${index + 1} 张商品参考图？`)) onDelete(); }}>×</button></div>;
 }

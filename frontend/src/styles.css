@@ -36,4 +36,8 @@
   .result-preview img { @apply h-full w-full object-cover; }
   .product-card-grid { @apply grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(230px,1fr))]; }
   .product-card { @apply min-w-0; }
+  .product-card-expanded-row { @apply col-span-full grid min-w-0 gap-4 md:grid-cols-[minmax(230px,1fr)_minmax(0,3fr)]; }
+  .product-card-expanded-detail { @apply max-h-[min(760px,80vh)]; }
+  .toolbar-choice { @apply inline-flex min-h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:border-indigo-200 hover:bg-indigo-50; }
+  .toolbar-choice-active { @apply border-indigo-500 bg-indigo-50 text-indigo-700; }
 }

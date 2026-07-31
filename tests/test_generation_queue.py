@@ -517,7 +517,7 @@ def test_generation_references_follow_n2_white_and_marketing_order(
     n7_by_id = {
         snapshot["snapshot_id"]: snapshot
         for snapshot in cluster.analysis_snapshot["prompt_os"]
-        if snapshot["node_id"] == "N7"
+        if snapshot["node_id"].startswith("N7")
     }
     for generation in (hero, detail):
         gate = generation.prompt_version.evaluation["rule_gate"]
@@ -1120,7 +1120,7 @@ def test_duplicate_n9_retry_rolls_back_orphan_prompt_and_n7(
         [
             snapshot
             for snapshot in cluster.analysis_snapshot["prompt_os"]
-            if snapshot["node_id"] == "N7"
+            if snapshot["node_id"].startswith("N7")
         ]
     )
 
@@ -1133,7 +1133,7 @@ def test_duplicate_n9_retry_rolls_back_orphan_prompt_and_n7(
         [
             snapshot
             for snapshot in cluster.analysis_snapshot["prompt_os"]
-            if snapshot["node_id"] == "N7"
+            if snapshot["node_id"].startswith("N7")
         ]
     ) == n7_count
     assert cluster.generations.exclude(id=source.id).get().id == first.id

@@ -220,7 +220,7 @@ def test_upload_api_merges_txt_by_relative_path_before_image_preparation(client,
     assert response.status_code == 200
     batch.refresh_from_db()
     assert batch.global_prompt == "自然日光\n\n暖色木质"
-    assert batch.clusters.get().preparation_status == "pending"
+    assert batch.clusters.get().preparation_status == "draft"
 
 
 def test_snapshot_includes_cluster_and_generation_state(client, tmp_path, settings):
@@ -342,6 +342,9 @@ def test_project_generate_api_isolates_queued_waiting_and_blocked_products(
     ]
     ready, pending, preparing, blocked, failed, invalid_ready = clusters
     approve_view_prompt(ready, user, slot)
+    Cluster.objects.filter(id=pending.id).update(
+        preparation_status=Cluster.PreparationStatus.PENDING
+    )
     Cluster.objects.filter(id=preparing.id).update(
         preparation_status=Cluster.PreparationStatus.PREPARING
     )
@@ -424,13 +427,13 @@ def test_legacy_confirm_endpoint_cannot_bypass_prompt_preparation(
     assert response.json()["items"] == [
         {
             "cluster_id": str(cluster.id),
-            "status": "waiting",
-            "code": "preparation_in_progress",
-            "message": "Product preparation will queue generation automatically.",
+            "status": "blocked",
+            "code": "prompt_not_ready",
+            "message": "Product Prompt OS preparation is not ready",
         }
     ]
     cluster.refresh_from_db()
-    assert cluster.auto_generate is True
+    assert cluster.auto_generate is False
     assert batch.generations.count() == 0
 
 
@@ -457,6 +460,10 @@ def test_project_generate_keeps_record_intent_database_error_local(
         for index in range(2)
     ]
     failed_id = clusters[0].id
+    from platform_app.models import Cluster
+    Cluster.objects.filter(id__in=[cluster.id for cluster in clusters]).update(
+        preparation_status=Cluster.PreparationStatus.PENDING
+    )
 
     def record_with_one_failure(cluster):
         if cluster.id == failed_id:
@@ -522,15 +529,11 @@ def test_update_cluster_prompt_requires_current_version(client, tmp_path, settin
         content_type="application/json",
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 400
     cluster.refresh_from_db()
-    assert cluster.prompt_override == "new prompt"
-    assert cluster.version == 2
-    prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
-    assert [item.output_slot_id for item in prompts] == [first_slot.id, second_slot.id]
-    assert "Standard product hero:" in prompts[0].prompt_text
-    assert prompts[1].prompt_text == "Close product detail in soft daylight"
-    assert all(item.structured_output["manual_edit"] is True for item in prompts)
+    assert cluster.prompt_override == ""
+    assert cluster.version == 1
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0
 
 
 def test_update_cluster_accepts_editor_fields_and_requeues_blocked_preparation(client, tmp_path, settings):
@@ -568,7 +571,8 @@ def test_update_cluster_accepts_editor_fields_and_requeues_blocked_preparation(c
     assert cluster.product_name == "绿色陶瓷马克杯"
     assert cluster.relation_type == "same_product"
     assert cluster.prompt_override == "自然日光家居风"
-    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.preparation_status == Cluster.PreparationStatus.DRAFT
+    assert cluster.auto_generate is False
     assert cluster.preparation_error == ""
 
 

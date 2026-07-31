@@ -8,11 +8,12 @@ from io import BytesIO
 from io import StringIO
 from pathlib import Path, PurePosixPath
 
+from django.conf import settings
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
 from django.middleware.csrf import get_token
-from django.db import connection
+from django.db import connection, transaction
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -20,10 +21,11 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.http import require_POST
 
 from .forms import ERPAuthenticationForm, FirstPasswordChangeForm
-from .models import Asset, AuditEvent, Batch, Cluster, Generation, ResultAsset
+from .models import Asset, AuditEvent, Batch, Cluster, Generation, PromptNodeTemplate, ResultAsset
 from .services import (
     CatalogAuthExpired,
     archive_or_delete_cluster,
+    cluster_preparation_is_current,
     create_project,
     ensure_cluster_generations,
     generation_failure_message,
@@ -35,6 +37,7 @@ from .services import (
     preflight_batch,
     record_cluster_auto_generate,
     register_uploaded_asset,
+    request_cluster_preparation,
     regenerate_generation,
     remove_asset_from_cluster,
     optimize_cluster_prompt,
@@ -198,7 +201,14 @@ def api_workspace_snapshot(request):
     queryset = Batch.objects.select_related("output_template").order_by("-updated_at", "-id")
     if not request.user.is_platform_admin:
         queryset = queryset.filter(owner=request.user)
-    return JsonResponse({"projects": [_serialize_project(batch) for batch in queryset]})
+    return JsonResponse(
+        {
+            "currentUser": {
+                "role": "admin" if request.user.is_platform_admin else "operator"
+            },
+            "projects": [_serialize_project(batch) for batch in queryset],
+        }
+    )
 
 
 @login_required
@@ -219,6 +229,61 @@ def api_project_settings(request, batch_id):
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     return JsonResponse(_serialize_project(batch))
+
+
+@login_required
+@password_change_required
+@require_POST
+def api_project_prepare(request, batch_id):
+    batch = _batch_for_user(request.user, batch_id)
+    try:
+        payload = json.loads(request.body or "{}")
+        cluster_ids = payload.get("cluster_ids") if isinstance(payload, dict) else None
+        if not isinstance(cluster_ids, list) or not cluster_ids:
+            raise ValueError("cluster_ids must be a non-empty array")
+        if any(not isinstance(cluster_id, str) for cluster_id in cluster_ids):
+            raise ValueError("cluster_ids must contain strings")
+    except (ValueError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    clusters = {
+        str(cluster.id): cluster
+        for cluster in batch.clusters.filter(
+            id__in=cluster_ids,
+            archived_at__isnull=True,
+        )
+    }
+    items = []
+    for cluster_id in dict.fromkeys(cluster_ids):
+        cluster = clusters.get(cluster_id)
+        if cluster is None:
+            items.append(
+                {
+                    "cluster_id": cluster_id,
+                    "status": "blocked",
+                    "stage": "blocked",
+                    "code": "cluster_not_found",
+                }
+            )
+        elif cluster_preparation_is_current(cluster):
+            items.append(
+                {
+                    "cluster_id": cluster_id,
+                    "status": "already_ready",
+                    "stage": "ready",
+                }
+            )
+        else:
+            if cluster.preparation_status != Cluster.PreparationStatus.PREPARING:
+                cluster = request_cluster_preparation(cluster, auto_generate=False)
+            items.append(
+                {
+                    "cluster_id": cluster_id,
+                    "status": "queued",
+                    "stage": cluster.preparation_stage,
+                }
+            )
+    return JsonResponse({"items": items})
 
 
 @login_required
@@ -308,7 +373,7 @@ def api_sku_import(request, batch_id):
 
 @login_required
 @password_change_required
-@require_http_methods(["POST", "DELETE"])
+@require_http_methods(["POST", "PATCH", "DELETE"])
 def api_update_cluster(request, cluster_id):
     from .models import Cluster
 
@@ -332,6 +397,94 @@ def api_update_cluster(request, cluster_id):
         status = 409 if "changed; refresh" in str(exc) else 400
         return JsonResponse({"error": str(exc)}, status=status)
     return JsonResponse({"id": str(cluster.id), "version": cluster.version})
+
+
+def _serialize_prompt_node(template):
+    node_family, _, suffix = template.node_name.partition(".")
+    return {
+        "id": str(template.id),
+        "node_name": template.node_name,
+        "version": template.version,
+        "status": template.status,
+        "instruction": template.instruction,
+        "user_message_template": template.user_message_template,
+        "output_schema": template.output_schema,
+        "model": (
+            settings.APIMART_VISION_MODEL
+            if node_family == "N1"
+            else settings.APIMART_PROMPT_MODEL
+        ),
+        "platform_scope": suffix if suffix in {"generic", "shopee", "tiktok"} else "shared",
+        "created_at": template.created_at.isoformat(),
+        "updated_at": template.updated_at.isoformat(),
+    }
+
+
+@login_required
+@password_change_required
+@require_http_methods(["GET", "POST"])
+def api_admin_prompt_nodes(request):
+    if not request.user.is_platform_admin:
+        return JsonResponse({"error": "platform administrator required"}, status=403)
+    if request.method == "GET":
+        templates = PromptNodeTemplate.objects.order_by("node_name", "-updated_at", "-id")
+        return JsonResponse({"nodes": [_serialize_prompt_node(item) for item in templates]})
+    try:
+        payload = json.loads(request.body or "{}")
+        if not isinstance(payload, dict):
+            raise TypeError("request body must be an object")
+        node_name = str(payload.get("node_name") or "").strip()
+        version = str(payload.get("version") or "").strip()
+        instruction = str(payload.get("instruction") or "").strip()
+        user_message_template = payload.get("user_message_template", "")
+        output_schema = payload.get("output_schema")
+        if not node_name or not version or not instruction:
+            raise ValueError("node_name, version, and instruction are required")
+        if not isinstance(user_message_template, str):
+            raise TypeError("user_message_template must be a string")
+        if not isinstance(output_schema, dict):
+            raise TypeError("output_schema must be an object")
+        template = PromptNodeTemplate.objects.create(
+            node_name=node_name,
+            version=version,
+            instruction=instruction,
+            user_message_template=user_message_template,
+            output_schema=output_schema,
+            status=PromptNodeTemplate.Status.DRAFT,
+        )
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(_serialize_prompt_node(template), status=201)
+
+
+@login_required
+@password_change_required
+@require_POST
+@transaction.atomic
+def api_admin_prompt_nodes_publish(request):
+    if not request.user.is_platform_admin:
+        return JsonResponse({"error": "platform administrator required"}, status=403)
+    try:
+        payload = json.loads(request.body or "{}")
+        if not isinstance(payload, dict):
+            raise TypeError("request body must be an object")
+        node_name = str(payload.get("node_name") or "").strip()
+        version = str(payload.get("version") or "").strip()
+        template = PromptNodeTemplate.objects.select_for_update().get(
+            node_name=node_name,
+            version=version,
+        )
+        PromptNodeTemplate.objects.filter(
+            node_name=node_name,
+            status=PromptNodeTemplate.Status.PUBLISHED,
+        ).exclude(id=template.id).update(status=PromptNodeTemplate.Status.RETIRED)
+        template.status = PromptNodeTemplate.Status.PUBLISHED
+        template.save(update_fields=["status", "updated_at"])
+    except PromptNodeTemplate.DoesNotExist:
+        return JsonResponse({"error": "prompt node version not found"}, status=404)
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(_serialize_prompt_node(template))
 
 
 @login_required

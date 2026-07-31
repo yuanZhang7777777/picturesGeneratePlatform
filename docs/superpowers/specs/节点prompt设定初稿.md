@@ -1,8 +1,8 @@
-# Prompt OS v2 九节点可执行规格
+# Prompt OS v3 九节点与平台变体可执行规格
 
 ## 1. 目标与边界
 
-本文定义 AI 商品出图平台的九个生产节点、节点间 JSON 契约、核心系统提示词、失败处理和不可变快照。它是 Prompt 模板与后端实现的共同规格，不是给普通员工阅读的操作手册。
+本文定义 AI 商品出图平台的九个生产节点、平台变体、节点间 JSON 契约、系统提示词行为边界、失败处理和不可变快照。它是 Prompt 模板与后端实现的共同规格，不是给普通员工阅读的操作手册。
 
 默认产物为：
 
@@ -24,7 +24,27 @@ Shopee VN 普通店是唯一已发布的顺序例外：槽位 01 为真实上传
 
 任一模型未开通、模型 ID 未知或账户契约不匹配时，关闭依赖节点，不切换其他模型。APIMart 中文文档和当前账户契约测试是端点、参数、响应、限流和计费的唯一接入依据。
 
-当前生产核心提示词版本为 `2.1.0`。N1–N9 使用本规格各节点的完整“核心系统提示词”，不得以一句职责摘要替代；DeepSeek 节点把完整内容作为 Chat Completions 的 `system` 消息发送。`3500` 字符上限只约束 N4、N6、N8、N9 最终提交给 `gpt-image-2` 的单图 Prompt，不约束节点系统提示词。
+当前生产核心提示词版本为 `3.0.0`。发布集合是共享 `N1/N2/N3/N4/N8/N9`，以及 `N5/N6/N7` 的 `generic`、`shopee`、`tiktok` 三组平台变体，共 15 个 `PromptNodeTemplate`。运行时把数据库中已发布模板的完整 instruction 原样作为 system 消息发送；种子与严格 JSON Schema 的唯一可执行源是 `platform_app/prompt_templates_v3.py`，seed 不复制或截断内容。本文描述节点契约和行为边界，不能用其中的章节摘要替代已发布 system prompt。`3500` 字符上限只约束 N4、N6、N8、N9 最终提交给 `gpt-image-2` 的单图 Prompt，不约束节点 system prompt。
+
+所有 v3 `output_schema` 均为严格 JSON Schema：顶层 `type=object`、`additionalProperties=false`，`required` 与顶层 `properties` 完全一致；嵌套业务对象同样禁止额外字段。首次 JSON 或 Schema 失败只允许使用相同业务输入修复一次，第二次失败即停止当前节点，不用空对象或摘要兜底。
+
+每个已发布模板还必须保存非空 `user_message_template`。该模板列出本节点实际输入键，并使用 `{{input_json}}` 承接不可变结构化输入；运行绑定哈希同时覆盖 system instruction、user message template 和 output schema，三者任一变化都形成新的模板内容快照。管理员提示词中心展示的用户消息必须与运行绑定完全相同，不能只显示一个未参与快照的说明字段。
+
+v3 当前运行输入以 `platform_app/services.py` 实际组装的 payload 为准，模板不得虚构规格层包装对象：
+
+| 节点 | 实际输入键 |
+| --- | --- |
+| N1 | `asset_id, asset_kind, product_name, confirmed_points`；图片走视觉输入 |
+| N2 | `product_name, confirmed_points, relation_type, observations, max_supporting_images` |
+| N3 | `product_name, confirmed_points, product_profile, identity_lock, owned_observations, market_context` |
+| N4 | `slot_order, role, product_name, product_profile, identity_lock, fact_ledger, primary_asset_id, supporting_asset_ids, resolved_rule_directives, rule_refs, size, resolution, prompt_limits` |
+| N5.* | `product_name, product_profile, identity_lock, fact_ledger, slots, market_context, seed_style` |
+| N6.* | `slot_order, slot_plan, product_name, product_profile, identity_lock, fact_ledger, market_context, primary_asset_id, supporting_asset_ids, resolved_rule_directives, rule_refs, size, resolution, prompt_limits` |
+| N7.* | `slot_order, prompt, rule_snapshot, marketing_plan, reference_snapshot, structural_asset_id, prompt_node_template, image_request, lineage` |
+| N8 | `source_generation_id, current_prompt, identity_lock, fact_ledger, rule_snapshot, review` |
+| N9 | `failure_class, provider_message_sanitized, original_prompt, identity_lock, fact_ledger, rule_snapshot, max_simplification_attempts` |
+
+严格输出包络同样跟随运行 normalizer：N1 包含候选商品名及置信度；N2 包含最终 `product_name/conflict_state`；N5 顶层为 `plans`，每项使用 `slot_order/scene_family/environment/camera` 等运行字段；N7 与确定性闸门结果字段一致；N8 输出最小 `edit_region/edit_image/blocked_change` 差量对象。
 
 ### 1.2 九节点总流程
 
@@ -33,8 +53,8 @@ Shopee VN 普通店是唯一已发布的顺序例外：槽位 01 为真实上传
   → N1 逐图观察
   → N2 身份归并
   → N3 推断台账
-  ├→ N4 白底编译器 → N7 规则闸门 → gpt-image-2 → 白底归档
-  └→ N5 八图营销导演 → N6 本地化单槽编译器 → N7 规则闸门
+  ├→ N4 白底编译器 → N7.<platform> 规则闸门 → gpt-image-2 → 白底归档
+  └→ N5.<platform> 八图营销导演 → N6.<platform> 本地化单槽编译器 → N7.<platform>
                                                 ↓ 白底成功后
                                            gpt-image-2
 
@@ -42,7 +62,7 @@ Shopee VN 普通店是唯一已发布的顺序例外：槽位 01 为真实上传
 可简化的生成失败 → N9 失败简化器 → N7 → gpt-image-2 → 新 attempt
 ```
 
-N1/N2 不依赖市场配置，可以在项目首次配置前完成。N3–N7、营销策划和任何付费调用必须等待平台与国家已确认。营销槽位可以在白底图完成前编译并通过规则闸门，但不得提交 `gpt-image-2`。白底图归档后，营销图参考数组额外加入该白底结果。默认模板的营销槽位为 02–09；Shopee VN 普通店为 03–09。
+N1/N2 不依赖市场配置，可以在项目首次配置前完成。N3/N4 共享；N5/N6/N7 按项目平台选择 `.generic`、`.shopee` 或 `.tiktok`，不得跨平台回退。营销策划和任何付费调用必须等待平台与国家已确认。营销槽位可以在白底图完成前编译并通过规则闸门，但不得提交 `gpt-image-2`。白底图归档后，营销图参考数组额外加入该白底结果。默认模板的营销槽位为 02–09；Shopee VN 普通店为 03–09。
 
 ### 1.3 不可破坏的生产约束
 
@@ -71,9 +91,9 @@ N1/N2 不依赖市场配置，可以在项目首次配置前完成。N3–N7、�
   "cluster_id": 0,
   "slot_id": null,
   "node_id": "N1",
-  "node_version": "2.1.0",
-  "schema_version": "2.0.0",
-  "prompt_template_version": "2.1.0",
+  "node_version": "3.0.0",
+  "schema_version": "3.0.0",
+  "prompt_template_version": "3.0.0",
   "model_id": "gpt-5-nano-2025-08-07",
   "model_contract_version": "apimart-account-contract-2026-07-30",
   "temperature": null,
@@ -306,7 +326,7 @@ N4 和 N6 只接收当前槽位的 `resolved_rules[].rule_id` 与精简 `prompt_
 }
 ```
 
-### 3.4 核心系统提示词
+### 3.4 系统提示词行为摘要
 
 ```text
 你是商品视觉证据观察器。一次只观察一张图片，不做身份归并、营销策划、事实推断或图片生成。
@@ -400,7 +420,7 @@ competitor_style 模式：
 
 当 `decision=continue` 时，`product_profile.category`、`product_profile.primary_appearance`、`identity_lock.must_not_change`、`primary_asset_id` 均为必填；`supporting_asset_ids` 只能是与主图互补的我方资产、最多三张。ERP 或人工名称与观察到的核心结构冲突时输出 `decision=needs_input` 并给出冲突原因，不能以名称优先绕过检查。
 
-### 4.4 核心系统提示词
+### 4.4 系统提示词行为摘要
 
 ```text
 你是商品身份归并器。根据商品名、确认资料和逐图观察结果，选择一个真实主外观并建立不可变身份锁。
@@ -463,7 +483,7 @@ competitor_style 模式：
 
 ```json
 {
-  "ledger_version": "2.0.0",
+  "ledger_version": "3.0.0",
   "facts": [
     {
       "fact_id": "fact.001",
@@ -505,7 +525,7 @@ competitor_style 模式：
 - 价格、折扣、认证、疗效、减重、美容前后对比、产地、兼容性保证、容量或精确规格、安全保证、质保和站外导流不得仅靠推断进入消费者文案。
 - 人群、生活方式和场景可合理推断，但不得把危险、受管制或专业用途商品自动改成轻松日常使用。
 
-### 5.5 核心系统提示词
+### 5.5 系统提示词行为摘要
 
 ```text
 你是商品事实与推断台账管理员。允许作合理推断，但必须显式标记 inferred，给出证据、置信度、风险和允许用途。
@@ -600,7 +620,7 @@ competitor_style 模式：
 }
 ```
 
-### 6.4 核心系统提示词
+### 6.4 系统提示词行为摘要
 
 ```text
 你是标准白底商品图编译器。只编译当前模板中语义为标准白底商品图的槽位，不策划营销场景。
@@ -635,7 +655,7 @@ competitor_style 模式：
 - `compiled_prompt_version`
 - `reference_plan_snapshot_id`
 
-## 7. N5 八图营销导演
+## 7. N5 平台化八图营销导演
 
 ### 7.1 执行器
 
@@ -644,6 +664,14 @@ competitor_style 模式：
 - 默认：为槽位 02–09 输出八个不重复计划
 
 市场模板若预占原图槽位或关闭某个营销槽位，N5 只为输入中的 `marketing_slots` 生成计划，不自行增减槽位。
+
+v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据、动态人物/宠物、五维差异化和严格输出约束，再叠加一段平台策略：
+
+- `generic`：真实 Generic/SEA 英语 1+8，不是摘要兜底；八个营销任务依次解决第二视角与结构确认、核心收益、事实证明、使用理解、细节信任、尺度或适配、规格包装或包含物、场景体验与购买收尾。
+- `shopee`：沿用上述八项决策，叠加八站生活语境与本地化交接；Shopee VN 普通店只处理模板传入的七个营销槽位。
+- `tiktok`：沿用上述八项决策，叠加移动端第一眼信息层级；禁字、禁止数字渲染或实拍要求只从已解析规则传入，不能由模型虚构。
+
+每槽必须计算 `decision_task / main_scene / environment / composition / main_action` 五维签名；任意两槽不得完全相同，相邻槽至少改变场景族、机位/景别、商品朝向、人物姿态、动作、信息层级中的三项。人物、手、儿童和宠物只在已验证使用关系需要时出现；危险或专业商品缺少安全事实时改为无人中性展示。
 
 ### 7.2 输入 JSON
 
@@ -820,7 +848,7 @@ competitor_style 模式：
 }
 ```
 
-### 7.4 核心系统提示词
+### 7.4 系统提示词行为摘要
 
 ```text
 你是八图营销导演。根据输入的槽位模板，为每个营销槽位设计一个独立购买决策任务，不生成最终图片 Prompt。
@@ -861,13 +889,14 @@ competitor_style 模式：
 - `marketing_strategy_version`
 - `slot_plan_snapshot_ids`
 
-## 8. N6 本地化单槽编译器
+## 8. N6 平台化本地化单槽编译器
 
 ### 8.1 执行器
 
 - 模型：`deepseek-v4-pro`
 - 粒度：每个营销槽位独立编译，可并行
 - 产物：本地化消费者文案和可直接交给 `gpt-image-2` 的最终 Prompt
+- 变体：`N6.generic`、`N6.shopee`、`N6.tiktok`
 
 ### 8.2 输入 JSON
 
@@ -947,9 +976,17 @@ competitor_style 模式：
 | TW | 台湾繁体中文 |
 | BR | 巴西葡萄牙语 |
 
+`N6.generic` 是独立 Generic/SEA 生产变体，消费者可见文字固定使用自然电商英语，不因 SEA 国家切换语言，也不回退到 Shopee/TikTok 模板。`N6.shopee` 使用上表八站映射；`N6.tiktok` 使用 US/SG/PH 英语、MY 马来语、TH 泰语、VN 越南语、ID 印尼语，并执行当前规则包的禁字或禁止数字渲染要求。
+
+三个变体都必须把 identity_lock 中的精确数量写成 `exactly + count + component`，对重复部件补充主体连接位与部件的一对一拓扑；真实场景必须写清人物/身体/手/宠物/安装点、接触点、朝向和受力关系。资料不足时使用不暗示用途的中性展示，不能依据外形猜测使用方式。
+
+N6 编译发生在白底结果归档前时，`completed_white_result_id` 可以为 `null`；营销图调度必须等待白底归档。最终提交 `gpt-image-2` 的参考数组固定为“已完成白底图 + 零或最多一张 N2 批准的互补结构图”，不能回传或提交全部 `supporting_asset_ids`。`reference_plan.supporting_asset_ids` 的严格 Schema 因此设置 `maxItems=1`；`primary_asset_id` 只保留身份来源追踪。
+
 员工关闭图片文字或规则禁止新增文字时，`visible_text_lines=[]`，不得为了营销完整度强行补字。
 
 ### 8.5 最终 Prompt 固定结构
+
+本节的 `3500` 字符限制只作用于 N6 输出 JSON 中最终提交 `gpt-image-2` 的单图 `prompt` 字段；N6 的 system instruction 与 user message template 不受该字符上限约束，也不得据此截断。
 
 最终 Prompt 只保留五个紧凑段落：
 
@@ -961,9 +998,9 @@ competitor_style 模式：
 
 不得堆叠多个场景、动作链、候选机位、候选文案或重复否定句。
 
-`reference_plan` 只能使用 N2 批准的资产；营销槽位优先把已完成白底图作为首要参考，只有确有结构补充必要时才加入一张互补我方结构参考图。它们不得把源图背景、机位或场景当作必须复刻的约束。
+`reference_plan` 只能使用 N2 批准资产；营销槽位把已完成白底图作为首要参考，只有确有结构补充必要时才加入一张互补我方结构图。它们不得把源图背景、机位或场景当作必须复刻的约束。
 
-### 8.6 核心系统提示词
+### 8.6 系统提示词行为摘要
 
 ```text
 你是本地化单槽图片 Prompt 编译器。一次只编译一个营销槽位。
@@ -1011,7 +1048,7 @@ competitor_style 模式：
 - `compiled_prompt_version`
 - `reference_plan_snapshot_id`
 
-## 9. N7 规则闸门
+## 9. N7 平台化规则闸门
 
 ### 9.1 执行器
 
@@ -1019,6 +1056,7 @@ competitor_style 模式：
 - 语义补充：`deepseek-v4-pro`
 - 时机：每次付费生成或修订提交前
 - 原则：DeepSeek 可以增加风险或解释，不能取消确定性硬阻断
+- 变体：`N7.generic`、`N7.shopee`、`N7.tiktok`；必须与 N5/N6 使用相同平台后缀
 
 ### 9.2 输入 JSON
 
@@ -1086,7 +1124,9 @@ competitor_style 模式：
 
 `ADVICE` 未满足只能产生 `warnings` 或 `advice`，不能单独阻断。`UNVERIFIED` 只进入人工复核提示。
 
-### 9.5 核心系统提示词（语义补充）
+`N7.generic` 校验英语文案和内部 Generic/SEA 基线，不能宣称平台官方合规；`N7.shopee` 校验八站语言和 Shopee 已解析规则；`N7.tiktok` 校验 TikTok Shop 已解析规则、市场语言、禁字/数字渲染和平台界面伪造。平台变体只解释已有规则包，不得发明官方要求，也不得跨平台回退。
+
+### 9.5 系统提示词行为摘要（语义补充）
 
 ```text
 你是商品图规则语义审查器。确定性检查结果不可更改。
@@ -1219,7 +1259,7 @@ competitor_style 模式：
 }
 ```
 
-### 11.4 核心系统提示词
+### 11.4 系统提示词行为摘要
 
 ```text
 你是商品图修改导演。把审核意见编译为只改圈选目标的差量 Prompt。
@@ -1341,7 +1381,7 @@ competitor_style 模式：
 }
 ```
 
-### 12.4 核心系统提示词
+### 12.4 系统提示词行为摘要
 
 ```text
 你是图片 Prompt 失败简化器。只处理 prompt_complexity 或允许重写的 content_safety_rejection。

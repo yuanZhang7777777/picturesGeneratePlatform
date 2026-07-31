@@ -116,17 +116,17 @@ curl -fsS http://127.0.0.1:18083/health/ready
 docker compose logs --tail=100 web generation-worker prompt-worker proxy
 ```
 
-`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认每次只领取一个待准备商品，保存 N1–N7 节点快照、推断台账和 9 槽 PromptVersion。N5 的 APIMart 实测包络可能使用 `plans`、`slot_plans` 或 `slots`；运行时必须归一化为实际槽位编号，缺槽时只修复一次 Schema，禁止无限付费重试。
+`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认 Worker 只领取显式进入 `pending` 的商品，`draft` 商品绝不调用 AI，并保存 N1–N7 节点快照、推断台账和 9 槽 PromptVersion。Prompt OS v3 的 N5 只接受严格 `plans` 包络；缺槽或 Schema 不合格时只修复一次，禁止无限付费重试。
 
 不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 尚未实现跨进程任务原子认领；并发 one-shot 调试可能在真实付费模式重复提交。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 
-前端工作台已切到双速项目工作区和项目结果页；后端已提供生成、再生成、修订和选择式导出接口。双速手工验收路径为：登录测试账号 → 创建项目 → 上传图片/文件夹或输入 ERP SKU → 分别验证自动模式与整理模式 → 拖拽合并 → 查看推断台账和 9 槽 Prompt → 白底图完成后生成营销图 → 结果进入待审核 → 人工通过需要导出的版本 → 圈选修改单张或重做失败项 → 下载本地 ZIP。Shopee VN 普通店还须验证槽位 1 为真实来源图直通、槽位 2 白底完成后才提交槽位 3–9。未审核通过的结果不得导出。
+前端工作台使用双速项目工作区和项目结果页。手工验收路径为：登录测试账号 → 创建项目并确认默认“通用电商/东南亚通用” → 选择整理模式上传图片/文件夹或输入 ERP SKU → 确认只出现商品卡且没有 Prompt/视觉模型调用 → 拖拽合并/移动/拆分 → 填写名称、补充信息或单品风格 → 选中商品点击预备生成 → 查看 N1–N7 进度、身份卡和 9 槽 Prompt → 正式生成 → 白底图完成后生成营销图 → 结果进入待审核 → 人工通过需要导出的版本 → 圈选修改单张或重做失败项 → 下载本地 ZIP。自动模式须按当前项目平台/市场完成同一 N1–N7 后再继续。Shopee VN 普通店还须验证槽位 1 为真实来源图直通、槽位 2 白底完成后才提交槽位 3–9。未审核通过的结果不得导出。
 
 阶段 1 的整理接口保持同源 Session/CSRF 与项目对象权限：`DELETE /api/assets/<asset_id>/` 删除单张参考图，`DELETE /api/clusters/<cluster_id>/` 删除商品。没有生成历史时返回 `{"status":"deleted"}` 并异步清理私有素材；存在历史时返回 `{"status":"archived"}` 并保留 Prompt、结果和审核记录；Prompt 正在准备、活跃生成或 `submit_unknown` 返回 `409`。发布 smoke 必须确认归档商品不会再次进入 Prompt Worker、Generation Worker、审核或 ZIP。
 
 ## 管理员规则、模板与发布
 
-管理员通过同源 `/admin/` 登录后维护平台规则、输出模板、槽位和 N1–N9 Prompt 节点模板。每次发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。`seed_platform_templates` 发布全局 9 图模板、Prompt OS v2 节点、Shopee/TikTok 官网主规则包，以及已有官方证据的站点覆盖；没有覆盖的国家复用对应平台官网主规则包并标记 fallback。草稿、未核对项或 fallback 不得被描述成该国家的完整自动合规。
+管理员通过中文“提示词中心”维护 PromptNodeTemplate 的完整系统提示词、用户消息模板、输出 Schema、版本和发布状态；Django `/admin/` 继续维护平台规则、输出模板和槽位。每次规则发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。`seed_platform_templates` 发布全局 9 图模板、Prompt OS v3 共用事实链和 generic/shopee/tiktok 营销链、Shopee/TikTok 官网主规则包，以及已有官方证据的站点覆盖；没有覆盖的国家复用对应平台官网主规则包并标记 fallback。草稿、未核对项或 fallback 不得被描述成该国家的完整自动合规。
 
 ERP 登录名在 `PLATFORM_ADMIN_ERP_USERS` 中的用户会成为平台管理员并可进入 Django admin；普通员工不应进入模型节点、队列/用量或模板规则配置页。非 global 的市场覆盖规则若要在 admin 发布，必须填写官方来源 URL、站点、核对日期和版本；未逐站核实的 Shopee/TikTok 国家继续使用对应平台官网主规则包和全局 1+8 模板，不宣称该国家完整自动合规。
 
