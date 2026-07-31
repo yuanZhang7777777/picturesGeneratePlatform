@@ -2137,16 +2137,17 @@ def process_prompt_once(client=None, storage=None):
         if not confirmed_product_name and (
             identity.get("decision") != "continue" or confidence < 0.5 or not product_name
         ):
-            if not _preparation_is_current(cluster.id, claimed_revision):
-                return 1
             analysis = {"observations": observations, "identity": identity, "prompt_os": node_snapshots}
-            Cluster.objects.filter(id=cluster.id).update(
-                product_name=product_name,
-                analysis_snapshot=analysis,
-                preparation_status=Cluster.PreparationStatus.BLOCKED,
-                preparation_error="product identity needs confirmation",
-                updated_at=timezone.now(),
-            )
+            analysis["_preparation_revision"] = claimed_revision
+            with transaction.atomic():
+                locked = Cluster.objects.select_for_update().get(id=cluster.id)
+                if locked.preparation_status != Cluster.PreparationStatus.PREPARING or _preparation_revision(locked.analysis_snapshot) != claimed_revision:
+                    return 1
+                locked.product_name = product_name
+                locked.analysis_snapshot = analysis
+                locked.preparation_status = Cluster.PreparationStatus.BLOCKED
+                locked.preparation_error = "product identity needs confirmation"
+                locked.save(update_fields=["product_name", "analysis_snapshot", "preparation_status", "preparation_error", "updated_at"])
             return 1
 
         identity_lock = identity.get("identity_lock") or {}
@@ -2292,8 +2293,7 @@ def process_prompt_once(client=None, storage=None):
             )
 
         gate_blocks = []
-        if not _preparation_is_current(cluster.id, claimed_revision):
-            return 1
+        prompt_values = []
         for slot in slots:
             if is_source_product_photo_slot(slot):
                 source_relation = cluster_assets[0]
@@ -2325,10 +2325,8 @@ def process_prompt_once(client=None, storage=None):
             node_snapshots.append(
                 _node_snapshot("N7", "deterministic-rule-engine", gate_input, gate, slot_id=slot.id)
             )
-            values = {
-                "cluster": cluster,
+            prompt_values.append({
                 "output_slot": slot,
-                "created_by": cluster.batch.owner,
                 "node_name": compiled["node_name"],
                 "template_version": compiled["template_version"],
                 "provider_model": compiled["provider_model"],
@@ -2337,8 +2335,7 @@ def process_prompt_once(client=None, storage=None):
                 "structured_output": compiled,
                 "evaluation": compiled["evaluation"],
                 "source_snapshot": compiled["input_snapshot"],
-            }
-            PromptVersion.objects.create(**values)
+            })
         analysis = {
             "observations": observations,
             "identity": identity,
@@ -2353,25 +2350,27 @@ def process_prompt_once(client=None, storage=None):
             "prompt_os": node_snapshots,
             "_preparation_revision": claimed_revision,
         }
-        if not _preparation_is_current(cluster.id, claimed_revision):
-            return 1
-        Cluster.objects.filter(id=cluster.id, preparation_status=Cluster.PreparationStatus.PREPARING).update(
-            analysis_snapshot=analysis,
-            preparation_status=(Cluster.PreparationStatus.BLOCKED if gate_blocks else Cluster.PreparationStatus.READY),
-            preparation_error=", ".join(dict.fromkeys(gate_blocks)),
-            updated_at=timezone.now(),
-        )
+        with transaction.atomic():
+            locked = Cluster.objects.select_for_update().select_related("batch").get(id=cluster.id)
+            if locked.preparation_status != Cluster.PreparationStatus.PREPARING or _preparation_revision(locked.analysis_snapshot) != claimed_revision:
+                return 1
+            for values in prompt_values:
+                PromptVersion.objects.create(cluster=locked, created_by=locked.batch.owner, **values)
+            locked.analysis_snapshot = analysis
+            locked.preparation_status = Cluster.PreparationStatus.BLOCKED if gate_blocks else Cluster.PreparationStatus.READY
+            locked.preparation_error = ", ".join(dict.fromkeys(gate_blocks))
+            locked.save(update_fields=["analysis_snapshot", "preparation_status", "preparation_error", "updated_at"])
         cluster.refresh_from_db()
         if cluster.auto_generate and not gate_blocks:
             ensure_cluster_generations(cluster, cluster.batch.owner)
         return 1
     except Exception as exc:
-        if _preparation_is_current(cluster.id, claimed_revision):
-            Cluster.objects.filter(id=cluster.id, preparation_status=Cluster.PreparationStatus.PREPARING).update(
-                preparation_status=Cluster.PreparationStatus.FAILED,
-                preparation_error=_sanitize_provider_text(str(exc)),
-                updated_at=timezone.now(),
-            )
+        with transaction.atomic():
+            locked = Cluster.objects.select_for_update().get(id=cluster.id)
+            if locked.preparation_status == Cluster.PreparationStatus.PREPARING and _preparation_revision(locked.analysis_snapshot) == claimed_revision:
+                locked.preparation_status = Cluster.PreparationStatus.FAILED
+                locked.preparation_error = _sanitize_provider_text(str(exc))
+                locked.save(update_fields=["preparation_status", "preparation_error", "updated_at"])
         return 1
 
 

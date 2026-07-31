@@ -71,3 +71,8 @@ pytest tests/test_project_configuration.py::test_site_only_project_uses_legacy_m
 ```
 
 Result: `6 passed`. Final `pytest -q` passed after updating the older configuration test to expect template/rule rebinding invalidation.
+
+## Fix round 2/5
+
+- Terminal prompt persistence now locks the Cluster and verifies the claimed revision before creating any PromptVersion rows or setting READY/BLOCKED/FAILED; stale work leaves the newer claim untouched.
+- RED: the prior interleaving test demonstrated stale completion (`ready`) after invalidation. GREEN: `pytest tests/test_prompt_os.py::test_prompt_worker_requeues_when_settings_change_during_preparation tests/test_project_configuration.py -q` returned `13 passed`.
