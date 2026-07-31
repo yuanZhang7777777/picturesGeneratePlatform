@@ -101,3 +101,12 @@
 - Configuration: `.env.example` records the confirmed ERP login endpoint `http://103.198.125.2:16777/open/system/innerOpen/login` and exact image-source allowlist `180.167.156.35`; production was updated under `global.lock`. Credentials and runtime tokens remain unset and untracked.
 - Verification: backend 207 passed; frontend 56 passed; Vite build, Django check, migration drift and `git diff --check` passed. Production reports release `27a580f`, five services healthy, public `/health/ready` OK, all three UI labels present, logout clears both auth and ERP-token session state, and a real ERP JPEG downloads through the allowlisted application path.
 - Rollback: `/opt/independent-image-platform-backups/20260731_121223-erp-logout-picker`.
+
+# Explicit preparation workbench and Prompt OS v3
+
+- Status: Git `bd7293d` deployed to `hermes-remote:/opt/independent-image-platform` on 2026-07-31 under `global.lock`.
+- Change: organize import now performs zero AI calls; explicit preparation runs N1–N7 and builds the identity card plus 1+8 prompts; formal generation requires the current N7-approved PromptVersion. The React workspace now uses compact Chinese project controls, square product cards, inline details, and drag merge/move/split.
+- Prompt: published the shared fact chain and generic/Shopee/TikTok marketing variants from Prompt OS v3; final image prompts remain capped while full node system prompts are retained.
+- Verification: backend 335 passed, frontend 83 passed, Vite build passed; remote migration `0015`, template seed, Django check, five services and `/health/ready` passed.
+- Rollback: `/opt/independent-image-platform-backups/20260731_195703-bd7293d`.
+- Remaining: real employee ERP SKU/OSS browser smoke and a new paid 1+8 operator quality review.
