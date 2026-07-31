@@ -87,8 +87,9 @@
 
 # Phase 1 batch organization workspace
 
-- Status: local gate passed on 2026-07-31; preview deployment pending.
+- Status: Git `d5410bb` deployed to `hermes-remote:/opt/independent-image-platform` on 2026-07-31 under `global.lock`.
 - Change: pending image/folder previews no longer expose filenames; successful uploads clear while failed items remain; product selection supports all/none/invert; compact rows use a right-side detail drawer; empty names stay blank; unused products/assets delete while historical ones archive.
 - Safety: archived products are excluded from preparation, generation, review and export. Prompt preparation and active/uncertain generation block structural edits or deletion. Automatic import waits for Prompt Worker completion instead of posting generation from stale frontend state.
 - Verification: backend 206 passed; frontend 51 passed; Vite build, Django check, migration drift, `git diff --check`, single-image browser E2E and native folder picker E2E passed.
-- Remaining: server migration/health smoke; real ERP employee login/SKU import; upload request idempotency for lost acknowledgements; later roadmap phases.
+- Deployment: migration `0013` applied; Web, PostgreSQL, Prompt Worker, Generation Worker and Caddy are running; local and public `/health/ready` passed. Backup: `/opt/independent-image-platform-backups/20260731_112241`; the deployment lock was released.
+- Remaining: real ERP employee login/SKU import; upload request idempotency for lost acknowledgements; later roadmap phases.
