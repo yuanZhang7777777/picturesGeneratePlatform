@@ -1,5 +1,5 @@
 import { developmentWorkspace } from "./mock-data";
-import type { ClusterUpdateInput, ImportMode, PreflightResult, Project, ProjectInput, ReviewInput, RevisionInput, WorkspaceSnapshot } from "./types";
+import type { ClusterUpdateInput, ImportMode, PreflightResult, ProductConfiguration, Project, ProjectInput, ReviewInput, RevisionInput, WorkspaceSnapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public authRequired = false) {
@@ -111,7 +111,7 @@ export function uploadPath(file: File) {
 }
 
 export async function createProject(input: ProjectInput): Promise<Project> {
-  const payload = { ...input, market: input.market.trim().toUpperCase() };
+  const payload = { name: input.name.trim() };
   try {
     return await jsonRequest<Project>("/api/projects/", { method: "POST", body: JSON.stringify(payload) });
   } catch (error) {
@@ -119,12 +119,31 @@ export async function createProject(input: ProjectInput): Promise<Project> {
     return {
       id: `demo-project-${crypto.randomUUID()}`,
       ...payload,
+      platform: "",
+      market: "",
+      template: "",
+      size: "1:1",
+      resolution: "1k",
       status: "draft",
       assets: [],
       skus: [],
       updatedAt: new Date().toISOString(),
     };
   }
+}
+
+export function updateProjectSettings(projectId: string, input: ProductConfiguration) {
+  return jsonRequest<Project>(`/api/projects/${projectId}/settings/`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      platform: input.platform,
+      market: input.market.trim().toUpperCase(),
+      seller_tier: input.sellerTier,
+      size: input.size,
+      resolution: input.resolution,
+      global_prompt: input.globalPrompt,
+    }),
+  });
 }
 
 export async function uploadAssets(projectId: string, files: File[], mode: ImportMode = "organize") {

@@ -12,6 +12,7 @@ import {
   regenerateGeneration,
   reviseGeneration,
   submitReview,
+  updateProjectSettings,
   uploadAssets,
 } from "../api";
 
@@ -44,6 +45,17 @@ test("obtains a CSRF token from the same-origin bootstrap endpoint before creati
 
   expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/csrf/", { credentials: "same-origin" });
   expect(fetchMock.mock.calls[1][1].headers.get("X-CSRFToken")).toBe("csrf-for-test");
+});
+
+test("creates a project with its name only so market setup happens in the workbench", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ csrf_token: "csrf-for-test" }) })
+    .mockResolvedValueOnce(response(201, project));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await createProject({ name: "新品" });
+
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ name: "新品" });
 });
 
 test("logs out with a CSRF-protected same-origin POST", async () => {
@@ -91,9 +103,13 @@ test("canonicalizes market codes to uppercase without restricting unlisted count
     .mockResolvedValueOnce(response(201, project));
   vi.stubGlobal("fetch", fetchMock);
 
-  await createProject({ name: "Brazil launch", platform: "shopee", market: "br", template: "", size: "1:1" });
+  await updateProjectSettings("project-1", {
+    platform: "shopee", market: "br", sellerTier: "general", size: "1:1", resolution: "1k", globalPrompt: "",
+  });
 
   expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ market: "BR" });
+  expect(fetchMock.mock.calls[1][0]).toBe("/api/projects/project-1/settings/");
+  expect(fetchMock.mock.calls[1][1].method).toBe("PATCH");
 });
 
 test("does not turn a 403 workspace response into mock data outside explicit demo mode", async () => {

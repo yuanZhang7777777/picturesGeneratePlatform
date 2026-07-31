@@ -81,7 +81,25 @@ export interface ClusterUpdateInput {
   relation_type?: RelationType;
   identity_lock?: string;
   prompt_override?: string;
+  platform_override?: string | null;
+  market_override?: string | null;
+  seller_tier_override?: "general" | "mall" | null;
   prompts?: { slot_order: number; prompt: string }[];
+}
+
+export interface ProductConfiguration {
+  platform: string;
+  market: string;
+  sellerTier: "general" | "mall";
+  size: string;
+  resolution: string;
+  globalPrompt: string;
+}
+
+export interface ProductOverrides {
+  platform: string | null;
+  market: string | null;
+  sellerTier: "general" | "mall" | null;
 }
 
 export interface ProductSku {
@@ -95,6 +113,8 @@ export interface ProductSku {
   identityLock: string;
   brief: string;
   preparationStatus?: string;
+  overrides?: ProductOverrides;
+  effectiveConfig?: ProductConfiguration;
   version: number;
   prompts?: ProductPrompt[];
   analysisSnapshot?: PromptAnalysisSnapshot;
@@ -107,6 +127,8 @@ export interface Project {
   platform: string;
   market: string;
   sellerTier?: "general" | "mall";
+  configurationStatus?: "required" | "configured";
+  defaultConfig?: ProductConfiguration;
   template: string;
   size: string;
   resolution?: string;
@@ -122,11 +144,11 @@ export interface WorkspaceSnapshot {
 
 export interface ProjectInput {
   name: string;
-  platform: string;
-  market: string;
+  platform?: string;
+  market?: string;
   seller_tier?: "general" | "mall";
-  template: string;
-  size: string;
+  template?: string;
+  size?: string;
   resolution?: string;
   global_prompt?: string;
 }

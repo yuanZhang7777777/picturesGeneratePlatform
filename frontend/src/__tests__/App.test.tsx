@@ -44,6 +44,8 @@ const project = {
   template: "商品基础套图",
   size: "1:1",
   resolution: "1k",
+  configurationStatus: "configured",
+  defaultConfig: { platform: "shopee", market: "SG", sellerTier: "general", size: "1:1", resolution: "1k", globalPrompt: "" },
   status: "running",
   updatedAt: "2026-07-29T00:00:00Z",
   assets: [
@@ -80,6 +82,10 @@ function renderApp(path = "/") {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+async function openImportPanel() {
+  fireEvent.click(await screen.findByRole("button", { name: "添加商品" }));
 }
 
 function stubFetch(handler?: (url: string, init?: RequestInit) => Promise<unknown>) {
@@ -155,26 +161,38 @@ test("opens a unified project workspace from the dashboard", async () => {
   expect(screen.getByRole("link", { name: "生产与结果" })).toHaveAttribute("href", "/projects/project-demo/results");
 });
 
-test("shows Shopee shop type and hides it for TikTok Shop", async () => {
+test("asks only for a project name before opening the project workbench", async () => {
   renderApp("/projects/new");
 
-  expect(await screen.findByLabelText("店铺类型")).toHaveValue("general");
-  fireEvent.change(screen.getByLabelText("平台"), { target: { value: "tiktok" } });
-  expect(screen.queryByLabelText("店铺类型")).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("项目名称")).toBeInTheDocument();
+  expect(screen.queryByLabelText("平台")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("市场")).not.toBeInTheDocument();
+});
+
+test("keeps imports inside an initially collapsed add-product drawer", async () => {
+  renderApp("/projects/project-demo");
+
+  const trigger = await screen.findByRole("button", { name: "添加商品" });
+  expect(screen.queryByLabelText("ERP SKU")).not.toBeInTheDocument();
+  fireEvent.click(trigger);
+  expect(screen.getByRole("button", { name: "添加图片或文件夹" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
+  expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
 });
 
 test("shows two explicit import choices for both upload and ERP SKU entry", async () => {
   renderApp("/projects/project-demo");
 
-  expect(await screen.findAllByRole("button", { name: "导入并自动出图" })).toHaveLength(2);
-  expect(screen.getAllByRole("button", { name: "导入后整理" })).toHaveLength(2);
-  expect(screen.getByRole("button", { name: "选择单张 / 多张图片" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "选择整个文件夹" })).toBeInTheDocument();
-  expect(screen.getByLabelText("选择单张 / 多张图片")).toHaveAttribute("multiple");
-  expect(screen.getByLabelText("选择单张 / 多张图片")).not.toHaveAttribute("webkitdirectory");
-  expect(screen.getByLabelText("选择整个文件夹")).toHaveAttribute("multiple");
-  expect(screen.getByLabelText("选择整个文件夹")).toHaveAttribute("webkitdirectory");
+  await openImportPanel();
+  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  expect(screen.getByRole("button", { name: "选择图片" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "选择文件夹" })).toBeInTheDocument();
+  expect(screen.getByLabelText("选择图片")).toHaveAttribute("multiple");
+  expect(screen.getByLabelText("选择图片")).not.toHaveAttribute("webkitdirectory");
+  expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("multiple");
+  expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("webkitdirectory");
   expect(screen.getByText("拖入图片或文件夹")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
 });
 
@@ -182,7 +200,9 @@ test("marks uploaded files for automatic mode without generating before Prompt p
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  const input = await screen.findByLabelText("选择单张 / 多张图片");
+  await openImportPanel();
+  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  const input = await screen.findByLabelText("选择图片");
   const file = new File(["image"], "front.png", { type: "image/png" });
   fireEvent.change(input, { target: { files: [file] } });
   fireEvent.click(screen.getAllByRole("button", { name: "导入并自动出图" })[0]);
@@ -197,7 +217,9 @@ test("posts uploaded files in organize mode without starting generation", async 
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.change(await screen.findByLabelText("选择单张 / 多张图片"), {
+  await openImportPanel();
+  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  fireEvent.change(await screen.findByLabelText("选择图片"), {
     target: { files: [new File(["image"], "front.png", { type: "image/png" })] },
   });
   fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
@@ -220,7 +242,9 @@ test("previews pending images without filenames and does not resubmit successful
   });
   renderApp("/projects/project-demo");
 
-  const input = await screen.findByLabelText("选择单张 / 多张图片");
+  await openImportPanel();
+  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  const input = await screen.findByLabelText("选择图片");
   fireEvent.change(input, {
     target: { files: [new File(["front"], "front.png", { type: "image/png" })] },
   });
@@ -228,9 +252,11 @@ test("previews pending images without filenames and does not resubmit successful
   expect(screen.getByRole("img", { name: "待导入商品图 1" })).toBeInTheDocument();
   expect(screen.queryByText("front.png")).not.toBeInTheDocument();
   fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
-  await waitFor(() => expect(screen.getByText("尚未选择图片")).toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByLabelText("选择图片")).not.toBeInTheDocument());
 
-  fireEvent.change(input, {
+  await openImportPanel();
+  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  fireEvent.change(await screen.findByLabelText("选择图片"), {
     target: { files: [new File(["side"], "side.png", { type: "image/png" })] },
   });
   fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
@@ -253,7 +279,9 @@ test("keeps pending files when the first upload request fails", async () => {
   });
   renderApp("/projects/project-demo");
 
-  fireEvent.change(await screen.findByLabelText("选择单张 / 多张图片"), {
+  await openImportPanel();
+  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  fireEvent.change(await screen.findByLabelText("选择图片"), {
     target: { files: [new File(["front"], "front.png", { type: "image/png" })] },
   });
   fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
@@ -266,8 +294,10 @@ test("imports ERP SKUs in organize mode", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
+  await openImportPanel();
+  fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
   fireEvent.change(await screen.findByLabelText("ERP SKU"), { target: { value: "LAMP-001\nLAMP-002" } });
-  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[1]);
+  fireEvent.click(screen.getByRole("button", { name: "导入后整理" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sku-import/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/sku-import/"));
@@ -278,8 +308,10 @@ test("marks ERP imports for automatic mode without generating before Prompt prep
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
+  await openImportPanel();
+  fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
   fireEvent.change(await screen.findByLabelText("ERP SKU"), { target: { value: "LAMP-001" } });
-  fireEvent.click(screen.getAllByRole("button", { name: "导入并自动出图" })[1]);
+  fireEvent.click(screen.getByRole("button", { name: "导入并自动出图" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sku-import/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/sku-import/"));
@@ -290,9 +322,9 @@ test("marks ERP imports for automatic mode without generating before Prompt prep
 test("renders product cards with relation choice and prompt editing", async () => {
   renderApp("/projects/project-demo");
 
-  expect(await screen.findByRole("img", { name: "商品参考图 1" })).toBeInTheDocument();
+  expect(await screen.findByRole("img", { name: "商品参考图" })).toBeInTheDocument();
   expect(screen.getByLabelText("商品名称")).toHaveValue("桌面护眼灯");
-  fireEvent.click(screen.getByRole("button", { name: "编辑商品详情" }));
+  fireEvent.click(screen.getByRole("button", { name: "更多" }));
   expect(screen.getByDisplayValue("一图一商品")).toBeInTheDocument();
   expect(screen.getByLabelText("身份锁")).toHaveValue("深蓝色灯头");
   expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("白底标准图 prompt");
@@ -302,7 +334,7 @@ test("saves edited product relation and prompts through the cluster endpoint", a
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "编辑商品详情" }));
+  fireEvent.click(await screen.findByRole("button", { name: "更多" }));
   fireEvent.change(screen.getByLabelText("整套要求"), { target: { value: "更明亮的书桌场景" } });
   fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
 
@@ -336,7 +368,7 @@ test("keeps product details collapsed until requested", async () => {
 
   await screen.findByRole("checkbox", { name: "生成 桌面护眼灯" });
   expect(screen.queryByLabelText("身份锁")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "编辑商品详情" }));
+  fireEvent.click(screen.getByRole("button", { name: "更多" }));
   expect(screen.getByLabelText("身份锁")).toHaveValue("深蓝色灯头");
 });
 
@@ -356,14 +388,33 @@ test("keeps an unidentified product name empty instead of inserting status text"
   expect(screen.queryByText("名称待确认")).not.toBeInTheDocument();
 });
 
-test("offers merge and undo affordances for product grouping", async () => {
+test("offers merge controls from the product detail drawer", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "合并未分配图片 1 到桌面护眼灯" }));
+  fireEvent.click(await screen.findByRole("button", { name: "更多" }));
+  fireEvent.click(await screen.findByRole("button", { name: "合并未分配图片 1" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/merge/"))).toBe(true));
-  expect(screen.getByRole("button", { name: "撤销上次合并" })).toBeInTheDocument();
+});
+
+test("renders fifty compact square product cards without expanding the workbench", async () => {
+  const manyProducts = Array.from({ length: 50 }, (_, index) => ({
+    ...project.skus[0],
+    id: `sku-${index}`,
+    name: `商品 ${index + 1}`,
+    assetIds: ["asset-lamp-main"],
+  }));
+  const many = { ...project, skus: manyProducts };
+  stubFetch(async (url) => {
+    if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf-for-test" });
+    return response(200, many);
+  });
+  renderApp("/projects/project-demo");
+
+  await screen.findByDisplayValue("商品 50");
+  expect(screen.getAllByLabelText("商品名称")).toHaveLength(50);
+  expect(document.querySelector(".product-card-grid")).toBeInTheDocument();
 });
 
 test("shows a nine-slot result grid for the project", async () => {
