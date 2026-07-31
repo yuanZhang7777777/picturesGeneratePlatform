@@ -109,6 +109,7 @@ test("shows the operator dashboard without the old review center", async () => {
 
   expect(await screen.findByRole("heading", { name: "工作台" })).toBeInTheDocument();
   expect(screen.getByText("夏日家居上新")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "退出登录" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "新建出图项目" })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "审核中心" })).not.toBeInTheDocument();
 });
@@ -133,8 +134,12 @@ test("shows two explicit import choices for both upload and ERP SKU entry", asyn
 
   expect(await screen.findAllByRole("button", { name: "导入并自动出图" })).toHaveLength(2);
   expect(screen.getAllByRole("button", { name: "导入后整理" })).toHaveLength(2);
-  expect(screen.getByLabelText("选择图片")).not.toHaveAttribute("webkitdirectory");
-  expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("webkitdirectory");
+  expect(screen.getByRole("button", { name: "选择单张 / 多张图片" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "选择整个文件夹" })).toBeInTheDocument();
+  expect(screen.getByLabelText("选择单张 / 多张图片")).toHaveAttribute("multiple");
+  expect(screen.getByLabelText("选择单张 / 多张图片")).not.toHaveAttribute("webkitdirectory");
+  expect(screen.getByLabelText("选择整个文件夹")).toHaveAttribute("multiple");
+  expect(screen.getByLabelText("选择整个文件夹")).toHaveAttribute("webkitdirectory");
   expect(screen.getByText("拖入图片或文件夹")).toBeInTheDocument();
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
 });
@@ -143,7 +148,7 @@ test("marks uploaded files for automatic mode without generating before Prompt p
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  const input = await screen.findByLabelText("选择图片");
+  const input = await screen.findByLabelText("选择单张 / 多张图片");
   const file = new File(["image"], "front.png", { type: "image/png" });
   fireEvent.change(input, { target: { files: [file] } });
   fireEvent.click(screen.getAllByRole("button", { name: "导入并自动出图" })[0]);
@@ -158,7 +163,7 @@ test("posts uploaded files in organize mode without starting generation", async 
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  fireEvent.change(await screen.findByLabelText("选择图片"), {
+  fireEvent.change(await screen.findByLabelText("选择单张 / 多张图片"), {
     target: { files: [new File(["image"], "front.png", { type: "image/png" })] },
   });
   fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
@@ -181,7 +186,7 @@ test("previews pending images without filenames and does not resubmit successful
   });
   renderApp("/projects/project-demo");
 
-  const input = await screen.findByLabelText("选择图片");
+  const input = await screen.findByLabelText("选择单张 / 多张图片");
   fireEvent.change(input, {
     target: { files: [new File(["front"], "front.png", { type: "image/png" })] },
   });
@@ -214,7 +219,7 @@ test("keeps pending files when the first upload request fails", async () => {
   });
   renderApp("/projects/project-demo");
 
-  fireEvent.change(await screen.findByLabelText("选择图片"), {
+  fireEvent.change(await screen.findByLabelText("选择单张 / 多张图片"), {
     target: { files: [new File(["front"], "front.png", { type: "image/png" })] },
   });
   fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);

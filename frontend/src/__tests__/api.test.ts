@@ -6,6 +6,7 @@ import {
   generateProject,
   importSkus,
   loadWorkspace,
+  logoutUser,
   mergeAsset,
   preflightProject,
   regenerateGeneration,
@@ -43,6 +44,31 @@ test("obtains a CSRF token from the same-origin bootstrap endpoint before creati
 
   expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/csrf/", { credentials: "same-origin" });
   expect(fetchMock.mock.calls[1][1].headers.get("X-CSRFToken")).toBe("csrf-for-test");
+});
+
+test("logs out with a CSRF-protected same-origin POST", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce({ ok: true, status: 204 });
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(logoutUser()).resolves.toBeUndefined();
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/logout/",
+    expect.objectContaining({ credentials: "same-origin", method: "POST" }),
+  );
+  expect(fetchMock.mock.calls[1][1].headers.get("X-CSRFToken")).toBe("csrf-for-test");
+});
+
+test("keeps logout failures visible to the caller", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(500, { error: "logout unavailable" }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(logoutUser()).rejects.toMatchObject({ status: 500, message: "logout unavailable" });
 });
 
 test("canonicalizes market codes to uppercase without restricting unlisted countries", async () => {

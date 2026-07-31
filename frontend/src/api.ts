@@ -69,6 +69,15 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   return jsonFor<T>(response);
 }
 
+export async function logoutUser(): Promise<void> {
+  const response = await fetch("/logout/", {
+    method: "POST",
+    headers: new Headers({ "X-CSRFToken": await csrfToken() }),
+    credentials: "same-origin",
+  });
+  if (!response.ok || isLoginResponse(response)) throw await errorFor(response);
+}
+
 export async function loadWorkspace(): Promise<WorkspaceSnapshot> {
   try {
     return await jsonRequest<WorkspaceSnapshot>("/api/workspace/snapshot/");

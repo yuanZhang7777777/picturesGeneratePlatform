@@ -108,14 +108,14 @@ export function ImportPanel({
           <p className="font-medium text-slate-700">拖入图片或文件夹</p>
           <p className="mt-1 text-xs text-slate-500">JPEG、PNG、WebP、UTF-8 TXT</p>
           <div className="mt-4 flex justify-center gap-2">
-            <button className="secondary-button" type="button" onClick={() => imagePicker.current?.click()}>选择图片</button>
-            <button className="secondary-button" type="button" onClick={() => folderPicker.current?.click()}>选择文件夹</button>
+            <button className="secondary-button" type="button" onClick={() => imagePicker.current?.click()}>选择单张 / 多张图片</button>
+            <button className="secondary-button" type="button" onClick={() => folderPicker.current?.click()}>选择整个文件夹</button>
           </div>
         </div>
         <input
           ref={imagePicker}
           className="sr-only"
-          aria-label="选择图片"
+          aria-label="选择单张 / 多张图片"
           type="file"
           multiple
           accept={acceptedTypes}
@@ -127,7 +127,7 @@ export function ImportPanel({
         <input
           ref={folderPicker}
           className="sr-only"
-          aria-label="选择文件夹"
+          aria-label="选择整个文件夹"
           type="file"
           multiple
           accept={acceptedTypes}
