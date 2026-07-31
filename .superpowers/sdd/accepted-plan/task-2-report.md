@@ -121,3 +121,28 @@ Final command results (2026-07-31):
 - No product authority document or frontend file changed in this backend review fix. The current requirements boundary, phased roadmap, dual-speed design, and Prompt OS node contract already require exact N2 references, request-bound same-slot N7 evidence, immutable snapshots, and revalidation immediately before every paid POST.
 - This append-only task report and the weekly work log are the durable handoff artifacts for round 2.
 - Verification used fake/local provider and storage paths only. No production call, deployment, credential, OSS, ERP, or external data write was performed.
+
+## Fix round 3 (2026-07-31)
+
+### Review findings closed
+
+- **C2 final POST serialization:** the complete provider `submit_generation()` call, including APIMart reference uploads and the generation POST, now runs inside one `transaction.atomic()` block. It locks Batch → Cluster → current Generation, then the current white-result rows, all current ClusterAsset/Asset rows, OutputTemplate/OutputSlot, all potentially applicable RuleProfile rows, and every version row for the active PromptNodeTemplate node. The immutable request fingerprint is revalidated only after those locks are held.
+- Independent mutation transactions for Batch settings, direct Cluster snapshot clearing, Asset paths, OutputTemplate defaults, RuleProfile rules, and PromptNodeTemplate instructions are therefore blocked until the provider call returns. Changes committed afterwards invalidate only later requests.
+- Provider exceptions leave the lock transaction before existing `failed` or `submit_unknown` state handling runs, so error-state writes do not self-deadlock and the lock transaction rolls back cleanly.
+- **I3 authoritative N1/N2 schema:** owned-product N1 now requires `asset_kind=owned_product`, boolean `target_is_physical_product` and `target_complete`, enumerated `background_complexity`, and `recommended_use=reuse`, in addition to the prior strict identity fields. N2 now requires typed `needs_input_reason`, `standardization_mode=reuse`, and `standardization_reason`; `needs_input` requires a non-empty reason. Existing one-repair behavior remains fail closed after the second invalid payload.
+
+### RED / GREEN and verification
+
+- RED: 17 directed cases failed—six relevant row mutations completed inside the old client call, and 16 missing/wrong-type/wrong-enum N1/N2 payload variants were accepted.
+- GREEN: all 17 directed cases passed after the two scoped fixes.
+- Focused regression: `pytest -q tests/test_prompt_os.py tests/test_generation_queue.py` — 112 passed.
+- Full backend regression: `pytest -q` — 297 passed; warnings only.
+- `python manage.py check`: exit 0, no issues.
+- `python manage.py makemigrations --check --dry-run`: exit 0, no changes detected; only the expected local PostgreSQL-unavailable migration-history warning.
+- Scoped `git diff --check`: exit 0; line-ending notices only.
+
+### Ceiling and documentation impact
+
+- The provider upload/POST now intentionally holds a database transaction and row locks across network I/O. This is the accepted preview-stage correctness ceiling; if throughput later requires removing the long transaction, the upgrade path is an externally serialized submission/idempotency protocol with equivalent mutation exclusion.
+- No frontend or product authority document changed. The current Prompt OS specification is the authoritative source for these N1/N2 fields and already requires final request revalidation immediately before the paid POST.
+- No production call, deployment, credential, OSS, ERP, or external data write was performed.

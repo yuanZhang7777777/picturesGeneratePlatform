@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlparse
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import DatabaseError, transaction
-from django.db.models import F, Max, Prefetch
+from django.db.models import F, Max, Prefetch, Q
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image, UnidentifiedImageError
@@ -284,14 +284,19 @@ class FakeAPIMartClient:
             "output_text": json.dumps(
                 {
                     "asset_id": match.group(1).strip() if match else "",
+                    "asset_kind": "owned_product",
                     "image_role": "clean_product",
                     "contains_target_product": True,
+                    "target_is_physical_product": True,
                     "target_visibility": 90,
+                    "target_complete": True,
+                    "background_complexity": "low",
                     "observed_identity": {
                         "category_candidates": ["product"],
                         "overall_shape": "visible product silhouette",
                     },
                     "reference_quality": 90,
+                    "recommended_use": "reuse",
                     "candidate_product_name": "Demo product",
                     "candidate_product_name_confidence": 0.9,
                     "product_facts": ["visible product reference"],
@@ -316,6 +321,7 @@ class FakeAPIMartClient:
             output = {
                 "decision": "continue",
                 "confidence": 90,
+                "needs_input_reason": "",
                 "product_name": node_input.get("product_name") or "Demo product",
                 "conflict_state": "unknown",
                 "product_profile": {
@@ -329,6 +335,8 @@ class FakeAPIMartClient:
                 },
                 "primary_asset_id": primary,
                 "supporting_asset_ids": [],
+                "standardization_mode": "reuse",
+                "standardization_reason": "",
             }
         elif "NODE N3" in text:
             output = {
@@ -2085,9 +2093,12 @@ def _repair_observation_json(
                     text,
                     (
                         'Required schema: {"asset_id":"string","image_role":"clean_product",'
-                        '"contains_target_product":true,"target_visibility":0,'
+                        '"asset_kind":"owned_product","contains_target_product":true,'
+                        '"target_is_physical_product":true,"target_visibility":0,'
+                        '"target_complete":true,"background_complexity":"low",'
                         '"observed_identity":{"category_candidates":["string"],'
                         '"overall_shape":"string"},"reference_quality":0,'
+                        '"recommended_use":"reuse",'
                         '"candidate_product_name":"string",'
                         '"candidate_product_name_confidence":0.0}.'
                     ),
@@ -2162,12 +2173,27 @@ def _normalize_n1_observation(payload, expected_asset_id):
     asset_id = _required_string(payload, "asset_id")
     if asset_id != str(expected_asset_id):
         raise ValueError("N1 asset_id does not match the requested cluster asset")
+    asset_kind = _required_string(payload, "asset_kind")
+    if asset_kind != "owned_product":
+        raise ValueError("asset_kind must be owned_product")
     image_role = _required_string(payload, "image_role")
     if image_role != "clean_product":
         raise ValueError("image_role must be clean_product for owned product assets")
     contains_target = payload.get("contains_target_product")
     if not isinstance(contains_target, bool):
         raise ValueError("contains_target_product must be boolean")
+    target_is_physical = payload.get("target_is_physical_product")
+    if not isinstance(target_is_physical, bool):
+        raise ValueError("target_is_physical_product must be boolean")
+    target_complete = payload.get("target_complete")
+    if not isinstance(target_complete, bool):
+        raise ValueError("target_complete must be boolean")
+    background_complexity = _required_string(payload, "background_complexity")
+    if background_complexity not in {"low", "medium", "high"}:
+        raise ValueError("background_complexity must be low, medium, or high")
+    recommended_use = _required_string(payload, "recommended_use")
+    if recommended_use != "reuse":
+        raise ValueError("recommended_use must be reuse for owned product assets")
     observed_identity = payload.get("observed_identity")
     if not isinstance(observed_identity, dict):
         raise ValueError("observed_identity must be an object")
@@ -2214,11 +2240,16 @@ def _normalize_n1_observation(payload, expected_asset_id):
     normalized.update(
         {
             "asset_id": asset_id,
+            "asset_kind": asset_kind,
             "image_role": image_role,
             "contains_target_product": contains_target,
+            "target_is_physical_product": target_is_physical,
             "target_visibility": target_visibility,
+            "target_complete": target_complete,
+            "background_complexity": background_complexity,
             "observed_identity": observed_identity,
             "reference_quality": reference_quality,
+            "recommended_use": recommended_use,
             "candidate_product_name": candidate_name.strip(),
             "candidate_product_name_confidence": _normalized_confidence(
                 candidate_confidence,
@@ -2236,6 +2267,17 @@ def _normalize_n2_identity(payload, valid_asset_ids):
     decision = _required_string(payload, "decision")
     if decision not in {"continue", "needs_input"}:
         raise ValueError("decision must be continue or needs_input")
+    needs_input_reason = payload.get("needs_input_reason")
+    if not isinstance(needs_input_reason, str):
+        raise ValueError("needs_input_reason must be a string")
+    if decision == "needs_input" and not needs_input_reason.strip():
+        raise ValueError("needs_input_reason is required when decision is needs_input")
+    standardization_mode = _required_string(payload, "standardization_mode")
+    if standardization_mode != "reuse":
+        raise ValueError("standardization_mode must be reuse")
+    standardization_reason = payload.get("standardization_reason")
+    if not isinstance(standardization_reason, str):
+        raise ValueError("standardization_reason must be a string")
     conflict_state = _required_string(payload, "conflict_state")
     if conflict_state not in {"match", "unknown", "conflict"}:
         raise ValueError("conflict_state must be match, unknown, or conflict")
@@ -2290,6 +2332,7 @@ def _normalize_n2_identity(payload, valid_asset_ids):
     normalized.update(
         {
             "decision": decision,
+            "needs_input_reason": needs_input_reason.strip(),
             "product_name": _required_string(payload, "product_name"),
             "confidence": _normalized_confidence(payload.get("confidence")),
             "conflict_state": conflict_state,
@@ -2297,6 +2340,8 @@ def _normalize_n2_identity(payload, valid_asset_ids):
             "supporting_asset_ids": supporting,
             "identity_lock": identity_lock,
             "product_profile": product_profile,
+            "standardization_mode": standardization_mode,
+            "standardization_reason": standardization_reason.strip(),
         }
     )
     return normalized
@@ -4580,8 +4625,73 @@ def _seal_generation_submission(generation_id):
     return generation
 
 
-@transaction.atomic
-def _assert_submission_fingerprint_current(generation_id, fingerprint):
+def _lock_submission_dependencies(generation, cluster, batch):
+    hero_slot = standard_product_hero_slot(
+        batch.output_template or generation.output_slot.template
+    )
+    if hero_slot is not None:
+        hero_ids = list(
+            Generation.objects.select_for_update()
+            .filter(
+                batch_id=batch.id,
+                cluster_id=cluster.id,
+                output_slot_id=hero_slot.id,
+                status=Generation.Status.COMPLETED,
+            )
+            .exclude(id=generation.id)
+            .order_by("id")
+            .values_list("id", flat=True)
+        )
+        list(
+            ResultAsset.objects.select_for_update()
+            .filter(generation_id__in=hero_ids)
+            .order_by("id")
+        )
+
+    relations = list(
+        ClusterAsset.objects.select_for_update()
+        .filter(cluster_id=cluster.id)
+        .order_by("asset_id")
+    )
+    list(
+        Asset.objects.select_for_update()
+        .filter(id__in=[relation.asset_id for relation in relations])
+        .order_by("id")
+    )
+
+    template_id = batch.output_template_id or generation.output_slot.template_id
+    locked_template = OutputTemplate.objects.select_for_update().get(id=template_id)
+    locked_slot = OutputSlot.objects.select_for_update().get(
+        id=generation.output_slot_id,
+        template_id=locked_template.id,
+    )
+    batch.output_template = locked_template
+    generation.output_slot = locked_slot
+
+    rule_filter = Q(seed_key="global-marketplace-prompt-os-v2-rule") | Q(
+        platform=batch.platform,
+        site="",
+    )
+    if batch.rule_profile_id:
+        rule_filter |= Q(id=batch.rule_profile_id)
+    list(
+        RuleProfile.objects.select_for_update()
+        .filter(rule_filter)
+        .order_by("id")
+    )
+    if batch.rule_profile_id:
+        batch.rule_profile = RuleProfile.objects.get(id=batch.rule_profile_id)
+    if hasattr(batch, "_prompt_rule_profiles"):
+        del batch._prompt_rule_profiles
+
+    list(
+        PromptNodeTemplate.objects.select_for_update()
+        .filter(node_name=generation.prompt_version.node_name)
+        .order_by("id")
+    )
+
+
+def _locked_submission_fingerprint_current(generation_id, fingerprint):
     candidate = Generation.objects.only("batch_id", "cluster_id").get(
         id=generation_id
     )
@@ -4603,6 +4713,7 @@ def _assert_submission_fingerprint_current(generation_id, fingerprint):
             cluster_id=cluster.id,
         )
     )
+    _lock_submission_dependencies(generation, cluster, batch)
     _validate_generation_submission(
         generation,
         cluster=cluster,
@@ -4623,6 +4734,30 @@ def _assert_submission_fingerprint_current(generation_id, fingerprint):
     ):
         raise ValueError("Generation submission fingerprint is stale")
     return generation
+
+
+@transaction.atomic
+def _assert_submission_fingerprint_current(generation_id, fingerprint):
+    return _locked_submission_fingerprint_current(generation_id, fingerprint)
+
+
+@transaction.atomic
+def _submit_generation_under_lock(
+    generation_id,
+    fingerprint,
+    client,
+    image_paths,
+):
+    generation = _locked_submission_fingerprint_current(
+        generation_id,
+        fingerprint,
+    )
+    return client.submit_generation(
+        generation.prompt_text,
+        image_paths,
+        generation.size,
+        generation.resolution,
+    )
 
 
 def _provider_payload_with(generation, **values):
@@ -4685,15 +4820,11 @@ def process_generation_once(client=None, storage=None):
             return 1
         try:
             with storage.reference_paths(queued.reference_snapshot) as image_paths:
-                _assert_submission_fingerprint_current(
+                task_id = _submit_generation_under_lock(
                     queued.id,
                     queued.provider_payload["submission"]["fingerprint"],
-                )
-                task_id = client.submit_generation(
-                    queued.prompt_text,
+                    client,
                     image_paths,
-                    queued.size,
-                    queued.resolution,
                 )
         except SubmitUnknown as exc:
             queued.status = Generation.Status.SUBMIT_UNKNOWN

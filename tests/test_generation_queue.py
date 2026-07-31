@@ -845,6 +845,134 @@ def test_worker_rechecks_submission_fingerprint_after_interleaved_config_change(
     assert generation.provider_payload["submission"]["fingerprint"]
 
 
+@pytest.mark.django_db(transaction=True)
+def test_provider_submit_holds_every_submission_dependency_row_until_post_returns(
+    tmp_path,
+    settings,
+):
+    import threading
+    import time
+
+    from django.db import OperationalError, close_old_connections
+
+    from platform_app.models import (
+        Asset,
+        Batch,
+        Cluster,
+        Generation,
+        OutputTemplate,
+        PromptNodeTemplate,
+        RuleProfile,
+    )
+    from platform_app.services import (
+        LocalStorage,
+        ensure_cluster_generations,
+        process_generation_once,
+    )
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    rule_profile = RuleProfile.objects.create(
+        platform="shopee",
+        site="SG",
+        name="Submission lock rule",
+        version="lock-v1",
+        status=RuleProfile.Status.PUBLISHED,
+        rules=[],
+    )
+    node_template = PromptNodeTemplate.objects.create(
+        node_name="N4",
+        version="lock-v1",
+        status=PromptNodeTemplate.Status.PUBLISHED,
+        instruction="Complete locked N4 instruction.",
+        output_schema={"type": "object"},
+    )
+    batch.output_template = template
+    batch.rule_profile = rule_profile
+    batch.save(update_fields=["output_template", "rule_profile"])
+    slot = template.slots.get(order=1)
+    approve_prompt(cluster, user, slot, template_version=node_template.version)
+    generation = ensure_cluster_generations(cluster, user)[0]
+    asset = cluster.cluster_assets.get().asset
+
+    mutations = {
+        "batch": lambda: Batch.objects.filter(id=batch.id).update(size="3:4"),
+        "cluster": lambda: Cluster.objects.filter(id=cluster.id).update(
+            analysis_snapshot={}
+        ),
+        "asset": lambda: Asset.objects.filter(id=asset.id).update(
+            storage_path=f"{asset.storage_path}.changed"
+        ),
+        "template": lambda: OutputTemplate.objects.filter(id=template.id).update(
+            default_size="3:4"
+        ),
+        "rule": lambda: RuleProfile.objects.filter(id=rule_profile.id).update(
+            rules=[{"rule_id": "changed"}]
+        ),
+        "node": lambda: PromptNodeTemplate.objects.filter(
+            id=node_template.id
+        ).update(instruction="Changed while posting."),
+    }
+
+    class InterleavingClient:
+        def __init__(self):
+            self.threads = []
+            self.started = {}
+            self.finished = {}
+            self.errors = []
+            self.finished_before_post = []
+
+        def _mutate(self, name, action):
+            close_old_connections()
+            self.started[name].set()
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    action()
+                except OperationalError as exc:
+                    if "lock" in str(exc).lower() and time.monotonic() < deadline:
+                        close_old_connections()
+                        time.sleep(0.01)
+                        continue
+                    self.errors.append((name, str(exc)))
+                    return
+                finally:
+                    close_old_connections()
+                self.finished[name].set()
+                return
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            for name, action in mutations.items():
+                self.started[name] = threading.Event()
+                self.finished[name] = threading.Event()
+                thread = threading.Thread(
+                    target=self._mutate,
+                    args=(name, action),
+                    daemon=True,
+                )
+                self.threads.append(thread)
+                thread.start()
+            assert all(event.wait(1) for event in self.started.values())
+            time.sleep(0.15)
+            self.finished_before_post = [
+                name for name, event in self.finished.items() if event.is_set()
+            ]
+            return "locked-provider-task"
+
+    client = InterleavingClient()
+
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    for thread in client.threads:
+        thread.join(5)
+    generation.refresh_from_db()
+
+    assert client.finished_before_post == []
+    assert client.errors == []
+    assert all(event.is_set() for event in client.finished.values())
+    assert generation.status == Generation.Status.SUBMITTED
+
+
 def test_project_settings_reject_change_while_sealed_submission_is_active(
     tmp_path,
     settings,
