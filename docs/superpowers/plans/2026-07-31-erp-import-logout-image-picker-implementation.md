@@ -8,6 +8,8 @@
 
 **Tech Stack:** Django 5.2, React, TypeScript, Vitest, Docker Compose.
 
+**Status:** Code and protected configuration deployed as Git `27a580f` on 2026-07-31. Production health, UI bundle labels, logout session clearing and real ERP JPEG download passed; employee-browser SKU preview and OSS verification remain open.
+
 ## Global Constraints
 
 - Never expose or persist the ERP Token in browser storage.
@@ -31,7 +33,7 @@
 - Consumes: `GET /api/csrf/`, existing `POST /logout/`, `ImportPanel.onUpload`.
 - Produces: `logoutUser(): Promise<void>` and visible “选择单张 / 多张图片” button.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```tsx
 expect(screen.getByRole("button", { name: "退出登录" })).toBeInTheDocument();
@@ -51,7 +53,7 @@ def test_logout_clears_erp_token(client):
     assert "erp_access_token" not in client.session
 ```
 
-- [ ] **Step 2: Run focused tests and verify they fail for the missing controls/behavior**
+- [x] **Step 2: Run focused tests and verify they fail for the missing controls/behavior**
 
 Run:
 
@@ -60,11 +62,11 @@ npm --prefix frontend test -- --run src/__tests__/App.test.tsx
 E:\Project\picturesGenerate\.venv\Scripts\python.exe -m pytest -o addopts='' -q tests/test_auth_permissions.py
 ```
 
-- [ ] **Step 3: Implement the minimum UI and API changes**
+- [x] **Step 3: Implement the minimum UI and API changes**
 
 Add `logoutUser()` using the existing CSRF helper and a same-origin POST. Add the header button and redirect to `/login/` only after success. Rename the visible image picker and its accessible label; keep `multiple` and keep the folder input separate.
 
-- [ ] **Step 4: Run the focused tests and verify they pass**
+- [x] **Step 4: Run the focused tests and verify they pass**
 
 Use the commands from Step 2; expected result is zero failures.
 
@@ -80,7 +82,7 @@ Use the commands from Step 2; expected result is zero failures.
 - Consumes: existing `CATALOG_ALLOWED_IMAGE_HOSTS` setting and `download_catalog_image`.
 - Produces: exact allowlist entry `180.167.156.35`.
 
-- [ ] **Step 1: Add the confirmed ERP image IP to the example and runbook**
+- [x] **Step 1: Add the confirmed ERP image IP to the example and runbook**
 
 Set:
 
@@ -88,7 +90,7 @@ Set:
 CATALOG_ALLOWED_IMAGE_HOSTS=180.167.156.35
 ```
 
-- [ ] **Step 2: Run complete verification**
+- [x] **Step 2: Run complete verification**
 
 ```powershell
 E:\Project\picturesGenerate\.venv\Scripts\python.exe -m pytest -o addopts='' -q
@@ -99,7 +101,7 @@ E:\Project\picturesGenerate\.venv\Scripts\python.exe manage.py makemigrations --
 git diff --check
 ```
 
-- [ ] **Step 3: Deploy under the Hermes global lock**
+- [x] **Step 3: Deploy under the Hermes global lock**
 
 Back up the current release and `.env`, update only `CATALOG_ALLOWED_IMAGE_HOSTS`, deploy the verified commit, and recreate affected containers.
 

@@ -2,11 +2,11 @@
 
 最后更新：2026-07-31
 维护者：主 Agent
-状态：阶段 1“批量整理工作台可用化”已完成；阶段 2 已启动，当前处理 ERP 图片导入、退出登录和明确的单/多图选择入口。
+状态：阶段 1“批量整理工作台可用化”已完成；阶段 2 的 ERP 图片导入修复、退出登录和明确的单/多图/文件夹入口已部署，当前继续平台与国家配置。
 
 ## 当前目标
 
-按 [`2026-07-31-phased-delivery-roadmap.md`](../superpowers/plans/2026-07-31-phased-delivery-roadmap.md) 严格串行完成阶段 0–6。阶段 1 门禁已通过；阶段 2 先修复 ERP 图片白名单、退出登录和单/多图入口，再继续平台与国家配置。
+按 [`2026-07-31-phased-delivery-roadmap.md`](../superpowers/plans/2026-07-31-phased-delivery-roadmap.md) 严格串行完成阶段 0–6。阶段 1 门禁已通过；阶段 2 的首个修复切片已部署，真实员工浏览器 SKU/OSS smoke 完成后继续平台与国家配置。
 
 ## 阶段状态
 
@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 0 基线与任务重排 | 主 Agent | 只读代码、测试、服务器状态与路线图 | 后端 193 passed；前端 45 passed；Vite build passed；远端数据库与五服务健康 | 已完成 | 开发分支基线 Git `e764b0d`；线上版本未改 |
 | 1 批量整理工作台 | 前端体验 + 后端删除/归档 | `frontend/src/**`、相关 Django 模型/API/测试；Agent 文件不重叠 | 后端 206 passed；前端 51 passed；Vite build、浏览器图片/文件夹 E2E、迁移 `0013`、五服务和公网健康通过 | 已完成 | 启动阶段 2 前先冻结 ERP/市场配置接口 |
-| 2 ERP 与市场配置 | ERP/配置 + 前端市场选择 | ERP 导入、退出、项目/商品市场配置 | 真实 ERP 登录、1 SKU、OSS、项目/商品配置 E2E | 进行中 | ERP 图片源下载已通过；待浏览器 SKU/OSS 与市场配置 |
+| 2 ERP 与市场配置 | ERP/配置 + 前端市场选择 | ERP 导入、退出、项目/商品市场配置 | 真实 ERP 登录、1 SKU、OSS、项目/商品配置 E2E | 进行中 | Git `27a580f` 已部署；待员工浏览器 SKU/OSS 与市场配置 |
 | 3 Prompt OS 运行契约 | Prompt OS + 规则输入 | N1–N9、参考图选择、Schema、快照 | 节点契约与多市场 Prompt 回归 | 未开始 | 阶段 2 通过 |
 | 4 生成审核导出闭环 | 生成审核 + QA | 白底门禁、修订、审核、ZIP | 六类 54 图质量基准 | 未开始 | 阶段 3 通过 |
 | 5 规则/竞品/Prompt Lab | 规则 + Prompt Lab | 规则包、竞品隔离、模板发布 | 来源追溯、隔离、发布回滚 | 未开始 | 阶段 4 通过 |
@@ -42,7 +42,7 @@
 | C0-03 | 主 Agent | 建立主 Agent 项目治理 | 产品方向 | 角色、交接和签核规则 | `CLAUDE.md`、本控制板 | 规则与软链核对 | 已完成 | 无 |
 | C0-04 | 主 Agent | 确认前端技术栈 | 交互/性能目标 | React + TypeScript + Vite、TanStack Query、dnd-kit 与同源 Django API | 前端架构文档 | 架构审阅 | 已完成 | 无 |
 | C0-05 | 主 Agent | 收口精简需求边界 | 已填写 A–N 与双速流程决定 | 唯一边界、最终设计、实施计划和 `/goal` 任务书 | 需求、设计、计划、控制板 | 编号/矛盾/范围/命令自检 | 已完成 | 无 |
-| T2-01 | 前端体验 + 后端平台 | ERP 图片入口、退出登录与单/多图选择 | 当前 ERP 登录会话、受限图片下载、Django `POST /logout/` 与现有上传入口 | ERP 图片归档、成功后跳转登录页且失败可见、单/多图和文件夹选择入口 | `platform_app` ERP 下载/认证、`frontend/src/api.ts`、`layout.tsx`、`ImportPanel.tsx`、聚焦测试 | ERP 下载回归；Django 登出会话清除；前端 API/App 聚焦测试 | 已完成（未部署） | 真实员工浏览器 SKU/OSS smoke 待验收 |
+| T2-01 | 前端体验 + 后端平台 | ERP 图片入口、退出登录与单/多图选择 | 当前 ERP 登录会话、受限图片下载、Django `POST /logout/` 与现有上传入口 | ERP 图片归档、成功后跳转登录页且失败可见、单/多图和文件夹选择入口 | `platform_app` ERP 下载/认证、`frontend/src/api.ts`、`layout.tsx`、`ImportPanel.tsx`、聚焦测试 | 后端 207 passed；前端 56 passed；生产真实 JPEG 下载、会话清除、UI 标签与健康检查通过 | 已部署（Git `27a580f`） | 真实员工浏览器 SKU/OSS smoke 待验收 |
 | P0-01 | 产品与 Prompt OS | Prompt OS v2 九节点、事实与身份锁 | 九节点规格、官网规则包 | N1 逐图观察、N2–N6 分析/编译、N7 确定性闸门、N8 修改导演、N9 失败简化；完整 2.1.0 核心提示词通过实际 system/视觉指令发送；推断台账和不可变快照 | `platform_app/services.py`、节点规格、测试 | 后端全量 193 passed；线上双参考图完成 23 个 N1–N7 快照和 9 个 PromptVersion | 已部署 | 六类 54 图真实商品质量基准仍待执行 |
 | P0-02 | 前端体验 | 可用上传入口、推断台账和结构化 Prompt 编辑 | React 工作台与 Prompt OS v2 API | 图片/文件夹/拖拽、失败项重传、事实/推断/规则阻断展示、结构化 Prompt 保存 | `frontend/src/**` | 前端 45 passed、Vite build passed；登录态 multipart 图片/WebP/TXT 上传、OSS 读回与预览 passed | 已部署 | 浏览器原生文件夹选择 smoke 待人工执行 |
 | P0-03 | 后端平台 | 商品准备、9 图生成、修订与选择式导出 | Prompt OS v2 与商品资料接口 | 分文件上传结果、结构化 PromptVersion、白底门禁、Shopee VN 原图直通、人工审核后导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | 后端 193 passed；迁移 0012、商品名/关系保存、PostgreSQL 行锁和准备重试 passed | 已部署 | 真实 ERP 员工账号成功登录/SKU 导入 smoke 待验收 |

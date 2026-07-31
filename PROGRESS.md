@@ -96,7 +96,8 @@
 
 # ERP image download, logout, and explicit image pickers
 
-- Status: local Task 1 completed on 2026-07-31; no deployment was performed.
+- Status: deployed on 2026-07-31 as Git `27a580f`; the full employee-browser SKU → preview → OSS smoke remains pending.
 - Change: the existing ERP image download path remains allowlisted and session-scoped; `POST /logout/` now requires a CSRF token, accepts only Django's followed redirect to `/login/`, clears the Django and ERP-token session, and surfaces logout failures without leaving the current page. Upload UI now names the native single/multiple image picker and separate whole-folder picker explicitly while retaining its existing deduplication and import path.
-- Configuration: `.env.example` now records the confirmed ERP login endpoint `http://103.198.125.2:16777/open/system/innerOpen/login`; credentials and runtime tokens remain unset and untracked.
-- Verification: focused frontend API/App tests passed with 51 tests; focused Django auth-permission tests passed with 13 tests.
+- Configuration: `.env.example` records the confirmed ERP login endpoint `http://103.198.125.2:16777/open/system/innerOpen/login` and exact image-source allowlist `180.167.156.35`; production was updated under `global.lock`. Credentials and runtime tokens remain unset and untracked.
+- Verification: backend 207 passed; frontend 56 passed; Vite build, Django check, migration drift and `git diff --check` passed. Production reports release `27a580f`, five services healthy, public `/health/ready` OK, all three UI labels present, logout clears both auth and ERP-token session state, and a real ERP JPEG downloads through the allowlisted application path.
+- Rollback: `/opt/independent-image-platform-backups/20260731_121223-erp-logout-picker`.
