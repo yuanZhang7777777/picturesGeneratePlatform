@@ -999,3 +999,80 @@ def test_stale_terminal_persistence_cannot_overwrite_a_newer_claim():
     assert cluster.preparation_status == Cluster.PreparationStatus.PREPARING
     assert cluster.analysis_snapshot["_preparation_revision"] == 2
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+
+
+def test_prompt_worker_stale_terminal_does_not_autogenerate_newer_claim(
+    tmp_path, settings, monkeypatch
+):
+    from platform_app.models import (
+        Asset,
+        Batch,
+        Cluster,
+        Generation,
+        OutputSlot,
+        OutputTemplate,
+        PromptVersion,
+    )
+    from platform_app.services import (
+        FakeAPIMartClient,
+        LocalStorage,
+        ensure_cluster_generations,
+        process_prompt_once,
+        request_cluster_preparation,
+    )
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", name="Terminal")
+    OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = Batch.objects.create(owner=user, name="Terminal", output_template=template)
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="f" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    cluster.analysis_snapshot = {"_preparation_revision": 1}
+    cluster.save(update_fields=["analysis_snapshot"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    ensure_calls = []
+
+    def tracked_ensure_cluster_generations(*args, **kwargs):
+        ensure_calls.append(args[0].id)
+        return ensure_cluster_generations(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "platform_app.services.ensure_cluster_generations",
+        tracked_ensure_cluster_generations,
+    )
+
+    class NewerClaimClient(FakeAPIMartClient):
+        changed = False
+
+        def optimize_prompt(self, payload):
+            response = super().optimize_prompt(payload)
+            if not self.changed and "NODE N5" in payload["text"]:
+                self.changed = True
+                Cluster.objects.filter(id=cluster.id).update(
+                    preparation_status=Cluster.PreparationStatus.PREPARING,
+                    analysis_snapshot={"_preparation_revision": 2},
+                    auto_generate=True,
+                )
+            return response
+
+    assert process_prompt_once(NewerClaimClient(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.PREPARING
+    assert cluster.analysis_snapshot["_preparation_revision"] == 2
+    assert cluster.auto_generate is True
+    assert ensure_calls == []
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+    assert Generation.objects.filter(cluster=cluster).count() == 0

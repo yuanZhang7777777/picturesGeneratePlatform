@@ -2364,11 +2364,13 @@ def process_prompt_once(client=None, storage=None):
             "prompt_os": node_snapshots,
             "_preparation_revision": claimed_revision,
         }
-        _persist_prompt_terminal(
+        persisted = _persist_prompt_terminal(
             cluster.id, claimed_revision, prompt_values, analysis,
             Cluster.PreparationStatus.BLOCKED if gate_blocks else Cluster.PreparationStatus.READY,
             ", ".join(dict.fromkeys(gate_blocks)), cluster.batch.owner,
         )
+        if not persisted:
+            return 1
         cluster.refresh_from_db()
         if cluster.auto_generate and not gate_blocks:
             ensure_cluster_generations(cluster, cluster.batch.owner)

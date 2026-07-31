@@ -81,3 +81,11 @@ Result: `6 passed`. Final `pytest -q` passed after updating the older configurat
 
 - Extracted `_persist_prompt_terminal`, which locks only Cluster, compares revision/status, then atomically creates all prompt versions and writes the terminal state.
 - RED: direct stale rev1 persistence import failed before the helper existed. GREEN: `pytest tests/test_prompt_os.py::test_stale_terminal_persistence_cannot_overwrite_a_newer_claim tests/test_prompt_os.py::test_prompt_worker_requeues_when_settings_change_during_preparation tests/test_project_configuration.py -q` returned `14 passed`.
+
+## Fix round 4/5
+
+- `process_prompt_once()` now returns immediately when `_persist_prompt_terminal()` rejects a stale revision, before refreshing the cluster or considering auto-generation.
+- Added an end-to-end stale terminal regression that installs a newer revision-2 `PREPARING` claim with `auto_generate=True` while revision 1 is running, and verifies generation scheduling is not called and no `PromptVersion` or `Generation` rows are created.
+- RED: `pytest tests/test_prompt_os.py::test_prompt_worker_stale_terminal_does_not_autogenerate_newer_claim -q` failed because `ensure_cluster_generations()` was called once.
+- GREEN: the three focused stale/requeue regressions returned `3 passed`; `pytest -q` completed the full suite with exit code `0`.
+- Scope note: the pre-existing `ensure_cluster_generations()` lock order remains unchanged for Task 2.
