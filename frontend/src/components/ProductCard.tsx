@@ -39,6 +39,20 @@ function progressText(sku: ProductSku) {
   return `待预备生成 · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
 }
 
+function progressMeta(sku: ProductSku) {
+  const generation = sku.generationProgress;
+  const generated = generation?.completed ?? generation?.current ?? 0;
+  const generationTotal = generation?.total ?? 0;
+  if (generation?.active || (generation?.status && !["idle", "completed", "failed"].includes(generation.status) && generated + (generation.failed ?? 0) < generationTotal)) {
+    return { text: progressText(sku), current: generated, total: generationTotal || 9, active: true };
+  }
+  const preparation = sku.preparation;
+  if ((preparation?.status ?? sku.preparationStatus) === "preparing") {
+    return { text: progressText(sku), current: preparation?.current ?? 0, total: preparation?.total ?? 7, active: true };
+  }
+  return { text: progressText(sku), current: 0, total: 0, active: false };
+}
+
 export function ProductCard({ sku, assets, selected, expanded = false, onOpen = () => undefined, onClose = () => undefined, onSelect, onSave, onReload, onDeleteAsset, onDelete, disabled }: {
   sku: ProductSku;
   assets: ProductAsset[];
@@ -65,6 +79,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
   const label = draft.name.trim() || "未命名商品";
   const nameSourceText = sku.productNameSource === "ai" ? "AI 识别，可修改" : sku.productNameSource === "erp" ? "来自 ERP" : "";
+  const progress = progressMeta(sku);
 
   useEffect(() => { setCurrentVersion(sku.version); }, [sku.id, sku.version]);
   useEffect(() => {
@@ -115,29 +130,32 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       data-dnd-activator
       role="group"
       aria-label={`${label} 商品卡片（可拖拽合并）`}
-      className={`surface product-card aspect-square min-w-0 overflow-hidden ${droppable.isOver ? "ring-2 ring-indigo-500" : ""}`}
+      className={`surface product-card min-w-0 overflow-hidden ${droppable.isOver ? "ring-2 ring-indigo-500" : ""}`}
       onClick={(event) => { if (!(event.target as HTMLElement).closest("input,select,textarea,button,summary,a")) onOpen(); }}
     >
-      <div className="relative h-[42%] bg-slate-100">
+      <div className="relative aspect-[4/3] bg-slate-100">
         {assets.length > 1 && <span className="absolute inset-x-3 bottom-1 top-3 rounded-xl border border-slate-300 bg-slate-200" />}
-        {assets[0]?.imageUrl ? <img className="relative size-full object-cover" src={assets[0].imageUrl} alt={`${label} 商品参考图`} /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
+        {assets[0]?.imageUrl ? <img className="relative size-full object-contain" src={assets[0].imageUrl} alt={`${label} 商品参考图`} /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
         <span className="absolute bottom-2 left-2 rounded-full bg-slate-950/80 px-2 py-1 text-xs font-semibold text-white">{assets.length > 1 ? `堆叠 ${assets.length} 张` : `${assets.length} 张`}</span>
         <label className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm"><input aria-label={`选择 ${label}`} className="size-4" type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} />选择</label>
       </div>
-      <div className="flex h-[58%] min-h-0 flex-col gap-1 overflow-y-auto p-2.5">
-        <input aria-label={`商品名称 ${label}`} className="h-8 min-h-8 font-semibold" value={draft.name} placeholder="可不填，预备生成时识别" onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void submit()} />
+      <div className="flex flex-col gap-2 p-3">
+        <input aria-label={`商品名称 ${label}`} className="h-9 min-h-9 font-semibold" value={draft.name} placeholder="可不填，预备生成时识别" onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void submit()} />
         {nameSourceText && <p className="text-[11px] text-slate-500">{nameSourceText}</p>}
         <div className="grid grid-cols-2 gap-1.5">
-          <select aria-label={`商品平台 ${label}`} className="h-8 min-h-8 py-1 text-xs" value={draft.platform} onChange={(event) => setDraft({ ...draft, platform: event.target.value })} onBlur={() => void submit()}>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select>
-          <span><input aria-label={`商品市场 ${label}`} className="h-8 min-h-8 py-1 text-xs" list={`product-market-options-${sku.id}`} value={marketLabel(draft.market)} onChange={(event) => setDraft({ ...draft, market: marketValue(event.target.value) })} onBlur={() => void submit()} /><datalist id={`product-market-options-${sku.id}`}>{[...commonMarkets, ...extraMarkets].map(([code, text]) => <option key={code} value={text} />)}</datalist></span>
+          <select aria-label={`商品平台 ${label}`} className="h-9 min-h-9 py-1 text-xs" value={draft.platform} onChange={(event) => setDraft({ ...draft, platform: event.target.value })} onBlur={() => void submit()}>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select>
+          <span><input aria-label={`商品市场 ${label}`} className="h-9 min-h-9 py-1 text-xs" list={`product-market-options-${sku.id}`} value={marketLabel(draft.market)} onChange={(event) => setDraft({ ...draft, market: marketValue(event.target.value) })} onBlur={() => void submit()} /><datalist id={`product-market-options-${sku.id}`}>{[...commonMarkets, ...extraMarkets].map(([code, text]) => <option key={code} value={text} />)}</datalist></span>
         </div>
-        <textarea aria-label={`创意 Brief ${label}`} className="min-h-12 resize-none py-1.5 text-xs" value={draft.productFacts} placeholder="补充材质、功能或使用要求" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void submit()} />
+        <textarea aria-label={`创意 Brief ${label}`} className="min-h-16 resize-none py-1.5 text-xs" value={draft.productFacts} placeholder="补充材质、功能或使用要求" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void submit()} />
         <details className="rounded-lg bg-slate-50 px-2 py-1">
           <summary className="cursor-pointer text-xs font-medium text-slate-600">单品风格（选填）</summary>
           <textarea aria-label={`单品风格 ${label}`} className="mt-1 min-h-12 resize-none py-1.5 text-xs" value={draft.productStyle} onChange={(event) => setDraft({ ...draft, productStyle: event.target.value })} onBlur={() => void submit()} />
         </details>
         {saveError && <p className="text-xs text-amber-700">{saveError}</p>}
-        <div className="mt-auto flex items-center justify-between gap-2 text-xs"><span className="truncate text-slate-600">{progressText(sku)}</span><button className="shrink-0 font-semibold text-indigo-700" type="button" onClick={onOpen}>查看 {label} 详情</button></div>
+        <div className="mt-auto space-y-2 text-xs">
+          <div className="flex items-center justify-between gap-2"><span className="truncate text-slate-600">{progress.text}</span><button className="shrink-0 font-semibold text-indigo-700" type="button" onClick={onOpen}>查看 {label} 详情</button></div>
+          {progress.active && <ProgressBar current={progress.current} total={progress.total} />}
+        </div>
       </div>
     </article>
     {expanded && <section className="surface product-card-expanded-detail min-w-0 overflow-y-auto p-5" role="region" aria-label={`${label} 商品详情`}>
@@ -162,4 +180,10 @@ function DraggableAsset({ asset, index, onDelete, disabled }: { asset: ProductAs
   const draggable = useDraggable({ id: `asset:${asset.id}`, data: { type: "asset", assetId: asset.id }, disabled });
   const style = draggable.transform ? { transform: `translate3d(${draggable.transform.x}px, ${draggable.transform.y}px, 0)` } : undefined;
   return <div className="relative size-20 shrink-0"><button ref={draggable.setNodeRef} style={style} {...draggable.listeners} {...draggable.attributes} data-dnd-activator aria-label={`拖拽商品参考图 ${index + 1}`} className="size-20 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">{asset.imageUrl ? <img className="size-full object-cover" src={asset.imageUrl} alt={`商品参考图 ${index + 1}`} /> : <span className="grid size-full place-items-center text-xs text-slate-400">待预览</span>}</button><button aria-label={`删除商品参考图 ${index + 1}`} className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-slate-950 text-xs text-white" type="button" disabled={disabled} onClick={() => { if (window.confirm(`删除第 ${index + 1} 张商品参考图？`)) onDelete(); }}>×</button></div>;
+}
+
+function ProgressBar({ current, total }: { current: number; total: number }) {
+  const safeTotal = total || 1;
+  const percent = Math.min(100, Math.round((current / safeTotal) * 100));
+  return <div className="progress-track" aria-label="预备生成进度" role="progressbar" aria-valuemin={0} aria-valuemax={safeTotal} aria-valuenow={Math.min(current, safeTotal)}><span className="progress-fill progress-fill-active" style={{ width: `${percent}%` }} /></div>;
 }

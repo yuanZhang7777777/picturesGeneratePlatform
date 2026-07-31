@@ -22,7 +22,6 @@ export default function ProjectGrouping() {
   const projectQuery = useProjectSnapshot(projectId);
   const queryClient = useQueryClient();
   const [deselectedIds, setDeselectedIds] = useState<Set<string>>(new Set());
-  const [importOpen, setImportOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const project = projectQuery.data;
@@ -89,8 +88,8 @@ export default function ProjectGrouping() {
   const busy = upload.isPending || skuImport.isPending || prepare.isPending || generate.isPending || reorganize.isPending || save.isPending || removeAsset.isPending || removeCluster.isPending;
 
   return <Shell>
-    <ProjectToolbar project={project} selectedCount={selectedClusters.length} pending={saveSettings.isPending} onSave={(input) => saveSettings.mutateAsync(input)} onAdd={() => setImportOpen(true)} onSelectAll={() => setDeselectedIds(new Set())} onDeselectAll={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))} onInvert={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))} onPrepare={() => prepare.mutate()} onGenerate={() => generate.mutate()} />
-    {importOpen && <ImportModal onClose={() => setImportOpen(false)}><ImportPanel disabled={busy} onUpload={(files, mode) => upload.mutateAsync({ files, mode })} onSkuImport={(skus, mode) => skuImport.mutateAsync({ skus, mode })} onImported={() => setImportOpen(false)} /></ImportModal>}
+    <ProjectToolbar project={project} selectedCount={selectedClusters.length} pending={saveSettings.isPending} onSave={(input) => saveSettings.mutateAsync(input)} onSelectAll={() => setDeselectedIds(new Set())} onDeselectAll={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))} onInvert={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))} onPrepare={() => prepare.mutate()} onGenerate={() => generate.mutate()} />
+    <div className="mb-5"><ImportPanel disabled={busy} onUpload={(files, mode) => upload.mutateAsync({ files, mode })} onSkuImport={(skus, mode) => skuImport.mutateAsync({ skus, mode })} onImported={() => undefined} /></div>
     {uploadResult && <div className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">成功导入 {uploadResult.asset_count} 个素材{uploadResult.rejected.length ? `，${uploadResult.rejected.length} 个未导入` : ""}。</div>}
     {localError instanceof ApiError && <p className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{localError.message}</p>}
     {globalError && <div className="mb-5"><ErrorPanel error={globalError} /></div>}
@@ -98,7 +97,7 @@ export default function ProjectGrouping() {
       const assets = sku.assets ?? project.assets.filter((asset) => sku.assetIds.includes(asset.id));
       return <ProductCard key={sku.id} sku={sku} assets={assets} selected={!deselectedIds.has(sku.id)} expanded={expandedId === sku.id} disabled={busy} onOpen={() => setExpandedId(sku.id)} onClose={() => setExpandedId(null)} onSave={(payload, expectedVersion) => save.mutateAsync({ skuId: sku.id, expectedVersion, payload })} onReload={() => projectQuery.refetch()} onDeleteAsset={(assetId) => removeAsset.mutate(assetId)} onDelete={() => removeCluster.mutate(sku.id)} onSelect={(next) => setDeselectedIds((current) => { const copy = new Set(current); if (next) copy.delete(sku.id); else copy.add(sku.id); return copy; })} />;
     })}</ProductGrid></DndContext>
-    {!project.skus.length && <EmptyState title="还没有商品素材" description="点击“添加商品”上传图片、文件夹或导入 ERP SKU。" />}
+    {!project.skus.length && <EmptyState title="还没有商品素材" description="在上方导入图片、文件夹或 ERP SKU。" />}
   </Shell>;
 }
 
@@ -107,7 +106,7 @@ function ProductGrid({ children }: { children: ReactNode }) {
   return <section ref={blank.setNodeRef} className={`product-card-grid min-h-56 rounded-2xl ${blank.isOver ? "bg-indigo-50" : ""}`} aria-label="商品分组网格">{children}</section>;
 }
 
-function ProjectToolbar({ project, selectedCount, pending, onSave, onAdd, onSelectAll, onDeselectAll, onInvert, onPrepare, onGenerate }: { project: { id: string; name: string; defaultConfig?: ProductConfiguration; platform: string; market: string; size: string; resolution?: string }; selectedCount: number; pending: boolean; onSave: (input: ProductConfiguration) => Promise<unknown>; onAdd: () => void; onSelectAll: () => void; onDeselectAll: () => void; onInvert: () => void; onPrepare: () => void; onGenerate: () => void }) {
+function ProjectToolbar({ project, selectedCount, pending, onSave, onSelectAll, onDeselectAll, onInvert, onPrepare, onGenerate }: { project: { id: string; name: string; defaultConfig?: ProductConfiguration; platform: string; market: string; size: string; resolution?: string }; selectedCount: number; pending: boolean; onSave: (input: ProductConfiguration) => Promise<unknown>; onSelectAll: () => void; onDeselectAll: () => void; onInvert: () => void; onPrepare: () => void; onGenerate: () => void }) {
   const initial = () => ({
     platform: project.defaultConfig?.platform || project.platform?.toLowerCase() || "generic",
     market: project.defaultConfig?.market || project.market || "SEA",
@@ -141,7 +140,7 @@ function ProjectToolbar({ project, selectedCount, pending, onSave, onAdd, onSele
   };
   const searchedMarkets = extraMarkets.filter(([code, label]) => label.includes(search.trim()) || code.includes(search.trim().toUpperCase()));
   return <section className="surface mb-5 p-4" aria-label="项目工具栏">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-bold tracking-tight">{project.name}</h1><div className="flex flex-wrap gap-2"><button className="secondary-button" type="button" onClick={onAdd}>添加商品</button><button className="toolbar-choice" type="button" onClick={onSelectAll}>全选</button><button className="toolbar-choice" type="button" onClick={onDeselectAll}>取消全选</button><button className="toolbar-choice" type="button" onClick={onInvert}>反选</button><button className="secondary-button" type="button" disabled={!selectedCount} onClick={onPrepare}>预备生成（{selectedCount}）</button><button className="primary-button" type="button" disabled={!selectedCount} onClick={onGenerate}>正式生成（{selectedCount}）</button><Link className="secondary-button" to={`/projects/${project.id}/results`}>生产结果</Link></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-bold tracking-tight">{project.name}</h1><div className="flex flex-wrap gap-2"><button className="toolbar-choice" type="button" onClick={onSelectAll}>全选</button><button className="toolbar-choice" type="button" onClick={onDeselectAll}>取消全选</button><button className="toolbar-choice" type="button" onClick={onInvert}>反选</button><button className="secondary-button" type="button" disabled={!selectedCount} onClick={onPrepare}>预备生成（{selectedCount}）</button><button className="primary-button" type="button" disabled={!selectedCount} onClick={onGenerate}>正式生成（{selectedCount}）</button><Link className="secondary-button" to={`/projects/${project.id}/results`}>生产结果</Link></div></div>
     <div className="mt-4 grid gap-3 xl:grid-cols-[auto_1fr_auto_auto_minmax(180px,1fr)] xl:items-end">
       <fieldset><legend className="mb-1 text-xs font-medium text-slate-500">平台</legend><div className="flex flex-wrap gap-1">{platforms.map(([code, label]) => <button key={code} aria-pressed={draft.platform === code} className={`toolbar-choice ${draft.platform === code ? "toolbar-choice-active" : ""}`} type="button" disabled={pending} onClick={() => void save({ ...draft, platform: code })}>{label}</button>)}</div></fieldset>
       <fieldset className="min-w-0"><legend className="mb-1 text-xs font-medium text-slate-500">市场</legend><div className="flex flex-wrap gap-1">{commonMarkets.map(([code, label]) => <button key={code} aria-pressed={draft.market === code} className={`toolbar-choice ${draft.market === code ? "toolbar-choice-active" : ""}`} type="button" disabled={pending} onClick={() => void save({ ...draft, market: code })}>{label}</button>)}<span className="relative"><button className="toolbar-choice" type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>更多国家</button>{moreOpen && <span className="absolute left-0 top-full z-20 mt-2 block w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-lg"><input aria-label="搜索更多国家" className="mb-2" placeholder="搜索或输入国家/地区" value={search} onChange={(event) => setSearch(event.target.value)} />{searchedMarkets.map(([code, label]) => <button className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" key={code} type="button" onClick={() => { void save({ ...draft, market: code }); setMoreOpen(false); }}>{label}</button>)}{search.trim() && <button className="mt-1 block w-full rounded-lg bg-slate-100 px-3 py-2 text-left text-sm font-semibold text-slate-700" type="button" onClick={() => { void save({ ...draft, market: marketValue(search) }); setMoreOpen(false); }}>使用“{search.trim()}”</button>}</span>}</span></div></fieldset>
@@ -150,11 +149,4 @@ function ProjectToolbar({ project, selectedCount, pending, onSave, onAdd, onSele
       <label className="text-xs font-medium text-slate-500">项目风格<input aria-label="项目风格" className="mt-1" value={draft.globalPrompt} placeholder="全项目默认风格（选填）" onChange={(event) => setDraft({ ...draft, globalPrompt: event.target.value })} onBlur={() => { if (dirty) void save(draft); }} /></label>
     </div>
   </section>;
-}
-
-function ImportModal({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  const closeButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; document.addEventListener("keydown", close); return () => document.removeEventListener("keydown", close); }, [onClose]);
-  useEffect(() => { closeButton.current?.focus(); }, []);
-  return <div className="fixed inset-0 z-30 grid place-items-center bg-slate-950/30 p-4" role="presentation" onMouseDown={onClose}><section aria-label="添加商品" aria-modal="true" className="add-product-modal max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-slate-50 p-5 shadow-2xl" role="dialog" onMouseDown={(event) => event.stopPropagation()}><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold">添加商品</h2><button ref={closeButton} className="secondary-button" type="button" onClick={onClose}>关闭</button></div>{children}</section></div>;
 }

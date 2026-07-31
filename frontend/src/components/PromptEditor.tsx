@@ -3,12 +3,12 @@ import { slotLabel } from "../labels";
 import type { ClusterUpdateInput, ClusterUpdateResult, ProductPrompt, ProductSku, RuleGateMessage } from "../types";
 
 const defaultPrompts = [
-  "白底标准图",
-  "第二角度/结构图",
+  "标准白底产品图",
   "核心卖点图",
-  "材质或细节图",
+  "商品细节图",
+  "功能说明图",
   "使用场景图",
-  "模特或比例展示图",
+  "模特/比例图",
   "尺寸/包装/包含物图",
   "平台转化营销图",
   "补充转化图",
@@ -22,7 +22,8 @@ type PromptDraft = {
 };
 
 function promptsFromSku(sku: ProductSku) {
-  return (sku.prompts?.length ? sku.prompts : defaultPrompts).map((prompt) => ({ ...prompt }));
+  const promptsByOrder = new Map((sku.prompts ?? []).map((prompt) => [prompt.slotOrder, prompt]));
+  return defaultPrompts.map((fallback) => ({ ...fallback, ...promptsByOrder.get(fallback.slotOrder) }));
 }
 
 function draftFromSku(sku: ProductSku): PromptDraft {
@@ -97,6 +98,11 @@ export function PromptEditor({
   const semanticRisks = gate?.semantic_risks ?? [];
   const warnings = gate?.warnings ?? [];
   const hasGateSummary = hardBlocks.length + semanticRisks.length + warnings.length > 0;
+  const preparation = sku.preparation;
+  const preparing = (preparation?.status ?? sku.preparationStatus) === "preparing";
+  const progressTotal = preparation?.total || 7;
+  const progressCurrent = Math.min(preparation?.current ?? 0, progressTotal);
+  const promptPlaceholder = preparing ? "正在生成这个槽位的 Prompt，生成后会自动加载到这里" : "预备生成后显示，可人工微调";
 
   return (
     <section className="mt-4 space-y-4">
@@ -143,13 +149,18 @@ export function PromptEditor({
         <textarea aria-label="商品身份" value={draft.identityLock} onChange={(event) => setDraft((current) => ({ ...current, identityLock: event.target.value }))} />
       </label>
       <section className="rounded-lg bg-slate-50 p-3">
-        <h3 className="text-sm font-semibold text-slate-700">1+8 输出 Prompt</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-slate-700">1+8 输出 Prompt</h3>
+          {preparing && <span className="text-xs font-semibold text-indigo-700">Prompt 生成中 {progressCurrent}/{progressTotal}</span>}
+        </div>
+        {preparing && <ProgressBar current={progressCurrent} total={progressTotal} />}
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {draft.prompts.map((prompt) => (
             <label className="block text-sm font-medium text-slate-700" key={prompt.slotOrder}>
               <span className="mb-2 block">{String(prompt.slotOrder).padStart(2, "0")} {slotLabel(prompt.slot, prompt.slotOrder)} Prompt</span>
               <textarea
                 disabled={prompt.readOnly}
+                placeholder={promptPlaceholder}
                 value={prompt.text}
                 onChange={(event) => updatePrompt(prompt.slotOrder, event.target.value)}
               />
@@ -166,4 +177,9 @@ export function PromptEditor({
       </button>
     </section>
   );
+}
+
+function ProgressBar({ current, total }: { current: number; total: number }) {
+  const percent = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
+  return <div className="progress-track mt-3" aria-label="预备生成进度" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={current}><span className="progress-fill progress-fill-active" style={{ width: `${percent}%` }} /></div>;
 }

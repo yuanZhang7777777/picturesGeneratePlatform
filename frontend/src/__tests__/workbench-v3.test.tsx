@@ -168,16 +168,19 @@ test("prepares only selected products through the explicit preparation endpoint"
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({ cluster_ids: ["one"] });
 });
 
-test("opens add product in a centered modal with the two required tabs", async () => {
+test("shows the add-product panel inline with organize as the primary import action", async () => {
   renderApp();
 
-  fireEvent.click(await screen.findByRole("button", { name: "添加商品" }));
-  const dialog = screen.getByRole("dialog", { name: "添加商品" });
-  expect(dialog).toHaveClass("add-product-modal");
+  expect(await screen.findByRole("heading", { name: "夏日上新" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "添加商品" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "添加商品" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("添加商品面板")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "图片/文件夹" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "ERP SKU" })).toBeInTheDocument();
   expect(screen.getByLabelText("选择图片")).toHaveAttribute("multiple");
   expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("webkitdirectory");
+  expect(screen.getByRole("button", { name: "导入后整理" })).toHaveClass("primary-button");
+  expect(screen.getByRole("button", { name: "导入并自动出图" })).toHaveClass("secondary-button");
 });
 
 test("shows editable compact card fields and exact preparation progress without implementation codes", async () => {
@@ -189,6 +192,7 @@ test("shows editable compact card fields and exact preparation progress without 
   expect(screen.getByLabelText("创意 Brief 桌面灯")).toHaveValue("适合明亮桌面场景");
   expect(screen.getByLabelText("单品风格 桌面灯")).toHaveValue("柔和自然光");
   expect(screen.getAllByText("预备生成中 · N3 事实台账 · 3/7")).toHaveLength(2);
+  expect(screen.getAllByRole("progressbar", { name: "预备生成进度" })).not.toHaveLength(0);
   expect(screen.getByLabelText("商品名称 桌面灯")).toHaveAttribute("placeholder", "可不填，预备生成时识别");
   expect(screen.getByRole("button", { name: "全选" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "取消全选" })).toBeInTheDocument();
@@ -255,8 +259,9 @@ test("expands one product inline and consumes the first outside click", async ()
   expect(screen.getByRole("region", { name: "商品身份卡" })).toHaveTextContent("桌面用品");
   expect(screen.getByRole("region", { name: "商品身份卡" })).toHaveTextContent("蓝色折叠结构");
   expect(screen.getByRole("region", { name: "商品身份卡" })).toHaveTextContent("蓝色外壳");
-  expect(screen.getByText("01 白底标准图 Prompt")).toBeInTheDocument();
-  expect(screen.getByText("02 第二角度/结构图 Prompt")).toBeInTheDocument();
+  expect(screen.getByText("01 标准白底产品图 Prompt")).toBeInTheDocument();
+  expect(screen.getByText("02 核心卖点图 Prompt")).toBeInTheDocument();
+  expect(screen.queryByText(/第 1 张输出图 Prompt/)).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "查看 折叠椅 详情" }));
   expect(screen.queryByRole("region", { name: "桌面灯 商品详情" })).not.toBeInTheDocument();

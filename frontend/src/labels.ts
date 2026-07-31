@@ -45,22 +45,43 @@ export function marketValue(value: string) {
 }
 
 const slotLabels: Record<string, string> = {
-  hero: "白底标准图",
-  main: "白底标准图",
-  white_background: "白底标准图",
-  angle: "第二角度/结构图",
+  hero: "标准白底产品图",
+  main: "标准白底产品图",
+  white_background: "标准白底产品图",
+  standard_white_background_product_hero: "标准白底产品图",
+  angle: "核心卖点图",
+  key_benefit: "核心卖点图",
   selling_point: "核心卖点图",
-  detail: "材质或细节图",
+  detail: "商品细节图",
+  product_detail: "商品细节图",
+  function: "功能说明图",
   scene: "使用场景图",
-  scale: "模特或比例展示图",
+  usage: "使用场景图",
+  scale: "模特/比例图",
+  model_or_scale: "模特/比例图",
   package: "尺寸/包装/包含物图",
+  size_packaging_or_contents: "尺寸/包装/包含物图",
   conversion: "平台转化营销图",
+  marketplace_conversion: "平台转化营销图",
   extra: "补充转化图",
+  supplemental_conversion: "补充转化图",
 };
+
+const orderSlotLabels = [
+  "标准白底产品图",
+  "核心卖点图",
+  "商品细节图",
+  "功能说明图",
+  "使用场景图",
+  "模特/比例图",
+  "尺寸/包装/包含物图",
+  "平台转化营销图",
+  "补充转化图",
+];
 
 export function slotLabel(value: string, order: number) {
   const normalized = value.trim().toLowerCase().replace(/[\s/-]+/g, "_");
-  return slotLabels[normalized] ?? (/[\u3400-\u9fff]/.test(value) ? value : `第 ${order} 张输出图`);
+  return slotLabels[normalized] ?? (/[\u3400-\u9fff]/.test(value) ? value : orderSlotLabels[order - 1] ?? `输出图 ${order}`);
 }
 
 export const stageLabels: Record<string, string> = {

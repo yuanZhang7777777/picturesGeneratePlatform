@@ -114,16 +114,16 @@ export function ImportPanel({
       {imageFiles.length > 0 && <div className="mt-4 grid grid-cols-5 gap-2 sm:grid-cols-8">{imageFiles.map((file, index) => <PendingImage key={`${uploadPath(file)}:${file.size}:${file.lastModified}`} file={file} index={index} />)}</div>}
       <p className="mt-4 text-sm text-slate-500">{files.length ? `已选择 ${imageFiles.length} 张图片${txtCount ? `、${txtCount} 个 TXT` : ""}` : "尚未选择图片"}</p>
       <div className="mt-4 flex flex-wrap gap-2">
-        <button className="primary-button" disabled={disabled || !files.length} onClick={() => void uploadFiles("auto")}>导入并自动出图</button>
-        <button className="secondary-button" disabled={disabled || !files.length} onClick={() => void uploadFiles("organize")}>导入后整理</button>
+        <button className="primary-button" disabled={disabled || !files.length} onClick={() => void uploadFiles("organize")}>导入后整理</button>
+        <button className="secondary-button" disabled={disabled || !files.length} onClick={() => void uploadFiles("auto")}>导入并自动出图</button>
         {files.length > 0 && <button className="text-sm font-semibold text-slate-600" type="button" onClick={() => setFiles([])}>清空</button>}
       </div>
     </> : <>
       <label className="block text-sm font-medium text-slate-700"><span className="mb-2 block">ERP SKU</span><textarea value={skuText} onChange={(event) => { setSkuText(event.target.value); setSkuErrors([]); }} placeholder="每行或空格分隔，单次最多 50 个" /></label>
       {skuErrors.length > 0 && <ul className="mt-3 space-y-1 text-sm text-amber-800">{skuErrors.map((message) => <li key={message}>{message}</li>)}</ul>}
       <div className="mt-4 flex flex-wrap gap-2">
-        <button className="primary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("auto")}>导入并自动出图</button>
-        <button className="secondary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("organize")}>导入后整理</button>
+        <button className="primary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("organize")}>导入后整理</button>
+        <button className="secondary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("auto")}>导入并自动出图</button>
       </div>
     </>}
   </section>;
