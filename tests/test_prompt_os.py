@@ -967,3 +967,35 @@ def test_prompt_worker_requeues_when_settings_change_during_preparation(tmp_path
     cluster.refresh_from_db()
     assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+
+
+def test_stale_terminal_persistence_cannot_overwrite_a_newer_claim():
+    from platform_app.models import Batch, Cluster, OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.services import _persist_prompt_terminal
+
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", name="Terminal")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = Batch.objects.create(owner=user, name="Terminal", output_template=template)
+    cluster = Cluster.objects.create(
+        batch=batch,
+        name="Product",
+        preparation_status=Cluster.PreparationStatus.PREPARING,
+        analysis_snapshot={"_preparation_revision": 2},
+    )
+
+    persisted = _persist_prompt_terminal(
+        cluster.id,
+        1,
+        [{"output_slot": slot, "node_name": "N7", "template_version": "v1", "provider_model": "fake", "prompt_text": "stale"}],
+        {"_preparation_revision": 1},
+        Cluster.PreparationStatus.READY,
+        "",
+        user,
+    )
+
+    cluster.refresh_from_db()
+    assert persisted is False
+    assert cluster.preparation_status == Cluster.PreparationStatus.PREPARING
+    assert cluster.analysis_snapshot["_preparation_revision"] == 2
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0

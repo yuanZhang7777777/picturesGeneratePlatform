@@ -76,3 +76,8 @@ Result: `6 passed`. Final `pytest -q` passed after updating the older configurat
 
 - Terminal prompt persistence now locks the Cluster and verifies the claimed revision before creating any PromptVersion rows or setting READY/BLOCKED/FAILED; stale work leaves the newer claim untouched.
 - RED: the prior interleaving test demonstrated stale completion (`ready`) after invalidation. GREEN: `pytest tests/test_prompt_os.py::test_prompt_worker_requeues_when_settings_change_during_preparation tests/test_project_configuration.py -q` returned `13 passed`.
+
+## Fix round 3/5
+
+- Extracted `_persist_prompt_terminal`, which locks only Cluster, compares revision/status, then atomically creates all prompt versions and writes the terminal state.
+- RED: direct stale rev1 persistence import failed before the helper existed. GREEN: `pytest tests/test_prompt_os.py::test_stale_terminal_persistence_cannot_overwrite_a_newer_claim tests/test_prompt_os.py::test_prompt_worker_requeues_when_settings_change_during_preparation tests/test_project_configuration.py -q` returned `14 passed`.

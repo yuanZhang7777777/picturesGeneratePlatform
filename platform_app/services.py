@@ -768,6 +768,20 @@ def _preparation_is_current(cluster_id, revision):
     )
 
 
+def _persist_prompt_terminal(cluster_id, claimed_revision, prompt_values, analysis, status, error, user):
+    with transaction.atomic():
+        locked = Cluster.objects.select_for_update().get(id=cluster_id)
+        if locked.preparation_status != Cluster.PreparationStatus.PREPARING or _preparation_revision(locked.analysis_snapshot) != claimed_revision:
+            return False
+        for values in prompt_values:
+            PromptVersion.objects.create(cluster=locked, created_by=user, **values)
+        locked.analysis_snapshot = analysis
+        locked.preparation_status = status
+        locked.preparation_error = error
+        locked.save(update_fields=["analysis_snapshot", "preparation_status", "preparation_error", "updated_at"])
+        return True
+
+
 def _configuration_signature(batch, cluster):
     return _effective_config(batch, cluster), batch.output_template_id, batch.rule_profile_id
 
@@ -2350,16 +2364,11 @@ def process_prompt_once(client=None, storage=None):
             "prompt_os": node_snapshots,
             "_preparation_revision": claimed_revision,
         }
-        with transaction.atomic():
-            locked = Cluster.objects.select_for_update().select_related("batch").get(id=cluster.id)
-            if locked.preparation_status != Cluster.PreparationStatus.PREPARING or _preparation_revision(locked.analysis_snapshot) != claimed_revision:
-                return 1
-            for values in prompt_values:
-                PromptVersion.objects.create(cluster=locked, created_by=locked.batch.owner, **values)
-            locked.analysis_snapshot = analysis
-            locked.preparation_status = Cluster.PreparationStatus.BLOCKED if gate_blocks else Cluster.PreparationStatus.READY
-            locked.preparation_error = ", ".join(dict.fromkeys(gate_blocks))
-            locked.save(update_fields=["analysis_snapshot", "preparation_status", "preparation_error", "updated_at"])
+        _persist_prompt_terminal(
+            cluster.id, claimed_revision, prompt_values, analysis,
+            Cluster.PreparationStatus.BLOCKED if gate_blocks else Cluster.PreparationStatus.READY,
+            ", ".join(dict.fromkeys(gate_blocks)), cluster.batch.owner,
+        )
         cluster.refresh_from_db()
         if cluster.auto_generate and not gate_blocks:
             ensure_cluster_generations(cluster, cluster.batch.owner)
