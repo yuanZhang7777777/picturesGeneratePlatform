@@ -3,10 +3,10 @@ import { useEffect, useState } from "react";
 
 import { ApiError } from "../api";
 import { commonMarkets, extraMarkets, marketLabel, marketValue, platformLabel, platforms, stageLabels } from "../labels";
-import type { ClusterUpdateInput, ClusterUpdateResult, ProductAsset, ProductSku } from "../types";
+import type { ClusterUpdateInput, ClusterUpdateResult, ProductAsset, ProductSku, RelationType } from "../types";
 import { PromptEditor } from "./PromptEditor";
 
-type Draft = { name: string; productFacts: string; productStyle: string; platform: string; market: string };
+type Draft = { name: string; productFacts: string; productStyle: string; platform: string; market: string; relationType: RelationType };
 
 function draftFromSku(sku: ProductSku): Draft {
   return {
@@ -15,6 +15,7 @@ function draftFromSku(sku: ProductSku): Draft {
     productStyle: sku.productStyle ?? sku.brief ?? "",
     platform: sku.overrides?.platform ?? sku.effectiveConfig?.platform ?? "generic",
     market: sku.overrides?.market ?? sku.effectiveConfig?.market ?? "SEA",
+    relationType: sku.relationType ?? "single_product",
   };
 }
 
@@ -88,7 +89,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       setDraft(next);
       setSavedDraft(next);
     }
-  }, [sku.id, sku.name, sku.productFacts, sku.facts, sku.productStyle, sku.brief, sku.overrides?.platform, sku.overrides?.market, sku.effectiveConfig?.platform, sku.effectiveConfig?.market, dirty]);
+  }, [sku.id, sku.name, sku.productFacts, sku.facts, sku.productStyle, sku.brief, sku.relationType, sku.overrides?.platform, sku.overrides?.market, sku.effectiveConfig?.platform, sku.effectiveConfig?.market, dirty]);
 
   const submit = async () => {
     const payload: ClusterUpdateInput = {};
@@ -97,6 +98,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
     if (draft.productStyle !== savedDraft.productStyle) payload.prompt_override = draft.productStyle;
     if (draft.platform !== savedDraft.platform) payload.platform_override = draft.platform;
     if (draft.market !== savedDraft.market) payload.market_override = draft.market;
+    if (draft.relationType !== savedDraft.relationType) payload.relation_type = draft.relationType;
     if (!Object.keys(payload).length) return;
     setSaving(true);
     setSaveError("");
@@ -121,7 +123,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
   const style = draggable.transform ? { transform: `translate3d(${draggable.transform.x}px, ${draggable.transform.y}px, 0)` } : undefined;
   const setCardRef = (node: HTMLElement | null) => { draggable.setNodeRef(node); droppable.setNodeRef(node); };
 
-  return <div className={expanded ? "product-card-expanded-row" : "min-w-0"} data-expanded-product={expanded ? sku.id : undefined}>
+  return <div className="min-w-0" data-expanded-product={expanded ? sku.id : undefined}>
     <article
       ref={setCardRef}
       style={style}
@@ -134,14 +136,17 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       onClick={(event) => { if (!(event.target as HTMLElement).closest("input,select,textarea,button,summary,a")) onOpen(); }}
     >
       <div className="relative aspect-[4/3] bg-slate-100">
-        {assets.length > 1 && <span className="absolute inset-x-3 bottom-1 top-3 rounded-xl border border-slate-300 bg-slate-200" />}
         {assets[0]?.imageUrl ? <img className="relative size-full object-contain" src={assets[0].imageUrl} alt={`${label} 商品参考图`} /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
-        <span className="absolute bottom-2 left-2 rounded-full bg-slate-950/80 px-2 py-1 text-xs font-semibold text-white">{assets.length > 1 ? `堆叠 ${assets.length} 张` : `${assets.length} 张`}</span>
+        <span className="absolute bottom-2 left-2 rounded-full bg-slate-950/80 px-2 py-1 text-xs font-semibold text-white">{assets.length} 张</span>
         <label className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm"><input aria-label={`选择 ${label}`} className="size-4" type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} />选择</label>
+      </div>
+      <div className="flex max-w-full gap-2 overflow-x-auto p-3 pb-0" role="list" aria-label={`${label} 参考图排序`}>
+        {assets.map((asset, index) => <DraggableAsset key={asset.id} asset={asset} index={index} disabled={saving || disabled} onDelete={() => onDeleteAsset(asset.id)} />)}
       </div>
       <div className="flex flex-col gap-2 p-3">
         <input aria-label={`商品名称 ${label}`} className="h-9 min-h-9 font-semibold" value={draft.name} placeholder="可不填，预备生成时识别" onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void submit()} />
         {nameSourceText && <p className="text-[11px] text-slate-500">{nameSourceText}</p>}
+        {assets.length > 1 && <select aria-label={`参考图关系 ${label}`} className="h-9 min-h-9 py-1 text-xs" value={draft.relationType} onChange={(event) => setDraft({ ...draft, relationType: event.target.value as RelationType })} onBlur={() => void submit()}><option value="same_product">同商品参考</option><option value="variant_group">多色/多款组合</option></select>}
         <div className="grid grid-cols-2 gap-1.5">
           <select aria-label={`商品平台 ${label}`} className="h-9 min-h-9 py-1 text-xs" value={draft.platform} onChange={(event) => setDraft({ ...draft, platform: event.target.value })} onBlur={() => void submit()}>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select>
           <span><input aria-label={`商品市场 ${label}`} className="h-9 min-h-9 py-1 text-xs" list={`product-market-options-${sku.id}`} value={marketLabel(draft.market)} onChange={(event) => setDraft({ ...draft, market: marketValue(event.target.value) })} onBlur={() => void submit()} /><datalist id={`product-market-options-${sku.id}`}>{[...commonMarkets, ...extraMarkets].map(([code, text]) => <option key={code} value={text} />)}</datalist></span>
@@ -158,9 +163,8 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
         </div>
       </div>
     </article>
-    {expanded && <section className="surface product-card-expanded-detail min-w-0 overflow-y-auto p-5" role="region" aria-label={`${label} 商品详情`}>
+    {expanded && <section className="surface product-card-expanded-detail fixed inset-y-4 right-4 z-40 w-[min(720px,calc(100vw-2rem))] overflow-y-auto p-5 shadow-2xl" role="dialog" aria-modal="false" aria-label={`${label} 商品详情`}>
       <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品身份、事实与 1+8 Prompt</p><h2 className="mt-1 text-xl font-semibold">{label}</h2><p className="mt-1 text-sm text-slate-500">{platformLabel(draft.platform)} · {marketLabel(draft.market)}</p></div><button className="secondary-button" type="button" onClick={onClose}>收起</button></div>
-      <div className="mt-4 flex flex-wrap gap-3">{assets.map((asset, index) => <DraggableAsset key={asset.id} asset={asset} index={index} disabled={saving || disabled} onDelete={() => onDeleteAsset(asset.id)} />)}</div>
       <IdentitySummary sku={sku} />
       <PromptEditor sku={sku} onSave={savePrompt} disabled={saving || disabled} />
       <button className="mt-4 text-sm font-semibold text-rose-700" type="button" disabled={saving || disabled} onClick={() => { if (window.confirm(`删除“${label}”？有历史结果时只会归档。`)) onDelete(); }}>删除商品</button>
@@ -172,14 +176,17 @@ function IdentitySummary({ sku }: { sku: ProductSku }) {
   const identity = sku.identity;
   const profile = identity?.product_profile;
   const lock = identity?.identity_lock;
-  if (!identity || (!profile?.category && !profile?.primary_appearance && !lock?.must_not_change?.length)) return null;
-  return <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4" role="region" aria-label="商品身份卡"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-slate-800">商品身份卡</h3>{typeof identity.confidence === "number" && <span className="text-xs text-slate-500">识别置信度 {Math.round(identity.confidence * 100)}%</span>}</div><dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">{identity.product_name && <div><dt className="text-xs text-slate-500">商品名称</dt><dd>{identity.product_name}</dd></div>}{profile?.category && <div><dt className="text-xs text-slate-500">商品类别</dt><dd>{profile.category}</dd></div>}{profile?.primary_appearance && <div><dt className="text-xs text-slate-500">主要外观</dt><dd>{profile.primary_appearance}</dd></div>}{profile?.shared_structure?.length ? <div><dt className="text-xs text-slate-500">共同结构</dt><dd>{profile.shared_structure.join("、")}</dd></div> : null}{lock?.must_not_change?.length ? <div className="sm:col-span-2"><dt className="text-xs text-slate-500">不可改变</dt><dd>{lock.must_not_change.join("、")}</dd></div> : null}</dl></section>;
+  const appearances = identity?.target_appearances ?? [];
+  if (!identity || (!profile?.category && !profile?.primary_appearance && !lock?.must_not_change?.length && !appearances.length)) return null;
+  return <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4" role="region" aria-label="商品身份卡"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-slate-800">商品身份卡</h3>{typeof identity.confidence === "number" && <span className="text-xs text-slate-500">识别置信度 {Math.round(identity.confidence * 100)}%</span>}</div><dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">{identity.product_name && <div><dt className="text-xs text-slate-500">商品名称</dt><dd>{identity.product_name}</dd></div>}{profile?.category && <div><dt className="text-xs text-slate-500">商品类别</dt><dd>{profile.category}</dd></div>}{profile?.primary_appearance && <div><dt className="text-xs text-slate-500">主要外观</dt><dd>{profile.primary_appearance}</dd></div>}{appearances.length ? <div className="sm:col-span-2"><dt className="text-xs text-slate-500">目标外观</dt><dd>{appearances.map((item) => item.label || item.variant_attributes?.join("/") || item.appearance_id).join("、")}</dd></div> : null}{profile?.shared_structure?.length ? <div><dt className="text-xs text-slate-500">共同结构</dt><dd>{profile.shared_structure.join("、")}</dd></div> : null}{lock?.must_not_change?.length ? <div className="sm:col-span-2"><dt className="text-xs text-slate-500">不可改变</dt><dd>{lock.must_not_change.join("、")}</dd></div> : null}</dl></section>;
 }
 
 function DraggableAsset({ asset, index, onDelete, disabled }: { asset: ProductAsset; index: number; onDelete: () => void; disabled?: boolean }) {
   const draggable = useDraggable({ id: `asset:${asset.id}`, data: { type: "asset", assetId: asset.id }, disabled });
+  const droppable = useDroppable({ id: `asset-target:${asset.id}`, data: { type: "asset-target", assetId: asset.id }, disabled });
   const style = draggable.transform ? { transform: `translate3d(${draggable.transform.x}px, ${draggable.transform.y}px, 0)` } : undefined;
-  return <div className="relative size-20 shrink-0"><button ref={draggable.setNodeRef} style={style} {...draggable.listeners} {...draggable.attributes} data-dnd-activator aria-label={`拖拽商品参考图 ${index + 1}`} className="size-20 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">{asset.imageUrl ? <img className="size-full object-cover" src={asset.imageUrl} alt={`商品参考图 ${index + 1}`} /> : <span className="grid size-full place-items-center text-xs text-slate-400">待预览</span>}</button><button aria-label={`删除商品参考图 ${index + 1}`} className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-slate-950 text-xs text-white" type="button" disabled={disabled} onClick={() => { if (window.confirm(`删除第 ${index + 1} 张商品参考图？`)) onDelete(); }}>×</button></div>;
+  const setRef = (node: HTMLElement | null) => { draggable.setNodeRef(node); droppable.setNodeRef(node); };
+  return <div className="relative size-18 shrink-0" role="listitem"><button ref={setRef} style={style} {...draggable.listeners} {...draggable.attributes} data-dnd-activator aria-label={`拖拽商品参考图 ${index + 1}`} className={`size-18 overflow-hidden rounded-lg border bg-slate-100 ${droppable.isOver ? "border-indigo-500 ring-2 ring-indigo-200" : "border-slate-200"}`}>{asset.imageUrl ? <img className="size-full object-contain" src={asset.imageUrl} alt={`商品参考图 ${index + 1}`} /> : <span className="grid size-full place-items-center text-xs text-slate-400">待预览</span>}</button>{index === 0 && <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-slate-950/80 px-1 text-[10px] text-white">主参考</span>}<button aria-label={`删除商品参考图 ${index + 1}`} className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-slate-950 text-xs text-white" type="button" disabled={disabled} onClick={() => { if (window.confirm(`删除第 ${index + 1} 张商品参考图？`)) onDelete(); }}>×</button></div>;
 }
 
 function ProgressBar({ current, total }: { current: number; total: number }) {

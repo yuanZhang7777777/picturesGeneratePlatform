@@ -890,6 +890,13 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                     },
                     "primary_asset_id": str(asset.id),
                     "supporting_asset_ids": [],
+                    "target_appearances": [{
+                        "appearance_id": "appearance.primary",
+                        "label": "sage green",
+                        "variant_attributes": ["sage green"],
+                        "asset_ids": [str(asset.id)],
+                        "primary_asset_id": str(asset.id),
+                    }],
                     "standardization_mode": "reuse",
                     "standardization_reason": "",
                 })
@@ -957,6 +964,7 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                         {
                             "slot_order": order,
                             "role": f"role-{order}",
+                            "appearance_ids": ["appearance.primary"],
                             "scene_family": f"family-{order}",
                             "environment": f"environment-{order}",
                             "camera": f"camera-{order}",
@@ -1840,6 +1848,13 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
                         "conflict_state": "conflict",
                         "primary_asset_id": str(asset.id),
                         "supporting_asset_ids": [],
+                        "target_appearances": [{
+                            "appearance_id": "appearance.primary",
+                            "label": "visible running shoe",
+                            "variant_attributes": [],
+                            "asset_ids": [str(asset.id)],
+                            "primary_asset_id": str(asset.id),
+                        }],
                         "standardization_mode": "reuse",
                         "standardization_reason": "",
                         "identity_lock": {"must_not_change": ["shoe upper"]},
@@ -1949,10 +1964,10 @@ def test_blocked_identity_does_not_write_placeholder_product_name(tmp_path, sett
                         "asset_id": observed_asset_id,
                         "asset_kind": "owned_product",
                         "image_role": "clean_product",
-                        "contains_target_product": True,
-                        "target_is_physical_product": True,
-                        "target_visibility": 90,
-                        "target_complete": True,
+                        "contains_target_product": False,
+                        "target_is_physical_product": False,
+                        "target_visibility": 0,
+                        "target_complete": False,
                         "background_complexity": "low",
                         "observed_identity": {
                             "category_candidates": ["chopsticks set"],
@@ -1984,6 +1999,7 @@ def test_blocked_identity_does_not_write_placeholder_product_name(tmp_path, sett
                             "identity_lock": {"must_not_change": []},
                             "primary_asset_id": None,
                             "supporting_asset_ids": [],
+                            "target_appearances": [],
                             "standardization_mode": "reuse",
                             "standardization_reason": "",
                         })
@@ -2216,6 +2232,224 @@ def test_n2_continue_requires_named_string_identity_fields(
 
     with pytest.raises(ValueError, match=message):
         _normalize_n2_identity(payload, {asset_id})
+
+
+def test_n2_normalizes_target_appearances_and_keeps_all_valid_variants():
+    from platform_app.services import _normalize_n2_identity
+
+    first = "11111111-1111-1111-1111-111111111111"
+    second = "22222222-2222-2222-2222-222222222222"
+    payload = strict_n2({
+        "decision": "continue",
+        "product_name": "Travel mug set",
+        "confidence": 0.9,
+        "needs_input_reason": "",
+        "conflict_state": "match",
+        "primary_asset_id": first,
+        "supporting_asset_ids": [second],
+        "target_appearances": [
+            {"appearance_id": "appearance.green", "label": "green", "variant_attributes": ["green"], "asset_ids": [first], "primary_asset_id": first},
+            {"appearance_id": "appearance.blue", "label": "blue", "variant_attributes": ["blue"], "asset_ids": [second], "primary_asset_id": second},
+        ],
+        "identity_lock": {"must_not_change": ["cup shape"]},
+        "product_profile": {"category": "travel mug", "primary_appearance": "green and blue variants"},
+        "standardization_mode": "reuse",
+        "standardization_reason": "",
+    })
+
+    normalized = _normalize_n2_identity(payload, {first, second}, required_primary_asset_id=first)
+
+    assert [item["appearance_id"] for item in normalized["target_appearances"]] == ["appearance.green", "appearance.blue"]
+    assert {asset for item in normalized["target_appearances"] for asset in item["asset_ids"]} == {first, second}
+
+
+def test_n2_explicit_target_appearances_must_assign_every_valid_product_image():
+    from platform_app.services import _normalize_n2_identity
+
+    first = "11111111-1111-1111-1111-111111111111"
+    second = "22222222-2222-2222-2222-222222222222"
+    payload = strict_n2({
+        "decision": "continue",
+        "product_name": "Travel mug set",
+        "confidence": 0.9,
+        "needs_input_reason": "",
+        "conflict_state": "match",
+        "primary_asset_id": first,
+        "supporting_asset_ids": [second],
+        "target_appearances": [{
+            "appearance_id": "appearance.green",
+            "label": "green",
+            "variant_attributes": ["green"],
+            "asset_ids": [first],
+            "primary_asset_id": first,
+        }],
+        "identity_lock": {"must_not_change": ["cup shape"]},
+        "product_profile": {"category": "travel mug", "primary_appearance": "green and blue variants"},
+        "standardization_mode": "reuse",
+        "standardization_reason": "",
+    })
+
+    with pytest.raises(ValueError, match="every valid product image"):
+        _normalize_n2_identity(payload, {first, second}, required_primary_asset_id=first)
+
+
+def test_n2_cannot_block_when_n1_found_a_valid_product_image():
+    from platform_app.services import _normalize_n2_identity
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    payload = strict_n2({
+        "decision": "needs_input",
+        "product_name": "",
+        "confidence": 0,
+        "needs_input_reason": "Unsure",
+        "conflict_state": "unknown",
+        "primary_asset_id": None,
+        "supporting_asset_ids": [],
+        "target_appearances": [],
+        "identity_lock": {"must_not_change": []},
+        "product_profile": {"category": "", "primary_appearance": ""},
+        "standardization_mode": "reuse",
+        "standardization_reason": "",
+    })
+
+    with pytest.raises(ValueError, match="only block when all product images are invalid"):
+        _normalize_n2_identity(payload, {asset_id}, require_continue_when_valid=True)
+
+
+def test_prompt_worker_observes_every_image_and_continues_with_the_first_valid_one(
+    tmp_path,
+    settings,
+):
+    import json
+    from io import BytesIO
+
+    from django.core.management import call_command
+    from PIL import Image
+
+    from platform_app.models import Cluster
+    from platform_app.services import (
+        FakeAPIMartClient,
+        LocalStorage,
+        create_project,
+        merge_asset_into_cluster,
+        process_prompt_once,
+        register_uploaded_asset,
+        request_cluster_preparation,
+    )
+
+    settings.MEDIA_ROOT = tmp_path
+    call_command("seed_platform_templates")
+    user = make_user()
+    batch = create_project(user, name="Mixed references")
+    first_image = BytesIO()
+    Image.new("RGB", (8, 8), "white").save(first_image, "PNG")
+    second_image = BytesIO()
+    Image.new("RGB", (8, 8), "blue").save(second_image, "PNG")
+    first = register_uploaded_asset(batch, "invalid.png", first_image.getvalue(), "image/png")
+    second = register_uploaded_asset(batch, "valid.png", second_image.getvalue(), "image/png")
+    cluster = first.clusters.get()
+    merge_asset_into_cluster(second, cluster, expected_version=cluster.version)
+    cluster.refresh_from_db()
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class MixedReferenceClient(FakeAPIMartClient):
+        observed = []
+
+        def observe_images(self, instruction, image_paths):
+            asset_id = instruction.split("ASSET_ID=", 1)[1].splitlines()[0]
+            self.observed.append(asset_id)
+            valid = asset_id == str(second.id)
+            return {
+                "output_text": json.dumps(strict_n1({
+                    "asset_id": asset_id,
+                    "asset_kind": "owned_product",
+                    "image_role": "clean_product",
+                    "contains_target_product": valid,
+                    "target_is_physical_product": valid,
+                    "target_visibility": 95 if valid else 0,
+                    "target_complete": valid,
+                    "background_complexity": "low",
+                    "observed_identity": {
+                        "category_candidates": ["travel mug"] if valid else [],
+                        "overall_shape": "cylindrical mug" if valid else "not visible",
+                    },
+                    "reference_quality": 95 if valid else 0,
+                    "recommended_use": "reuse",
+                    "candidate_product_name": "Travel mug" if valid else "Unclear image",
+                    "candidate_product_name_confidence": 0.95 if valid else 0,
+                })),
+                "raw": {},
+            }
+
+        def optimize_prompt(self, payload):
+            if "NODE N2" not in payload.get("text", ""):
+                return super().optimize_prompt(payload)
+            return {
+                "output_text": json.dumps(strict_n2({
+                    "decision": "continue",
+                    "product_name": "Travel mug",
+                    "confidence": 0.95,
+                    "needs_input_reason": "",
+                    "conflict_state": "unknown",
+                    "primary_asset_id": str(second.id),
+                    "supporting_asset_ids": [],
+                    "target_appearances": [{
+                        "appearance_id": "appearance.primary",
+                        "label": "travel mug",
+                        "variant_attributes": [],
+                        "asset_ids": [str(second.id)],
+                        "primary_asset_id": str(second.id),
+                    }],
+                    "standardization_mode": "reuse",
+                    "standardization_reason": "",
+                    "identity_lock": {"must_not_change": ["mug silhouette"]},
+                    "product_profile": {
+                        "category": "travel mug",
+                        "primary_appearance": "visible travel mug",
+                    },
+                })),
+                "raw": {},
+            }
+
+    client = MixedReferenceClient()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert client.observed == [str(first.id), str(second.id)]
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
+    assert cluster.analysis_snapshot["identity"]["primary_asset_id"] == str(second.id)
+
+
+def test_n5_requires_the_set_to_cover_every_target_appearance():
+    from types import SimpleNamespace
+    from platform_app.services import _normalize_n5_plans
+
+    slots = [SimpleNamespace(order=2, name="Benefit 1"), SimpleNamespace(order=3, name="Benefit 2")]
+    base = {
+        "role": "benefit",
+        "decision_task": "task",
+        "main_scene": "scene",
+        "main_action": "none",
+        "subject_relationship": "none",
+        "composition": "hero",
+        "copy_intent": "",
+        "text_mode": "none",
+        "scene_family": "studio",
+        "environment": "studio",
+        "camera": "front",
+        "fact_refs": [],
+        "inference_refs": [],
+        "localization_notes": [],
+        "must_show": [],
+        "must_avoid": [],
+    }
+    payload = {"plans": [
+        {**base, "slot_order": 2, "appearance_ids": ["appearance.green"]},
+        {**base, "slot_order": 3, "decision_task": "task 2", "main_scene": "scene 2", "scene_family": "home", "environment": "home", "camera": "detail", "appearance_ids": ["appearance.green"]},
+    ]}
+
+    with pytest.raises(ValueError, match="cover every target appearance"):
+        _normalize_n5_plans(payload, slots, set(), set(), {"appearance.green", "appearance.blue"})
 
 
 def test_n5_diversity_rejects_one_repeated_dimension_even_when_tuples_differ():

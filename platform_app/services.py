@@ -327,8 +327,15 @@ class FakeAPIMartClient:
             node_input = {}
         if "NODE N2" in text:
             observations = node_input.get("observations", [])
-            primary = observations[0].get("asset_id") if observations else None
-            observed = observations[0] if observations else {}
+            product_observations = [
+                item
+                for item in observations
+                if item.get("contains_target_product")
+                and item.get("target_is_physical_product")
+                and item.get("asset_id")
+            ]
+            primary = product_observations[0].get("asset_id") if product_observations else None
+            observed = product_observations[0] if product_observations else {}
             observed_facts = _string_list(observed.get("product_facts") or observed.get("facts"))
             output = {
                 "decision": "continue",
@@ -357,7 +364,19 @@ class FakeAPIMartClient:
                     ]
                 },
                 "primary_asset_id": primary,
-                "supporting_asset_ids": [],
+                "supporting_asset_ids": [
+                    item.get("asset_id") for item in product_observations[1:4]
+                ],
+                "target_appearances": [
+                    {
+                        "appearance_id": f"appearance.{index + 1:03d}",
+                        "label": "; ".join(_string_list(item.get("product_facts") or item.get("facts"))),
+                        "variant_attributes": [],
+                        "asset_ids": [item.get("asset_id")],
+                        "primary_asset_id": item.get("asset_id"),
+                    }
+                    for index, item in enumerate(product_observations)
+                ],
                 "standardization_mode": "reuse",
                 "standardization_reason": "",
             }
@@ -373,6 +392,7 @@ class FakeAPIMartClient:
                         "evidence_refs": ["product_name"],
                         "risk_level": "low",
                         "allowed_uses": ["identity", "visual_prompt", "consumer_copy"],
+                        "review_note": "",
                     }
                 ],
                 "blocked_claim_topics": ["price", "certification", "medical_efficacy"],
@@ -419,6 +439,11 @@ class FakeAPIMartClient:
                     {
                         "slot_order": slot["slot_order"],
                         "role": slot.get("purpose") or slot.get("name") or f"slot-{slot['slot_order']}",
+                        "appearance_ids": [
+                            item.get("appearance_id")
+                            for item in node_input.get("target_appearances", [])
+                            if item.get("appearance_id")
+                        ],
                         "scene_family": f"scene-{slot['slot_order']}",
                         "environment": f"environment-{slot['slot_order']}",
                         "camera": f"camera-{slot['slot_order']}",
@@ -789,7 +814,7 @@ def create_project(
     owner,
     *,
     name,
-    platform="generic",
+    platform="shopee",
     market="SEA",
     seller_tier="general",
     template=None,
@@ -1640,6 +1665,8 @@ def _promote_primary_if_needed(cluster):
             relation.order = index
             relation.role = role
             relation.save(update_fields=["role", "order"])
+    if len(relations) == 1:
+        cluster.relation_type = Cluster.RelationType.SINGLE_PRODUCT
     cluster.version += 1
     _invalidate_preparation(cluster)
     cluster.save(
@@ -1652,6 +1679,7 @@ def _promote_primary_if_needed(cluster):
             "preparation_total",
             "analysis_snapshot",
             "auto_generate",
+            "relation_type",
             "updated_at",
         ]
     )
@@ -1732,6 +1760,8 @@ def merge_asset_into_cluster(asset, target_cluster, expected_version=None):
         old_cluster = Cluster.objects.select_for_update().get(id=old_relation.cluster_id)
         _ensure_cluster_mutable(old_cluster)
     relation = target.add_asset(asset)
+    if target.relation_type == Cluster.RelationType.SINGLE_PRODUCT:
+        target.relation_type = Cluster.RelationType.SAME_PRODUCT
     _invalidate_preparation(target)
     target.save(
         update_fields=[
@@ -1742,6 +1772,7 @@ def merge_asset_into_cluster(asset, target_cluster, expected_version=None):
             "preparation_total",
             "analysis_snapshot",
             "auto_generate",
+            "relation_type",
             "updated_at",
         ]
     )
@@ -2444,9 +2475,9 @@ def _repair_slot_prompt_json(client, text, slots):
 def _string_list(value):
     if isinstance(value, list):
         return [
-            str(item).strip()
+            item.strip()
             for item in value
-            if str(item).strip() and not _is_schema_placeholder(item)
+            if isinstance(item, str) and item.strip() and not _is_schema_placeholder(item)
         ]
     if isinstance(value, str) and value.strip():
         return [] if _is_schema_placeholder(value) else [value.strip()]
@@ -2660,13 +2691,21 @@ def _normalize_n1_observation(payload, expected_asset_id):
     return normalized
 
 
-def _normalize_n2_identity(payload, valid_asset_ids):
+def _normalize_n2_identity(
+    payload,
+    valid_asset_ids,
+    required_primary_asset_id=None,
+    *,
+    require_continue_when_valid=False,
+):
     if not isinstance(payload, dict):
         raise ValueError("N2 output must be an object")
     valid_asset_ids = {str(asset_id) for asset_id in valid_asset_ids}
     decision = _required_string(payload, "decision")
     if decision not in {"continue", "needs_input"}:
         raise ValueError("decision must be continue or needs_input")
+    if require_continue_when_valid and valid_asset_ids and decision != "continue":
+        raise ValueError("N2 may only block when all product images are invalid")
     needs_input_reason = payload.get("needs_input_reason")
     if not isinstance(needs_input_reason, str):
         raise ValueError("needs_input_reason must be a string")
@@ -2754,6 +2793,8 @@ def _normalize_n2_identity(payload, valid_asset_ids):
             raise ValueError("primary_asset_id must identify a cluster asset")
     if decision == "continue" and primary_asset_id is None:
         raise ValueError("primary_asset_id is required when decision is continue")
+    if required_primary_asset_id is not None and decision == "continue" and primary_asset_id != str(required_primary_asset_id):
+        raise ValueError("primary_asset_id must match the first ordered cluster asset")
     supporting = payload.get("supporting_asset_ids")
     if not isinstance(supporting, list):
         raise ValueError("supporting_asset_ids must be an array")
@@ -2762,6 +2803,52 @@ def _normalize_n2_identity(payload, valid_asset_ids):
         raise ValueError("supporting_asset_ids must contain at most three unique cluster assets")
     if any(asset_id not in valid_asset_ids or asset_id == primary_asset_id for asset_id in supporting):
         raise ValueError("supporting_asset_ids must identify distinct cluster assets")
+    appearances = payload.get("target_appearances")
+    explicit_appearances = appearances is not None
+    if appearances is None:
+        appearances = ([{
+            "appearance_id": "appearance.primary",
+            "label": product_profile.get("primary_appearance", ""),
+            "variant_attributes": list(identity_lock.get("primary_variant_attributes", [])),
+            "asset_ids": [primary_asset_id, *supporting] if primary_asset_id else [],
+            "primary_asset_id": primary_asset_id,
+        }] if decision == "continue" else [])
+    if not isinstance(appearances, list):
+        raise ValueError("target_appearances must be an array")
+    normalized_appearances = []
+    appearance_ids = set()
+    assigned_assets = set()
+    for item in appearances:
+        if not isinstance(item, dict):
+            raise ValueError("target_appearances must contain objects")
+        appearance_id = _required_string(item, "appearance_id")
+        if appearance_id in appearance_ids:
+            raise ValueError("target_appearances appearance_id values must be unique")
+        asset_ids = item.get("asset_ids")
+        if not isinstance(asset_ids, list) or not asset_ids:
+            raise ValueError("target_appearances asset_ids must be a non-empty array")
+        asset_ids = [str(asset_id) for asset_id in asset_ids]
+        appearance_primary = str(item.get("primary_asset_id") or "")
+        if (
+            len(asset_ids) != len(set(asset_ids))
+            or any(asset_id not in valid_asset_ids for asset_id in asset_ids)
+            or appearance_primary not in asset_ids
+            or assigned_assets.intersection(asset_ids)
+        ):
+            raise ValueError("target_appearances must assign valid cluster assets exactly once")
+        appearance_ids.add(appearance_id)
+        assigned_assets.update(asset_ids)
+        normalized_appearances.append({
+            "appearance_id": appearance_id,
+            "label": str(item.get("label") or "").strip(),
+            "variant_attributes": _required_string_list(item, "variant_attributes"),
+            "asset_ids": asset_ids,
+            "primary_asset_id": appearance_primary,
+        })
+    if decision == "continue" and (not normalized_appearances or primary_asset_id not in assigned_assets):
+        raise ValueError("target_appearances must include the primary product appearance")
+    if decision == "continue" and explicit_appearances and assigned_assets != valid_asset_ids:
+        raise ValueError("target_appearances must assign every valid product image")
     normalized = copy.deepcopy(payload)
     normalized.update(
         {
@@ -2772,6 +2859,7 @@ def _normalize_n2_identity(payload, valid_asset_ids):
             "conflict_state": conflict_state,
             "primary_asset_id": primary_asset_id,
             "supporting_asset_ids": supporting,
+            "target_appearances": normalized_appearances,
             "identity_lock": identity_lock,
             "product_profile": product_profile,
             "standardization_mode": standardization_mode,
@@ -2971,7 +3059,7 @@ def _validate_marketing_diversity(plans):
             )
 
 
-def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids):
+def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, target_appearance_ids=None):
     plans = _normalized_marketing_plans(payload, marketing_slots)
     expected = {slot.order for slot in marketing_slots}
     if set(plans) != expected:
@@ -2996,6 +3084,8 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids):
         "must_avoid",
     )
     normalized = []
+    target_appearance_ids = set(target_appearance_ids or [])
+    covered_appearance_ids = set()
     for slot in marketing_slots:
         plan = copy.deepcopy(plans[slot.order])
         for field in required_strings:
@@ -3006,7 +3096,17 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids):
             plan[field] = _required_string_list(plan, field)
         _validate_known_refs(plan["fact_refs"], set(fact_ids), "fact_refs")
         _validate_known_refs(plan["inference_refs"], set(inference_ids), "inference_refs")
+        appearance_ids = plan.get("appearance_ids")
+        if appearance_ids is None:
+            appearance_ids = sorted(target_appearance_ids)
+        appearance_ids = _required_string_list({"appearance_ids": appearance_ids}, "appearance_ids")
+        if target_appearance_ids and (not appearance_ids or any(item not in target_appearance_ids for item in appearance_ids)):
+            raise ValueError("appearance_ids must identify target appearances")
+        plan["appearance_ids"] = appearance_ids
+        covered_appearance_ids.update(appearance_ids)
         normalized.append(plan)
+    if target_appearance_ids - covered_appearance_ids:
+        raise ValueError("marketing plans must cover every target appearance")
     _validate_marketing_diversity(normalized)
     result = copy.deepcopy(payload)
     result["plans"] = normalized
@@ -3508,6 +3608,27 @@ def _identity_reference_paths(cluster_assets, identity):
     return list(dict.fromkeys(references))
 
 
+def _appearance_reference_paths(cluster_assets, identity, appearance_ids=None):
+    paths_by_id = {
+        str(relation.asset_id): relation.asset.storage_path
+        for relation in cluster_assets
+        if relation.asset.kind == Asset.Kind.IMAGE
+    }
+    appearances = identity.get("target_appearances") or []
+    selected = set(
+        [item.get("appearance_id") for item in appearances]
+        if appearance_ids is None
+        else appearance_ids
+    )
+    asset_ids = [
+        item.get("primary_asset_id")
+        for item in appearances
+        if item.get("appearance_id") in selected
+    ]
+    references = [paths_by_id[str(asset_id)] for asset_id in asset_ids if asset_id is not None and str(asset_id) in paths_by_id]
+    return list(dict.fromkeys(references)) or _identity_reference_paths(cluster_assets, identity)
+
+
 def _market_language(market):
     return {
         "MY": "ms-MY",
@@ -3670,14 +3791,32 @@ def process_prompt_once(client=None, storage=None):
                 "observations": observations,
                 "max_supporting_images": 3,
             }
-            valid_asset_ids = {str(relation.asset_id) for relation in image_relations}
+            valid_asset_ids = {
+                str(item["asset_id"])
+                for item in observations
+                if item.get("contains_target_product")
+                and item.get("target_is_physical_product")
+            }
+            required_primary_asset_id = next(
+                (
+                    relation.asset_id
+                    for relation in image_relations
+                    if str(relation.asset_id) in valid_asset_ids
+                ),
+                None,
+            )
             _set_preparation_progress(cluster.id, claimed_revision, "N2", 1)
             identity = _prompt_node_json(
                 client,
                 "N2",
                 "Merge owned observations into one product identity. Report ERP/visual conflict_state, select one primary asset, at most three supporting assets, and an identity lock.",
                 identity_input,
-                normalize=lambda value: _normalize_n2_identity(value, valid_asset_ids),
+                normalize=lambda value: _normalize_n2_identity(
+                    value,
+                    valid_asset_ids,
+                    required_primary_asset_id=required_primary_asset_id,
+                    require_continue_when_valid=True,
+                ),
             )
             node_snapshots.append(
                 _node_snapshot("N2", settings.APIMART_PROMPT_MODEL, identity_input, identity)
@@ -3776,7 +3915,10 @@ def process_prompt_once(client=None, storage=None):
             return 1
 
         config_signature = _effective_config_signature(cluster.batch, cluster)
-        approved_references = _identity_reference_paths(cluster_assets, identity)
+        target_appearance_ids = {
+            item["appearance_id"] for item in identity.get("target_appearances", [])
+        }
+        approved_references = _appearance_reference_paths(cluster_assets, identity)
         _set_preparation_progress(cluster.id, claimed_revision, "N3", 2)
         ledger_input = {
             "product_name": product_name,
@@ -3844,6 +3986,7 @@ def process_prompt_once(client=None, storage=None):
             "fact_ledger": ledger,
             "primary_asset_id": identity["primary_asset_id"],
             "supporting_asset_ids": identity["supporting_asset_ids"],
+            "target_appearances": identity.get("target_appearances", []),
             "resolved_rule_directives": [
                 rule.get("prompt_directive") for rule in hero_rules
             ],
@@ -3902,6 +4045,7 @@ def process_prompt_once(client=None, storage=None):
                 "product_profile": identity["product_profile"],
                 "identity_lock": identity_lock,
                 "fact_ledger": ledger,
+                "target_appearances": identity.get("target_appearances", []),
                 "slots": [
                     {"slot_order": slot.order, "name": slot.name, "purpose": slot.purpose}
                     for slot in marketing_slots
@@ -3924,6 +4068,7 @@ def process_prompt_once(client=None, storage=None):
                     marketing_slots,
                     fact_ids,
                     inference_ids,
+                    target_appearance_ids,
                 ),
             )
             node_snapshots.append(
@@ -3958,6 +4103,8 @@ def process_prompt_once(client=None, storage=None):
                     },
                     "primary_asset_id": identity["primary_asset_id"],
                     "supporting_asset_ids": identity["supporting_asset_ids"],
+                    "target_appearances": identity.get("target_appearances", []),
+                    "appearance_ids": plans[slot.order].get("appearance_ids", []),
                     "resolved_rule_directives": [
                         rule.get("prompt_directive") for rule in slot_rules
                     ],
@@ -4004,10 +4151,15 @@ def process_prompt_once(client=None, storage=None):
                     main_action=slot_plan["main_action"],
                     node_name=n6_node,
                 )
-                compiled_by_slot[slot.id]["reference_snapshot"] = approved_references
+                slot_references = _appearance_reference_paths(
+                    cluster_assets,
+                    identity,
+                    plans[slot.order].get("appearance_ids", []),
+                )
+                compiled_by_slot[slot.id]["reference_snapshot"] = slot_references
                 compiled_by_slot[slot.id]["input_snapshot"][
                     "reference_snapshot"
-                ] = approved_references
+                ] = slot_references
                 compiled_by_slot[slot.id]["node_output"] = slot_plan
 
         _set_preparation_progress(cluster.id, claimed_revision, "N7", 6)
@@ -4372,19 +4524,17 @@ def _validate_prompt_version_readiness(
         size=effective_config["size"] or template.default_size,
         resolution=effective_config["resolution"] or template.default_resolution,
     )
-    if prompt_version.provider_model != image_request["model"]:
-        raise ValueError("PromptVersion image model does not match the actual request")
     for snapshot in (
         prompt_version.input_snapshot,
         prompt_version.source_snapshot,
         prompt_version.structured_output,
     ):
+        if snapshot.get("_image_request") != image_request:
+            raise ValueError("PromptVersion image request content is stale")
         if snapshot.get("_preparation_lineage") != current_lineage:
             raise ValueError("PromptVersion content lineage is stale")
         if snapshot.get("_prompt_node_template") != current_node_template:
             raise ValueError("PromptVersion node template content is stale")
-        if snapshot.get("_image_request") != image_request:
-            raise ValueError("PromptVersion image request content is stale")
 
     n7 = _same_slot_n7_snapshot(cluster, slot, gate.get("snapshot_id"))
     if n7 is None:
@@ -4853,14 +5003,26 @@ def ensure_cluster_generations(
         cluster_assets = list(
             locked.cluster_assets.select_related("asset").order_by("order", "id")
         )
-        approved_references = _identity_reference_paths(cluster_assets, identity)
+        approved_references = _appearance_reference_paths(cluster_assets, identity)
     created = []
     for slot in to_create:
         base_prompt_version = approved_prompts[slot.id]
         references = approved_references
         hero_for_gate = None
         if slot.id != hero_slot.id:
-            references = [hero_refs[0], approved_references[0]]
+            prepared_references = base_prompt_version.input_snapshot.get(
+                "reference_snapshot",
+                [],
+            )
+            structural_reference = next(
+                (
+                    reference
+                    for reference in prepared_references
+                    if reference in approved_references
+                ),
+                approved_references[0],
+            )
+            references = [hero_refs[0], structural_reference]
             hero_for_gate = hero
         prompt_version = _create_gated_prompt_version(
             cluster=locked,
@@ -5199,18 +5361,49 @@ def _current_n2_reference_relations(cluster):
         raise ValueError(
             "Generation submission readiness N2 reference is not a current product asset"
         )
-    return identity, relations[authorized_ids[0]], [
-        relations[asset_id] for asset_id in authorized_ids[1:]
-    ]
+    appearance_primary_ids = []
+    appearances = identity.get("target_appearances")
+    if appearances is not None:
+        if not isinstance(appearances, list) or not appearances:
+            raise ValueError(
+                "Generation submission readiness N2 target appearances are invalid"
+            )
+        for appearance in appearances:
+            if not isinstance(appearance, dict):
+                raise ValueError(
+                    "Generation submission readiness N2 target appearances are invalid"
+                )
+            asset_ids = [str(item) for item in appearance.get("asset_ids", [])]
+            appearance_primary_id = str(appearance.get("primary_asset_id") or "")
+            if (
+                not appearance_primary_id
+                or appearance_primary_id not in asset_ids
+                or appearance_primary_id not in relations
+            ):
+                raise ValueError(
+                    "Generation submission readiness N2 target appearances are invalid"
+                )
+            appearance_primary_ids.append(appearance_primary_id)
+        if len(appearance_primary_ids) != len(set(appearance_primary_ids)):
+            raise ValueError(
+                "Generation submission readiness N2 target appearances are invalid"
+            )
+    return (
+        identity,
+        relations[authorized_ids[0]],
+        [relations[asset_id] for asset_id in authorized_ids[1:]],
+        [relations[asset_id] for asset_id in appearance_primary_ids],
+    )
 
 
 def _authorized_generation_references(generation, cluster, batch):
-    _, primary, supporting = _current_n2_reference_relations(cluster)
+    _, primary, supporting, appearance_primaries = _current_n2_reference_relations(cluster)
+    product_references = [
+        relation.asset.storage_path
+        for relation in (appearance_primaries or [primary, *supporting])
+    ]
     if is_standard_product_hero_slot(generation.output_slot):
-        expected = [
-            primary.asset.storage_path,
-            *[relation.asset.storage_path for relation in supporting],
-        ]
+        expected = product_references
         hero = None
     else:
         effective_template, _, _ = _effective_cluster_resources(batch, cluster)
@@ -5242,7 +5435,14 @@ def _authorized_generation_references(generation, cluster, batch):
             raise ValueError(
                 "Generation submission readiness requires a current white hero result"
             )
-        expected = [hero_path, primary.asset.storage_path]
+        if (
+            len(generation.reference_snapshot) != 2
+            or generation.reference_snapshot[1] not in product_references
+        ):
+            raise ValueError(
+                "Generation submission readiness references are outside the current N2 authorization"
+            )
+        expected = [hero_path, generation.reference_snapshot[1]]
         hero = current_hero
     if generation.reference_snapshot != expected:
         raise ValueError(
@@ -5681,11 +5881,33 @@ def update_cluster_content(cluster, user, payload):
     _ensure_cluster_mutable(locked)
     if payload.get("expected_version") != locked.version:
         raise ValueError("Cluster changed; refresh before saving")
+    asset_order = payload.get("asset_order")
+    ordered_relations = list(locked.cluster_assets.select_for_update().order_by("order", "id"))
+    assets_changed = False
+    if asset_order is not None:
+        if not isinstance(asset_order, list) or any(not isinstance(asset_id, str) for asset_id in asset_order):
+            raise TypeError("asset_order must be an array of strings")
+        current_ids = [str(relation.asset_id) for relation in ordered_relations]
+        if len(asset_order) != len(set(asset_order)) or set(asset_order) != set(current_ids):
+            raise ValueError("asset_order must list each current cluster asset exactly once")
+        if asset_order != current_ids:
+            relations_by_id = {str(relation.asset_id): relation for relation in ordered_relations}
+            for relation in ordered_relations:
+                relation.order += 100
+            ClusterAsset.objects.bulk_update(ordered_relations, ["order"])
+            ordered_relations = [relations_by_id[asset_id] for asset_id in asset_order]
+            for index, relation in enumerate(ordered_relations, start=1):
+                relation.order = index
+                relation.role = ClusterAsset.Role.PRIMARY if index == 1 else ClusterAsset.Role.REFERENCE
+            ClusterAsset.objects.bulk_update(ordered_relations, ["order", "role"])
+            assets_changed = True
     prompts = payload.get("prompts", [])
     if not isinstance(prompts, list):
         raise TypeError("prompts must be an array")
-    template, _, _ = _effective_cluster_resources(locked.batch, locked)
-    slots = {slot.order: slot for slot in template.slots.order_by("order", "id")}
+    slots = {}
+    if prompts:
+        template, _, _ = _effective_cluster_resources(locked.batch, locked)
+        slots = {slot.order: slot for slot in template.slots.order_by("order", "id")}
     prepared_prompts = []
     for item in prompts:
         if not isinstance(item, dict):
@@ -5709,7 +5931,12 @@ def update_cluster_content(cluster, user, payload):
         prompt, input_snapshot = apply_standard_product_hero_policy(slot, prompt, input_snapshot)
         prepared_prompts.append((slot, prompt, input_snapshot, parent_prompt))
 
-    effective_before = _configuration_signature(locked.batch, locked)
+    configuration_fields = {"platform_override", "market_override", "seller_tier_override"}
+    effective_before = (
+        _configuration_signature(locked.batch, locked)
+        if configuration_fields.intersection(payload)
+        else None
+    )
     content_changed = False
     if "name" in payload or "product_name" in payload:
         product_name = str(payload.get("product_name", payload.get("name")) or "").strip()
@@ -5758,10 +5985,13 @@ def update_cluster_content(cluster, user, payload):
             raise ValueError("seller_tier_override must be general or mall")
         if locked.seller_tier_override != value:
             locked.seller_tier_override = value
-    configuration_changed = effective_before != _configuration_signature(locked.batch, locked)
+    configuration_changed = (
+        effective_before is not None
+        and effective_before != _configuration_signature(locked.batch, locked)
+    )
     if prepared_prompts and (configuration_changed or content_changed):
         raise ValueError("prepare the updated product before editing slot prompts")
-    if configuration_changed or (content_changed and not prepared_prompts):
+    if configuration_changed or assets_changed or (content_changed and not prepared_prompts):
         _invalidate_preparation(locked)
     locked.version += 1
     locked.save(

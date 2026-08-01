@@ -666,7 +666,7 @@ def api_project_generate(request, batch_id):
                     items.append(
                         {
                             "cluster_id": str(cluster.id),
-                            "status": "waiting",
+                            "status": "preparing",
                             "code": "preparation_in_progress",
                             "message": "Product preparation will queue generation automatically.",
                         }
@@ -683,6 +683,17 @@ def api_project_generate(request, batch_id):
                             "code": f"preparation_{cluster.preparation_status}",
                             "message": cluster.preparation_error
                             or "Product preparation is blocked.",
+                        }
+                    )
+                    continue
+                if cluster.preparation_status != Cluster.PreparationStatus.READY or not cluster_preparation_is_current(cluster):
+                    request_cluster_preparation(cluster, auto_generate=True)
+                    items.append(
+                        {
+                            "cluster_id": str(cluster.id),
+                            "status": "preparing",
+                            "code": "prompt_preparation_started",
+                            "message": "Product preparation will queue generation automatically.",
                         }
                     )
                     continue

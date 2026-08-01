@@ -72,7 +72,9 @@ def test_merge_asset_into_cluster_moves_from_default_cluster(tmp_path, settings)
 
     merge_asset_into_cluster(second, target, expected_version=target.version)
 
+    target.refresh_from_db()
     assert target.assets.count() == 2
+    assert target.relation_type == target.RelationType.SAME_PRODUCT
     assert batch.clusters.count() == 1
 
 
@@ -313,3 +315,57 @@ def test_asset_relation_changes_invalidate_prompt_preparation(tmp_path, settings
     assert target.preparation_status == Cluster.PreparationStatus.DRAFT
     assert target.auto_generate is False
     assert target.analysis_snapshot["_preparation_revision"] == 7
+
+
+def test_cluster_asset_order_promotes_first_image_and_invalidates_preparation(tmp_path, settings):
+    from platform_app.models import Cluster, ClusterAsset
+    from platform_app.services import create_batch, merge_asset_into_cluster, register_uploaded_asset, update_cluster_content
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = create_batch(user, "Ordered product")
+    assets = [register_uploaded_asset(batch, f"{name}.png", image_bytes(), "image/png") for name in "abc"]
+    cluster = assets[0].clusters.get()
+    merge_asset_into_cluster(assets[1], cluster, expected_version=cluster.version)
+    cluster.refresh_from_db()
+    merge_asset_into_cluster(assets[2], cluster, expected_version=cluster.version)
+    Cluster.objects.filter(id=cluster.id).update(
+        preparation_status=Cluster.PreparationStatus.READY,
+        analysis_snapshot={"_preparation_revision": 4, "identity": {"primary_asset_id": str(assets[0].id)}},
+        auto_generate=True,
+    )
+    cluster.refresh_from_db()
+
+    update_cluster_content(cluster, user, {
+        "expected_version": cluster.version,
+        "asset_order": [str(assets[2].id), str(assets[0].id), str(assets[1].id)],
+    })
+
+    cluster.refresh_from_db()
+    assert list(cluster.cluster_assets.values_list("asset_id", "role", "order")) == [
+        (assets[2].id, ClusterAsset.Role.PRIMARY, 1),
+        (assets[0].id, ClusterAsset.Role.REFERENCE, 2),
+        (assets[1].id, ClusterAsset.Role.REFERENCE, 3),
+    ]
+    assert cluster.preparation_status == Cluster.PreparationStatus.DRAFT
+    assert cluster.auto_generate is False
+    assert cluster.analysis_snapshot["_preparation_revision"] == 5
+
+
+def test_cluster_asset_order_must_list_each_current_image_once(tmp_path, settings):
+    from platform_app.services import create_batch, merge_asset_into_cluster, register_uploaded_asset, update_cluster_content
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = create_batch(user, "Ordered product")
+    first = register_uploaded_asset(batch, "a.png", image_bytes(), "image/png")
+    second = register_uploaded_asset(batch, "b.png", image_bytes(), "image/png")
+    cluster = first.clusters.get()
+    merge_asset_into_cluster(second, cluster, expected_version=cluster.version)
+    cluster.refresh_from_db()
+
+    with pytest.raises(ValueError, match="asset_order"):
+        update_cluster_content(cluster, user, {
+            "expected_version": cluster.version,
+            "asset_order": [str(first.id), str(first.id)],
+        })

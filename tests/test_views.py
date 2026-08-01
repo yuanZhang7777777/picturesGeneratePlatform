@@ -39,7 +39,7 @@ def make_global_baseline():
 
 def approve_view_prompt(cluster, user, slot, revision=1):
     from platform_app.models import Cluster
-    from platform_app.services import _create_gated_prompt_version
+    from platform_app.services import _create_gated_prompt_version, _prompt_runtime_contract_fingerprint
 
     cluster.refresh_from_db()
     primary = cluster.cluster_assets.select_related("asset").get()
@@ -50,6 +50,10 @@ def approve_view_prompt(cluster, user, slot, revision=1):
             "primary_asset_id": str(primary.asset_id),
             "supporting_asset_ids": [],
         },
+        "_runtime_contract_fingerprint": _prompt_runtime_contract_fingerprint(
+            cluster.batch,
+            cluster,
+        ),
     }
     cluster.save(update_fields=["preparation_status", "analysis_snapshot"])
     snapshot = {
@@ -307,7 +311,7 @@ def test_project_generate_api_is_cluster_scoped_and_idempotent(client, tmp_path,
 
     assert first_response.status_code == 202
     assert second_response.status_code == 202
-    assert first_response.json()["generation_count"] == 1
+    assert first_response.json()["generation_count"] == 1, first_response.json()
     assert second_response.json()["generation_count"] == 0
     assert first_response.json()["items"] == [
         {"cluster_id": str(first.id), "status": "queued"}
@@ -380,12 +384,12 @@ def test_project_generate_api_isolates_queued_waiting_and_blocked_products(
         "cluster_id": str(ready.id),
         "status": "queued",
     }
-    assert items[str(pending.id)]["status"] == "waiting"
-    assert items[str(preparing.id)]["status"] == "waiting"
+    assert items[str(pending.id)]["status"] == "preparing"
+    assert items[str(preparing.id)]["status"] == "preparing"
     assert items[str(blocked.id)]["status"] == "blocked"
     assert items[str(failed.id)]["status"] == "blocked"
-    assert items[str(invalid_ready.id)]["status"] == "blocked"
-    assert items[str(invalid_ready.id)]["code"] == "prompt_not_ready"
+    assert items[str(invalid_ready.id)]["status"] == "preparing"
+    assert items[str(invalid_ready.id)]["code"] == "prompt_preparation_started"
     pending.refresh_from_db()
     preparing.refresh_from_db()
     assert pending.auto_generate is True
@@ -427,13 +431,13 @@ def test_legacy_confirm_endpoint_cannot_bypass_prompt_preparation(
     assert response.json()["items"] == [
         {
             "cluster_id": str(cluster.id),
-            "status": "blocked",
-            "code": "prompt_not_ready",
-            "message": "Product Prompt OS preparation is not ready",
+            "status": "preparing",
+            "code": "prompt_preparation_started",
+            "message": "Product preparation will queue generation automatically.",
         }
     ]
     cluster.refresh_from_db()
-    assert cluster.auto_generate is False
+    assert cluster.auto_generate is True
     assert batch.generations.count() == 0
 
 
@@ -488,7 +492,7 @@ def test_project_generate_keeps_record_intent_database_error_local(
     items = {item["cluster_id"]: item for item in response.json()["items"]}
     assert items[str(failed_id)]["status"] == "blocked"
     assert items[str(failed_id)]["code"] == "generation_request_failed"
-    assert items[str(clusters[1].id)]["status"] == "waiting"
+    assert items[str(clusters[1].id)]["status"] == "preparing"
     clusters[1].refresh_from_db()
     assert clusters[1].auto_generate is True
 

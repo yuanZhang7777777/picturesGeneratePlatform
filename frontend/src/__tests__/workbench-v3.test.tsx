@@ -249,12 +249,11 @@ test("accepts an arbitrary per-product market and reports mixed generation failu
   expect(screen.queryByText(/预备完成/)).not.toBeInTheDocument();
 });
 
-test("expands one product inline and consumes the first outside click", async () => {
+test("opens one product in a fixed side panel and consumes the first outside click", async () => {
   renderApp();
 
   fireEvent.click(await screen.findByRole("button", { name: "查看 桌面灯 详情" }));
-  expect(screen.getByRole("region", { name: "桌面灯 商品详情" })).toBeInTheDocument();
-  expect(screen.queryByRole("dialog", { name: /桌面灯 商品详情/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "桌面灯 商品详情" })).toBeInTheDocument();
   expect(screen.getByLabelText("商品身份")).toHaveValue("保留蓝色外壳");
   expect(screen.getByRole("region", { name: "商品身份卡" })).toHaveTextContent("桌面用品");
   expect(screen.getByRole("region", { name: "商品身份卡" })).toHaveTextContent("蓝色折叠结构");
@@ -264,11 +263,11 @@ test("expands one product inline and consumes the first outside click", async ()
   expect(screen.queryByText(/第 1 张输出图 Prompt/)).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "查看 折叠椅 详情" }));
-  expect(screen.queryByRole("region", { name: "桌面灯 商品详情" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: "折叠椅 商品详情" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "桌面灯 商品详情" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "折叠椅 商品详情" })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "查看 折叠椅 详情" }));
-  expect(screen.getByRole("region", { name: "折叠椅 商品详情" })).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "折叠椅 商品详情" })).toBeInTheDocument();
 });
 
 test("hides Prompt Center from operators and exposes the Chinese administrator page", async () => {

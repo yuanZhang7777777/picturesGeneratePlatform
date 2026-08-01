@@ -179,7 +179,7 @@ def test_csrf_bootstrap_and_project_creation_ignores_legacy_configuration(client
         batch = Batch.objects.get(id=response.json()["id"])
         assert batch.owner == user
         assert batch.output_template == baseline
-        assert (batch.platform, batch.site, batch.market) == ("generic", "SEA", "SEA")
+        assert (batch.platform, batch.site, batch.market) == ("shopee", "SEA", "SEA")
         assert batch.seller_tier == "general"
 
     draft = post_json(

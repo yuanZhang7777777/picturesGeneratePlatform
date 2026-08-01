@@ -51,7 +51,7 @@ def png_upload(name="product.png"):
     return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
 
 
-def test_new_project_uses_generic_sea_square_1k_defaults(client):
+def test_new_project_uses_shopee_sea_square_1k_defaults(client):
     make_global_configuration()
     user = make_user()
     client.force_login(user)
@@ -64,13 +64,51 @@ def test_new_project_uses_generic_sea_square_1k_defaults(client):
 
     assert response.status_code == 201
     assert response.json()["defaultConfig"] == {
-        "platform": "generic",
+        "platform": "shopee",
         "market": "SEA",
         "sellerTier": "general",
         "size": "1:1",
         "resolution": "1K",
         "globalPrompt": "",
     }
+
+
+def test_formal_generation_automatically_prepares_missing_prompts(client, tmp_path, settings):
+    from platform_app.models import Batch, Cluster
+    from platform_app.services import register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    template, rules = make_global_configuration()
+    user = make_user()
+    batch = Batch.objects.create(
+        owner=user,
+        name="Auto prepare",
+        platform="generic",
+        site="SEA",
+        market="SEA",
+        output_template=template,
+        rule_profile=rules,
+    )
+    asset = register_uploaded_asset(batch, "product.png", png_upload().read(), "image/png")
+    cluster = asset.clusters.get()
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_project_generate", args=[batch.id]),
+        data=json.dumps({"cluster_ids": [str(cluster.id)], "slot_orders": list(range(1, 10))}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 202
+    assert response.json()["items"] == [{
+        "cluster_id": str(cluster.id),
+        "status": "preparing",
+        "code": "prompt_preparation_started",
+        "message": "Product preparation will queue generation automatically.",
+    }]
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.auto_generate is True
 
 
 def test_organize_upload_does_not_request_preparation(client, tmp_path, settings):

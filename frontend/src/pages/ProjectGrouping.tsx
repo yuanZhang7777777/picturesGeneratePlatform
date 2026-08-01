@@ -42,6 +42,18 @@ export default function ProjectGrouping() {
   const reorganize = useMutation({
     mutationFn: async ({ activeId, overId }: { activeId: string; overId: string }) => {
       if (activeId.startsWith("asset:") && overId === "blank-grid") return splitAsset(activeId.slice(6));
+      if (activeId.startsWith("asset:") && overId.startsWith("asset-target:")) {
+        const assetId = activeId.slice(6);
+        const overAssetId = overId.slice(13);
+        const source = project!.skus.find((sku) => sku.assetIds.includes(assetId));
+        const target = project!.skus.find((sku) => sku.assetIds.includes(overAssetId));
+        if (!source || !target) return;
+        if (source.id !== target.id) return mergeAsset(target.id, assetId, target.version);
+        const next = source.assetIds.filter((id) => id !== assetId);
+        next.splice(next.indexOf(overAssetId), 0, assetId);
+        if (next.every((id, index) => id === source.assetIds[index])) return;
+        return updateCluster(source.id, source.version, { asset_order: next });
+      }
       if (!overId.startsWith("cluster:")) return;
       const target = project!.skus.find((sku) => sku.id === overId.slice(8));
       if (!target) return;

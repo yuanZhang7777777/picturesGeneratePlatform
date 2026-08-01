@@ -235,7 +235,7 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
         "N2": {
             "decision", "confidence", "needs_input_reason", "product_name", "conflict_state",
             "product_profile", "identity_lock", "primary_asset_id", "supporting_asset_ids",
-            "standardization_mode", "standardization_reason",
+            "target_appearances", "standardization_mode", "standardization_reason",
         },
         "N3": {"ledger_version", "facts", "blocked_claim_topics", "unresolved_questions", "review_summary"},
         "N4": {
@@ -369,6 +369,7 @@ def test_marketing_nodes_include_style_dna_framework():
         "source_content_to_avoid",
         "visual_deconstruction",
         "composition",
+        "appearance_ids",
         "typography",
         "color_palette",
         "photographic_direction",

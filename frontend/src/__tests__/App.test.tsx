@@ -85,7 +85,7 @@ function renderApp(path = "/") {
 }
 
 async function openImportPanel() {
-  fireEvent.click(await screen.findByRole("button", { name: "添加商品" }));
+  await screen.findByRole("region", { name: "添加商品面板" });
 }
 
 function stubFetch(handler?: (url: string, init?: RequestInit) => Promise<unknown>) {
@@ -177,24 +177,22 @@ test("keeps platform and market directly in the compact toolbar", async () => {
   expect(screen.queryByLabelText("项目店铺类型")).not.toBeInTheDocument();
 });
 
-test("keeps imports inside an initially collapsed add-product drawer", async () => {
+test("keeps the add-product panel permanently visible", async () => {
   renderApp("/projects/project-demo");
 
-  const trigger = await screen.findByRole("button", { name: "添加商品" });
+  expect(await screen.findByRole("region", { name: "添加商品面板" })).toBeInTheDocument();
   expect(screen.queryByLabelText("ERP SKU")).not.toBeInTheDocument();
-  fireEvent.click(trigger);
   expect(screen.getByRole("button", { name: "添加图片或文件夹" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
 });
 
-test("focuses and closes the add-product drawer accessibly", async () => {
+test("does not hide the add-product panel behind a dialog", async () => {
   renderApp("/projects/project-demo");
 
   await openImportPanel();
-  const dialog = screen.getByRole("dialog", { name: "添加商品" });
-  expect(dialog).toContainElement(document.activeElement as HTMLElement | null);
   fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.getByRole("region", { name: "添加商品面板" })).toBeInTheDocument();
   expect(screen.queryByRole("dialog", { name: "添加商品" })).not.toBeInTheDocument();
 });
 
@@ -271,7 +269,7 @@ test("previews pending images without filenames and does not resubmit successful
   expect(screen.getByRole("img", { name: "待导入商品图 1" })).toBeInTheDocument();
   expect(screen.queryByText("front.png")).not.toBeInTheDocument();
   fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[0]);
-  await waitFor(() => expect(screen.queryByLabelText("选择图片")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("img", { name: "待导入商品图 1" })).not.toBeInTheDocument());
 
   await openImportPanel();
   fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
@@ -407,15 +405,15 @@ test("keeps an unidentified product name empty instead of inserting status text"
   expect(screen.queryByText("名称待确认")).not.toBeInTheDocument();
 });
 
-test("offers draggable thumbnails from the inline product details", async () => {
+test("offers draggable thumbnails alongside the fixed product detail panel", async () => {
   renderApp("/projects/project-demo");
 
   fireEvent.click(await screen.findByRole("button", { name: "查看 桌面护眼灯 详情" }));
   expect(screen.getByRole("button", { name: "拖拽商品参考图 1" })).toHaveAttribute("aria-roledescription", "draggable");
-  expect(screen.getByRole("region", { name: "桌面护眼灯 商品详情" })).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "桌面护眼灯 商品详情" })).toBeInTheDocument();
 });
 
-test("renders fifty compact square product cards without expanding the workbench", async () => {
+test("renders fifty editable product cards without expanding the workbench", async () => {
   const manyProducts = Array.from({ length: 50 }, (_, index) => ({
     ...project.skus[0],
     id: `sku-${index}`,

@@ -101,6 +101,7 @@ export interface ClusterUpdateInput {
   market_override?: string | null;
   seller_tier_override?: "general" | "mall" | null;
   prompts?: { slot_order: number; prompt: string }[];
+  asset_order?: string[];
 }
 
 export interface ClusterUpdateResult {
@@ -155,6 +156,13 @@ export interface ProductSku {
       included_items?: string[];
     };
     identity_lock?: { must_not_change?: string[]; family_invariants?: string[] };
+    target_appearances?: {
+      appearance_id: string;
+      label?: string;
+      variant_attributes?: string[];
+      asset_ids: string[];
+      primary_asset_id: string;
+    }[];
   };
   marketingPlan?: { plans?: CreativeBriefPlan[] };
   overrides?: ProductOverrides;
@@ -193,6 +201,7 @@ export interface CreativeBriefPlan {
   conversion_goal?: string;
   main_scene?: string;
   main_action?: string;
+  appearance_ids?: string[];
 }
 
 export interface PromptNodeTemplate {

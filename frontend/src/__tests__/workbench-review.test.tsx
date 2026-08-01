@@ -87,16 +87,38 @@ test("shows exact blocked progress and no raw implementation configuration", () 
   expect(screen.queryByText("跟随项目")).not.toBeInTheDocument();
 });
 
-test("keeps the compact product card square with editable fields", () => {
+test("keeps the large product card editable without forcing a square", () => {
   const view = render(<ProductCard {...props} sku={sku} onSave={vi.fn()} />);
-  expect(view.container.querySelector(".product-card")).toHaveClass("aspect-square");
+  expect(view.container.querySelector(".product-card")).not.toHaveClass("aspect-square");
+  expect(screen.getByRole("img", { name: "旧名称 商品参考图" })).toHaveClass("object-contain");
   expect(screen.getByLabelText("商品平台 旧名称")).toBeInTheDocument();
   expect(screen.getByLabelText("创意 Brief 旧名称")).toBeInTheDocument();
 });
 
-test("renders product details inline rather than as a modal drawer", () => {
+test("labels and saves how multiple references belong to the product", async () => {
+  const onSave = vi.fn().mockResolvedValue({ id: "sku-1", version: 2 });
+  const groupedSku = {
+    ...sku,
+    relationType: "same_product" as const,
+    assetIds: ["asset-1", "asset-2"],
+    assets: [
+      ...sku.assets!,
+      { id: "asset-2", name: "second.png", kind: "image" as const, imageUrl: "/image-2" },
+    ],
+  };
+  render(<ProductCard {...props} sku={groupedSku} assets={groupedSku.assets} onSave={onSave} />);
+
+  const relation = screen.getByLabelText("参考图关系 旧名称");
+  expect(relation).toHaveDisplayValue("同商品参考");
+  fireEvent.change(relation, { target: { value: "variant_group" } });
+  fireEvent.blur(relation);
+
+  await waitFor(() => expect(onSave).toHaveBeenCalledWith({ relation_type: "variant_group" }, 1));
+  expect(screen.getByRole("list", { name: "旧名称 参考图排序" })).toHaveTextContent("主参考");
+});
+
+test("renders product details in a fixed side panel", () => {
   render(<ProductCard {...props} sku={sku} expanded onSave={vi.fn()} />);
-  expect(screen.getByRole("region", { name: "旧名称 商品详情" })).toBeInTheDocument();
-  expect(screen.queryByRole("dialog", { name: "旧名称 商品详情" })).not.toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "旧名称 商品详情" })).toHaveClass("fixed");
   expect(screen.getByLabelText("商品身份")).toBeInTheDocument();
 });

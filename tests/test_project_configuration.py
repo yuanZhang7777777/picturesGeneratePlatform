@@ -83,7 +83,7 @@ def test_name_only_project_uses_global_fallback_and_serializes_required_configur
     body = response.json()
     assert body["configurationStatus"] == "configured"
     assert body["defaultConfig"] == {
-        "platform": "generic",
+        "platform": "shopee",
         "market": "SEA",
         "sellerTier": "general",
         "size": "1:1",
@@ -93,7 +93,7 @@ def test_name_only_project_uses_global_fallback_and_serializes_required_configur
     from platform_app.models import Batch
 
     batch = Batch.objects.get(id=body["id"])
-    assert (batch.platform, batch.site, batch.market) == ("generic", "SEA", "SEA")
+    assert (batch.platform, batch.site, batch.market) == ("shopee", "SEA", "SEA")
     assert batch.output_template_id == global_template.id
     assert batch.rule_profile_id == global_rules.id
 

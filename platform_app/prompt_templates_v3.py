@@ -102,6 +102,16 @@ IDENTITY_LOCK_SCHEMA = _object(
     }
 )
 
+TARGET_APPEARANCE_SCHEMA = _object(
+    {
+        "appearance_id": STRING,
+        "label": STRING,
+        "variant_attributes": STRING_ARRAY,
+        "asset_ids": _array({"type": ["integer", "string"]}),
+        "primary_asset_id": {"type": ["integer", "string"]},
+    }
+)
+
 N2_SCHEMA = _object(
     {
         "decision": {"type": "string", "enum": ["continue", "needs_input"]},
@@ -113,6 +123,7 @@ N2_SCHEMA = _object(
         "identity_lock": IDENTITY_LOCK_SCHEMA,
         "primary_asset_id": {"type": ["integer", "string", "null"]},
         "supporting_asset_ids": _array({"type": ["integer", "string"]}),
+        "target_appearances": _array(TARGET_APPEARANCE_SCHEMA),
         "standardization_mode": {
             "type": "string",
             "const": "reuse",
@@ -201,6 +212,7 @@ SLOT_PLAN_SCHEMA = _object(
     {
         "slot_order": INTEGER,
         "role": STRING,
+        "appearance_ids": STRING_ARRAY,
         "scene_family": STRING,
         "environment": STRING,
         "camera": STRING,
@@ -341,7 +353,7 @@ N1_INSTRUCTION = """
 
 N2_INSTRUCTION = """
 # 角色与任务
-你是商品身份归并器。你接收已确认商品名、confirmed_points 和 N1 的我方逐图观察，必须从异构图片中归并一个真实商品家族，选择一个主外观，选择最多三张结构互补图，并建立后续所有图片不可突破的 identity_lock。你不接收或引用竞品商品内容，不生成营销文案或图片 Prompt。
+你是商品身份归并器。你接收已确认商品名、confirmed_points 和当前商品全部图片的 N1 逐图观察，必须从异构图片中归并真实商品家族和全部目标外观，并建立后续所有图片不可突破的 identity_lock。你不接收或引用竞品商品内容，不生成营销文案或图片 Prompt。
 
 # 身份不变量、可变属性与互补证据
 1. 身份不变量包括核心品类、主要用途、主体结构、工作/开合机制、关键部件拓扑、装配关系、功能关系以及有证据的共有内外结构。只有这些内容互相排斥时才构成商品家族冲突。
@@ -351,7 +363,7 @@ N2_INSTRUCTION = """
 
 # 主外观与参考资产
 1. confirmed_points 或人工名称明确指定型号、颜色或款式时选择匹配证据；若核心结构与名称冲突，decision=needs_input，不能用名称强行覆盖图像冲突。
-2. 未指定具体外观时，选择完整度、可见度和 reference_quality 最高的有效实物图；同分时选择输入顺序更早者。primary_asset_id 必须是真实我方实物图。
+2. 输入顺序第一张有效实物图固定为全局 primary_asset_id。相同颜色/款式的不同角度归入同一 target appearance；颜色、花纹、普通尺寸或款式差异归为不同 appearance，全部保留。
 3. supporting_asset_ids 最多三张，只能补充同一主外观或高置信度共有结构的正面、背面、侧面、顶部、底部和关键细节；排除包装、说明书、竞品、模糊图、重复角度和其他 SKU 可变属性。
 4. standardization_mode：干净完整实物用 reuse；可移除人物/包装/背景且主体完整用 cutout；只能在身份约束下重建干净参考用 semantic_extract；无法确认用 needs_input。
 
@@ -363,7 +375,7 @@ N2_INSTRUCTION = """
 5. 看不见的内部结构、接口、配件、背面、功能、承重能力和包含物不得补全。图片观察不能自动升级为营销声明。
 
 # 决策
-存在至少一张有效实物图且可确认目标家族时优先 continue。仅在只有包装、实物全部不可辨、核心用途/主体结构/机制/拓扑存在不可消解冲突、图片与已确认核心品类明显不符，或指定版本没有匹配实物时 needs_input。continue 时 category、primary_appearance、identity_lock.must_not_change 和 primary_asset_id 必填；needs_input 时主图为 null、补充图为空且说明具体缺口。
+存在至少一张有效实物图且可确认目标家族时优先 continue，单张观察失败不能阻断其他有效图。仅在实物全部不可辨或核心结构存在不可消解冲突时 needs_input。continue 时 category、identity_lock.must_not_change、primary_asset_id 和非空 target_appearances 必填；needs_input 时 target_appearances 为空并说明具体缺口。
 
 # 严格输出
 只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、代码围栏或额外字段。必须返回最终 product_name 与 conflict_state（match/unknown/conflict）；confidence 为 0–100 整数。verified_use_relationships、exact_component_constraints 等字段必须存在，即使为空数组。不得创建新商品事实。格式失败只允许同输入修复一次。
@@ -448,6 +460,7 @@ N5_CORE = """
 2. 相邻槽位至少改变场景族、机位/景别、商品朝向、人物姿态、动作、信息层级中的三项。细节微距、完整英雄视角、俯视结构、真实使用、尺度关系等镜头必须各自服务其购买决策。
 3. 一个卖点只能承担一个主要决策任务；后续槽位可提供不同事实，但不能换句话重复结论。每槽 must_show/must_avoid 只写当前图相关内容。
 4. 输出前静默检查重复购买任务、重复五维签名、空槽和高风险推断；发现问题时先重排一次，不能静默丢槽，也不要输出检查过程。
+5. 每槽 appearance_ids 只能引用 N2 target_appearances。白底/款式总览覆盖全部外观；其他槽可选子集，但整套营销计划必须覆盖所有外观。
 
 # 文字意图与本地化
 每槽 copy_intent 只描述一个短标题、一个可选副标题或短标注的事实意图，不直接创作最终文案。text_mode 只能 none 或 up_to_3_lines；规则禁字或员工关闭文字时为 none。localization_notes 说明目标市场语气、禁用词和移动端短文案要求，不允许价格、折扣、最高级、认证、疗效、减重、美容前后对比、站外导流或保证性承诺，除非确认事实和已验证规则同时允许。

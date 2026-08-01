@@ -46,6 +46,7 @@ def approve_prompt(
     config_signature=None,
     node_name=None,
     template_version="test-v1",
+    references_override=None,
 ):
     from platform_app.models import Cluster
     from platform_app.services import _create_gated_prompt_version
@@ -81,7 +82,11 @@ def approve_prompt(
     )
     snapshot = {
         "source_asset_id": str(primary.asset_id),
-        "reference_snapshot": references[:1] if source else references,
+        "reference_snapshot": (
+            list(references_override)
+            if references_override is not None
+            else references[:1] if source else references
+        ),
     }
     return _create_gated_prompt_version(
         cluster=cluster,
@@ -486,17 +491,35 @@ def test_generation_references_follow_n2_white_and_marketing_order(
         "identity": {
             "primary_asset_id": str(primary.id),
             "supporting_asset_ids": [str(asset.id) for asset in supports],
+            "target_appearances": [
+                {
+                    "appearance_id": "appearance.primary",
+                    "asset_ids": [str(primary.id)],
+                    "primary_asset_id": str(primary.id),
+                },
+                {
+                    "appearance_id": "appearance.variant",
+                    "asset_ids": [str(asset.id) for asset in supports],
+                    "primary_asset_id": str(supports[0].id),
+                },
+            ],
         },
     }
     cluster.save(update_fields=["analysis_snapshot"])
     approve_prompt(cluster, user, hero_slot, revision=3)
-    approve_prompt(cluster, user, detail_slot, revision=3)
+    approve_prompt(
+        cluster,
+        user,
+        detail_slot,
+        revision=3,
+        references_override=[supports[0].storage_path],
+    )
 
     hero = ensure_cluster_generations(cluster, user)[0]
 
     assert hero.reference_snapshot == [
         primary.storage_path,
-        *[asset.storage_path for asset in supports],
+        supports[0].storage_path,
     ]
 
     hero.status = Generation.Status.COMPLETED
@@ -512,7 +535,7 @@ def test_generation_references_follow_n2_white_and_marketing_order(
     generations = ensure_cluster_generations(cluster, user)
     detail = next(item for item in generations if item.output_slot_id == detail_slot.id)
 
-    assert detail.reference_snapshot == [hero_path, primary.storage_path]
+    assert detail.reference_snapshot == [hero_path, supports[0].storage_path]
     cluster.refresh_from_db()
     n7_by_id = {
         snapshot["snapshot_id"]: snapshot
