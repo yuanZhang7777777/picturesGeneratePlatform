@@ -2,7 +2,7 @@
 
 最后更新：2026-08-01
 维护者：主 Agent
-状态：Workbench v4 技术预览正在修复运营反馈。已在本地完成 N1/N2 识别容错、`string` 占位兜底、图片/文件夹与 ERP SKU 同屏导入、商品卡放大、滚动常驻生成按钮和“国家”界面文案；后端全量 pytest、前端 84 项、Vite build、Django check 与 diff 检查通过。真实 ERP/OSS、新付费 1+8 和 50 商品浏览器验收仍未完成，不能标记为业务验收完成。
+状态：Git `66ab314` 已部署到 `hermes-remote` 技术预览。已修复 N1/N2 识别容错、`string` 占位兜底、图片/文件夹与 ERP SKU 同屏导入、商品卡放大、滚动常驻生成按钮和“国家”界面文案；后端全量 pytest、前端 84 项、Vite build、Django check、diff 检查、远端 Compose 构建/迁移/模板发布/健康和公网健康通过。真实 ERP/OSS、新付费 1+8 和 50 商品浏览器验收仍未完成，不能标记为业务验收完成。
 
 ## 当前目标
 
