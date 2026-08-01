@@ -140,7 +140,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
         <span className="absolute bottom-2 left-2 rounded-full bg-slate-950/80 px-2 py-1 text-xs font-semibold text-white">{assets.length} 张</span>
         <label className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm"><input aria-label={`选择 ${label}`} className="size-4" type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} />选择</label>
       </div>
-      <div className="flex max-w-full gap-2 overflow-x-auto p-3 pb-0" role="list" aria-label={`${label} 参考图排序`}>
+      <div className="flex max-w-full gap-2 overflow-x-auto p-3 pb-2" role="list" aria-label={`${label} 参考图排序`}>
         {assets.map((asset, index) => <DraggableAsset key={asset.id} asset={asset} index={index} disabled={saving || disabled} onDelete={() => onDeleteAsset(asset.id)} />)}
       </div>
       <div className="flex flex-col gap-2 p-3">
