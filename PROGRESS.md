@@ -113,10 +113,12 @@
 
 # Workbench v4 implementation
 
-- Status: started 2026-08-01 on `lxc/workbench-v4` from `e98ad9f`.
+- Status: deployed 2026-08-01 as Git `241fdcc` to `hermes-remote:/opt/independent-image-platform` under `global.lock`.
 - Goal: persistent import, large product cards, ordered real thumbnails, a fixed non-reflowing side panel, and one shared 1+8 set for every image in a product card.
-- Completed: read project rules and six authoritative documents; updated the confirmed boundary, design, Prompt OS contract, roadmap, leader goal, STATUS, and CLAUDE.
-- Next: reproduce the known backend/frontend failures, update behavior tests first, then implement the smallest compatible API, Prompt OS, and React changes.
+- Completed: added exact `asset_order` saves, target-appearance N2/N5/N6 contracts, minimum appearance-aware references, formal-generate auto preparation, persistent import, large object-contain product cards, ordered horizontal real thumbnails, cross-card movement, relationship selection and a fixed identity/Prompt side panel.
+- Verification: backend 348 passed; frontend 84 passed; Vite production build and Django check passed. Browser QA verified Shopee/东南亚通用/1:1/1K defaults, persistent import, object-contain cards, horizontal thumbnails/main reference, multi-image relationship control, fixed side panel, identity/appearance/9-slot content and zero console errors. Remote Compose config/build, Django check, migration (no changes), template seed, five services, local/public health and deployed chunk labels passed; no paid call was made.
+- Deployment: release marker `241fdcc`; backup `/opt/independent-image-platform-backups/20260801_220700-241fdcc`; `global.lock` released. Previous runtime commit `1ef34e1` remains the logical rollback commit, with the backup as the executable rollback artifact.
+- Remaining: 50-product browser scenario, real employee ERP SKU/OSS browser E2E and a new operator-reviewed paid 1+8. Until those pass, this is a technical preview rather than completed business acceptance.
 - Reuse: `ClusterAsset`, `analysis_snapshot`, existing APIs, TanStack Query, and dnd-kit; no new table, state store, or frontend dependency.
 - Risk: preserve historical single-appearance snapshots while adding `target_appearances` and per-slot `appearance_ids`.
 - Forbidden: do not touch the untracked user-operation-flow document, secrets, or historical Prompt/generation/review records.

@@ -15,7 +15,7 @@
 
 ## 现状与任务 0
 
-2026-07-30 起始实测：后端 160 passed、前端 35 passed、skipped 0；Django check 无异常、无待生成迁移、Vite build 成功。当前集成后本地实测：后端 179 passed、前端 41 passed、Django check、Vite build 均通过。香港服务器已完成 Compose 部署、APIMart 三节点真实 smoke、OSS 写读删、真实 1+8 付费出图、人工审核通过和 ZIP 导出；真实 ERP 员工账号成功登录/SKU 导入仍需人工或专用 smoke 账号验证。
+2026-08-01 Workbench v4 集成实测：后端 348 passed、前端 84 passed、Django check 与 Vite build 通过；本轮没有模型字段改动，远端迁移报告无待应用迁移。Git `241fdcc` 已在香港服务器完成 Compose 解析/构建、模板发布、五服务健康和公网静态包读回；本轮未触发付费调用。历史 APIMart 三节点、OSS 写读删、真实 1+8、人工审核和 ZIP 证据继续保留；真实 ERP 员工浏览器 SKU/OSS、50 商品场景和新一轮付费 1+8 仍需验收。
 
 先读 `CLAUDE.md` 与权威边界、产品设计、Prompt 规格、当前路线图和 `STATUS.md`。不得读取、修改、删除或提交未跟踪的 `docs/project/用户操作流程以及相关触发.md`。核对后在 `PROGRESS.md` 记录断点与实测结果。
 
