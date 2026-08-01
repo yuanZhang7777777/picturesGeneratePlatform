@@ -135,7 +135,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       className={`surface product-card min-w-0 overflow-hidden ${droppable.isOver ? "ring-2 ring-indigo-500" : ""}`}
       onClick={(event) => { if (!(event.target as HTMLElement).closest("input,select,textarea,button,summary,a")) onOpen(); }}
     >
-      <div className="relative aspect-[4/3] bg-slate-100">
+      <div className="relative aspect-square bg-slate-100">
         {assets[0]?.imageUrl ? <img className="relative size-full object-contain" src={assets[0].imageUrl} alt={`${label} 商品参考图`} /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
         <span className="absolute bottom-2 left-2 rounded-full bg-slate-950/80 px-2 py-1 text-xs font-semibold text-white">{assets.length} 张</span>
         <label className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm"><input aria-label={`选择 ${label}`} className="size-4" type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} />选择</label>
@@ -146,10 +146,9 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       <div className="flex flex-col gap-2 p-3">
         <input aria-label={`商品名称 ${label}`} className="h-9 min-h-9 font-semibold" value={draft.name} placeholder="可不填，预备生成时识别" onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void submit()} />
         {nameSourceText && <p className="text-[11px] text-slate-500">{nameSourceText}</p>}
-        {assets.length > 1 && <select aria-label={`参考图关系 ${label}`} className="h-9 min-h-9 py-1 text-xs" value={draft.relationType} onChange={(event) => setDraft({ ...draft, relationType: event.target.value as RelationType })} onBlur={() => void submit()}><option value="same_product">同商品参考</option><option value="variant_group">多色/多款组合</option></select>}
         <div className="grid grid-cols-2 gap-1.5">
           <select aria-label={`商品平台 ${label}`} className="h-9 min-h-9 py-1 text-xs" value={draft.platform} onChange={(event) => setDraft({ ...draft, platform: event.target.value })} onBlur={() => void submit()}>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select>
-          <span><input aria-label={`商品市场 ${label}`} className="h-9 min-h-9 py-1 text-xs" list={`product-market-options-${sku.id}`} value={marketLabel(draft.market)} onChange={(event) => setDraft({ ...draft, market: marketValue(event.target.value) })} onBlur={() => void submit()} /><datalist id={`product-market-options-${sku.id}`}>{[...commonMarkets, ...extraMarkets].map(([code, text]) => <option key={code} value={text} />)}</datalist></span>
+          <span><input aria-label={`商品国家 ${label}`} className="h-9 min-h-9 py-1 text-xs" list={`product-market-options-${sku.id}`} value={marketLabel(draft.market)} onChange={(event) => setDraft({ ...draft, market: marketValue(event.target.value) })} onBlur={() => void submit()} /><datalist id={`product-market-options-${sku.id}`}>{[...commonMarkets, ...extraMarkets].map(([code, text]) => <option key={code} value={text} />)}</datalist></span>
         </div>
         <textarea aria-label={`创意 Brief ${label}`} className="min-h-16 resize-none py-1.5 text-xs" value={draft.productFacts} placeholder="补充材质、功能或使用要求" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void submit()} />
         <details className="rounded-lg bg-slate-50 px-2 py-1">

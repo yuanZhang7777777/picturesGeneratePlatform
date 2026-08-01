@@ -175,12 +175,12 @@ test("shows the add-product panel inline with organize as the primary import act
   expect(screen.queryByRole("button", { name: "添加商品" })).not.toBeInTheDocument();
   expect(screen.queryByRole("dialog", { name: "添加商品" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("添加商品面板")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "图片/文件夹" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "ERP SKU" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "图片/文件夹" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
   expect(screen.getByLabelText("选择图片")).toHaveAttribute("multiple");
   expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("webkitdirectory");
-  expect(screen.getByRole("button", { name: "导入后整理" })).toHaveClass("primary-button");
-  expect(screen.getByRole("button", { name: "导入并自动出图" })).toHaveClass("secondary-button");
+  expect(screen.getAllByRole("button", { name: "导入后整理" })[0]).toHaveClass("primary-button");
+  expect(screen.getAllByRole("button", { name: "导入并自动出图" })[0]).toHaveClass("secondary-button");
 });
 
 test("shows editable compact card fields and exact preparation progress without implementation codes", async () => {
@@ -188,7 +188,7 @@ test("shows editable compact card fields and exact preparation progress without 
 
   expect(await screen.findByLabelText("商品名称 桌面灯")).toHaveValue("桌面灯");
   expect(screen.getByLabelText("商品平台 桌面灯")).toHaveDisplayValue("通用电商");
-  expect(screen.getByLabelText("商品市场 桌面灯")).toHaveDisplayValue("东南亚通用");
+  expect(screen.getByLabelText("商品国家 桌面灯")).toHaveDisplayValue("东南亚通用");
   expect(screen.getByLabelText("创意 Brief 桌面灯")).toHaveValue("适合明亮桌面场景");
   expect(screen.getByLabelText("单品风格 桌面灯")).toHaveValue("柔和自然光");
   expect(screen.getAllByText("预备生成中 · N3 事实台账 · 3/7")).toHaveLength(2);
@@ -197,7 +197,9 @@ test("shows editable compact card fields and exact preparation progress without 
   expect(screen.getByRole("button", { name: "全选" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "取消全选" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "反选" })).toBeInTheDocument();
-  expect(screen.getByLabelText("商品市场 桌面灯")).toHaveAttribute("list", "product-market-options-one");
+  expect(screen.getByLabelText("滚动常驻生成动作")).toHaveTextContent("预备生成（2）");
+  expect(screen.getByLabelText("滚动常驻生成动作")).toHaveTextContent("正式生成（2）");
+  expect(screen.getByLabelText("商品国家 桌面灯")).toHaveAttribute("list", "product-market-options-one");
   expect(screen.getAllByText("单品风格（选填）")).not.toHaveLength(0);
   expect(screen.queryByText("one-secret.jpg")).not.toBeInTheDocument();
   expect(screen.queryByText("generic")).not.toBeInTheDocument();
@@ -238,7 +240,7 @@ test("accepts an arbitrary per-product market and reports mixed generation failu
   const fetchMock = stubFetch({ projectSnapshot: failedProject });
   renderApp();
 
-  const market = await screen.findByLabelText("商品市场 桌面灯");
+  const market = await screen.findByLabelText("商品国家 桌面灯");
   fireEvent.change(market, { target: { value: "法属波利尼西亚" } });
   fireEvent.blur(market);
 

@@ -1931,6 +1931,42 @@ def test_n1_rejects_schema_placeholder_strings_as_identity_evidence():
         )
 
 
+@pytest.mark.parametrize(
+    ("role", "normalized_role"),
+    [
+        ("product", "clean_product"),
+        ("product_detail", "detail"),
+        ("packaging", "packaging"),
+    ],
+)
+def test_n1_normalizes_common_owned_product_image_roles(role, normalized_role):
+    from platform_app.services import _normalize_n1_observation
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    payload = strict_n1({
+        "asset_id": asset_id,
+        "asset_kind": "owned_product",
+        "image_role": role,
+        "contains_target_product": True,
+        "target_is_physical_product": True,
+        "target_visibility": 92,
+        "target_complete": True,
+        "background_complexity": "low",
+        "observed_identity": {
+            "category_candidates": ["chopsticks set"],
+            "overall_shape": "two chopsticks and a spoon in slim trays",
+        },
+        "reference_quality": 90,
+        "recommended_use": "reuse",
+        "candidate_product_name": "Chopsticks set",
+        "candidate_product_name_confidence": 0.9,
+    })
+
+    normalized = _normalize_n1_observation(payload, asset_id)
+
+    assert normalized["image_role"] == normalized_role
+
+
 def test_blocked_identity_does_not_write_placeholder_product_name(tmp_path, settings):
     import json
 
@@ -2101,7 +2137,7 @@ def test_n1_requires_real_owned_product_identity_schema(field, value, message):
         ("background_complexity", None, "background_complexity"),
         ("background_complexity", "busy", "background_complexity"),
         ("recommended_use", None, "recommended_use"),
-        ("recommended_use", "evidence_only", "recommended_use"),
+        ("recommended_use", "copy_brand", "recommended_use"),
     ],
 )
 def test_n1_reviewer_payload_requires_authoritative_owned_product_fields(
@@ -2137,6 +2173,99 @@ def test_n1_reviewer_payload_requires_authoritative_owned_product_fields(
 
     with pytest.raises(ValueError, match=message):
         _normalize_n1_observation(payload, asset_id)
+
+
+def test_prompt_worker_falls_back_to_n1_identity_when_n2_returns_schema_placeholders(
+    tmp_path,
+    settings,
+):
+    import json
+    from io import BytesIO
+
+    from django.core.management import call_command
+    from PIL import Image
+
+    from platform_app.models import Cluster
+    from platform_app.services import (
+        FakeAPIMartClient,
+        LocalStorage,
+        create_project,
+        process_prompt_once,
+        register_uploaded_asset,
+        request_cluster_preparation,
+    )
+
+    settings.MEDIA_ROOT = tmp_path
+    call_command("seed_platform_templates")
+    user = make_user()
+    batch = create_project(user, name="Placeholder fallback")
+    image = BytesIO()
+    Image.new("RGB", (8, 8), "white").save(image, "PNG")
+    asset = register_uploaded_asset(batch, "chopsticks.png", image.getvalue(), "image/png")
+    cluster = asset.clusters.get()
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class PlaceholderN2Client(FakeAPIMartClient):
+        def observe_images(self, instruction, image_paths):
+            asset_id = instruction.split("ASSET_ID=", 1)[1].splitlines()[0]
+            return {
+                "output_text": json.dumps(strict_n1({
+                    "asset_id": asset_id,
+                    "asset_kind": "owned_product",
+                    "image_role": "product",
+                    "contains_target_product": True,
+                    "target_is_physical_product": True,
+                    "target_visibility": 0,
+                    "target_complete": True,
+                    "background_complexity": "low",
+                    "observed_identity": {
+                        "category_candidates": ["chopsticks set"],
+                        "overall_shape": "two chopsticks and a spoon in slim trays",
+                    },
+                    "reference_quality": 0,
+                    "recommended_use": "semantic_extract_source",
+                    "candidate_product_name": "Chopsticks set",
+                    "candidate_product_name_confidence": 0.9,
+                })),
+                "raw": {},
+            }
+
+        def optimize_prompt(self, payload):
+            if "NODE N2" in payload.get("text", ""):
+                return {
+                    "output_text": json.dumps(strict_n2({
+                        "decision": "continue",
+                        "product_name": "string",
+                        "confidence": 0.9,
+                        "needs_input_reason": "",
+                        "conflict_state": "unknown",
+                        "primary_asset_id": str(asset.id),
+                        "supporting_asset_ids": [],
+                        "target_appearances": [{
+                            "appearance_id": "appearance.primary",
+                            "label": "string",
+                            "variant_attributes": ["string"],
+                            "asset_ids": [str(asset.id)],
+                            "primary_asset_id": str(asset.id),
+                        }],
+                        "identity_lock": {"must_not_change": ["string"]},
+                        "product_profile": {
+                            "category": "string",
+                            "primary_appearance": "string",
+                        },
+                        "standardization_mode": "reuse",
+                        "standardization_reason": "",
+                    })),
+                    "raw": {},
+                }
+            return super().optimize_prompt(payload)
+
+    assert process_prompt_once(PlaceholderN2Client(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY
+    assert cluster.product_name == "Chopsticks set"
+    assert cluster.analysis_snapshot["identity"]["product_profile"]["category"] == "chopsticks set"
 
 
 @pytest.mark.parametrize(

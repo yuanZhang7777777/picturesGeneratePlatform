@@ -2553,6 +2553,34 @@ def _has_nonempty_value(value):
     return value is not None and value is not False
 
 
+def _normalize_owned_image_role(value):
+    role = _required_string({"image_role": value}, "image_role").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "clean_product": "clean_product",
+        "product": "clean_product",
+        "main_product": "clean_product",
+        "hero": "clean_product",
+        "product_detail": "detail",
+        "detail": "detail",
+        "closeup": "detail",
+        "close_up": "detail",
+        "component": "detail",
+        "packaging": "packaging",
+        "package": "packaging",
+        "box": "packaging",
+        "usage": "use_context",
+        "use_context": "use_context",
+        "lifestyle": "use_context",
+        "model": "use_context",
+        "accessory": "accessory",
+        "accessories": "accessory",
+    }
+    normalized = aliases.get(role)
+    if normalized is None:
+        raise ValueError("image_role must identify an owned product reference")
+    return normalized
+
+
 def _normalize_n1_observation(payload, expected_asset_id):
     if not isinstance(payload, dict):
         raise ValueError("N1 output must be an object")
@@ -2562,9 +2590,7 @@ def _normalize_n1_observation(payload, expected_asset_id):
     asset_kind = _required_string(payload, "asset_kind")
     if asset_kind != "owned_product":
         raise ValueError("asset_kind must be owned_product")
-    image_role = _required_string(payload, "image_role")
-    if image_role != "clean_product":
-        raise ValueError("image_role must be clean_product for owned product assets")
+    image_role = _normalize_owned_image_role(payload.get("image_role"))
     contains_target = payload.get("contains_target_product")
     if not isinstance(contains_target, bool):
         raise ValueError("contains_target_product must be boolean")
@@ -2578,8 +2604,14 @@ def _normalize_n1_observation(payload, expected_asset_id):
     if background_complexity not in {"low", "medium", "high"}:
         raise ValueError("background_complexity must be low, medium, or high")
     recommended_use = _required_string(payload, "recommended_use")
-    if recommended_use != "reuse":
-        raise ValueError("recommended_use must be reuse for owned product assets")
+    if recommended_use not in {
+        "reuse",
+        "cutout_source",
+        "semantic_extract_source",
+        "evidence_only",
+        "reject",
+    }:
+        raise ValueError("recommended_use is invalid")
     observed_identity = payload.get("observed_identity")
     if not isinstance(observed_identity, dict):
         raise ValueError("observed_identity must be an object")
@@ -2627,8 +2659,9 @@ def _normalize_n1_observation(payload, expected_asset_id):
         or not 0 <= reference_quality <= 100
     ):
         raise ValueError("reference_quality must be an integer between 0 and 100")
-    if contains_target and (target_visibility == 0 or reference_quality == 0):
-        raise ValueError("visible product identity cannot be placeholder quality")
+    if contains_target:
+        target_visibility = max(target_visibility, 1)
+        reference_quality = max(reference_quality, 1)
     for field in (
         "dominant_colors",
         "visible_material_cues",
@@ -2659,9 +2692,9 @@ def _normalize_n1_observation(payload, expected_asset_id):
     if not isinstance(payload.get("reason"), str):
         raise ValueError("reason must be a string")
     candidate_name = payload.get("candidate_product_name", payload.get("product_name"))
-    if not isinstance(candidate_name, str) or not candidate_name.strip():
+    if (not isinstance(candidate_name, str) or not candidate_name.strip()) and contains_target:
         raise ValueError("candidate_product_name is required")
-    if _is_schema_placeholder(candidate_name):
+    if contains_target and _is_schema_placeholder(candidate_name):
         raise ValueError("candidate_product_name cannot be a placeholder string")
     candidate_confidence = payload.get(
         "candidate_product_name_confidence",
@@ -2681,7 +2714,7 @@ def _normalize_n1_observation(payload, expected_asset_id):
             "observed_identity": observed_identity,
             "reference_quality": reference_quality,
             "recommended_use": recommended_use,
-            "candidate_product_name": candidate_name.strip(),
+            "candidate_product_name": "" if not isinstance(candidate_name, str) or _is_schema_placeholder(candidate_name) else candidate_name.strip(),
             "candidate_product_name_confidence": _normalized_confidence(
                 candidate_confidence,
                 "candidate_product_name_confidence",
@@ -2866,6 +2899,57 @@ def _normalize_n2_identity(
             "standardization_reason": standardization_reason.strip(),
         }
     )
+    return normalized
+
+
+def _n2_observation_fallbacks(payload, identity_input):
+    if not isinstance(payload, dict):
+        return payload
+    normalized = copy.deepcopy(payload)
+    observations = [
+        item
+        for item in identity_input.get("observations", [])
+        if item.get("contains_target_product") and item.get("target_is_physical_product")
+    ]
+    first_observation = observations[0] if observations else {}
+    observed_identity = first_observation.get("observed_identity") or {}
+    fallback_name = _clean_schema_placeholder(identity_input.get("product_name")) or _clean_schema_placeholder(
+        first_observation.get("candidate_product_name")
+    )
+    fallback_category = next(iter(_string_list(observed_identity.get("category_candidates"))), "")
+    fallback_shape = _clean_schema_placeholder(observed_identity.get("overall_shape")) or "; ".join(
+        _string_list(first_observation.get("product_facts"))
+    )
+    if fallback_name and not _clean_schema_placeholder(normalized.get("product_name")):
+        normalized["product_name"] = fallback_name
+    profile = normalized.get("product_profile")
+    if isinstance(profile, dict):
+        profile = copy.deepcopy(profile)
+        if fallback_category and not _clean_schema_placeholder(profile.get("category")):
+            profile["category"] = fallback_category
+        if fallback_shape and not _clean_schema_placeholder(profile.get("primary_appearance")):
+            profile["primary_appearance"] = fallback_shape
+        normalized["product_profile"] = profile
+    lock = normalized.get("identity_lock")
+    if isinstance(lock, dict):
+        lock = copy.deepcopy(lock)
+        must_not_change = _string_list(lock.get("must_not_change"))
+        if not must_not_change:
+            lock["must_not_change"] = _string_list([fallback_shape, fallback_category, fallback_name])
+        normalized["identity_lock"] = lock
+    appearances = normalized.get("target_appearances")
+    if isinstance(appearances, list):
+        cleaned = []
+        for item in appearances:
+            if not isinstance(item, dict):
+                cleaned.append(item)
+                continue
+            appearance = copy.deepcopy(item)
+            if fallback_category and not _clean_schema_placeholder(appearance.get("label")):
+                appearance["label"] = fallback_category
+            appearance["variant_attributes"] = _string_list(appearance.get("variant_attributes"))
+            cleaned.append(appearance)
+        normalized["target_appearances"] = cleaned
     return normalized
 
 
@@ -3812,7 +3896,7 @@ def process_prompt_once(client=None, storage=None):
                 "Merge owned observations into one product identity. Report ERP/visual conflict_state, select one primary asset, at most three supporting assets, and an identity lock.",
                 identity_input,
                 normalize=lambda value: _normalize_n2_identity(
-                    value,
+                    _n2_observation_fallbacks(value, identity_input),
                     valid_asset_ids,
                     required_primary_asset_id=required_primary_asset_id,
                     require_continue_when_valid=True,

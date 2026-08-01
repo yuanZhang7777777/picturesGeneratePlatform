@@ -31,7 +31,7 @@ test("combines dirty card fields into one explicit versioned save", async () => 
 
   fireEvent.change(screen.getByLabelText("商品名称 旧名称"), { target: { value: "新名称" } });
   fireEvent.change(screen.getByLabelText("商品平台 新名称"), { target: { value: "tiktok" } });
-  fireEvent.change(screen.getByLabelText("商品市场 新名称"), { target: { value: "VN" } });
+  fireEvent.change(screen.getByLabelText("商品国家 新名称"), { target: { value: "VN" } });
   fireEvent.change(screen.getByLabelText("创意 Brief 新名称"), { target: { value: "展示使用方式" } });
   fireEvent.change(screen.getByLabelText("单品风格 新名称"), { target: { value: "自然光" } });
   fireEvent.blur(screen.getByLabelText("单品风格 新名称"));
@@ -64,9 +64,8 @@ test("keeps failed ERP SKUs visible after a partial import", async () => {
     ],
   })} />);
 
-  fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
   fireEvent.change(screen.getByLabelText("ERP SKU"), { target: { value: "OK-1\nMISSING" } });
-  fireEvent.click(screen.getByRole("button", { name: "导入后整理" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[1]);
 
   expect(await screen.findByText("MISSING：SKU 不存在或无可用商品图片")).toBeInTheDocument();
   expect(screen.getByLabelText("ERP SKU")).toHaveValue("MISSING");
@@ -83,7 +82,7 @@ test("shows exact blocked progress and no raw implementation configuration", () 
   render(<ProductCard {...props} sku={sku} onSave={vi.fn()} />);
   expect(screen.getByText("预备受阻 · 请确认商品身份")).toBeInTheDocument();
   expect(screen.getByLabelText("商品平台 旧名称")).toHaveDisplayValue("Shopee 虾皮");
-  expect(screen.getByLabelText("商品市场 旧名称")).toHaveDisplayValue("新加坡");
+  expect(screen.getByLabelText("商品国家 旧名称")).toHaveDisplayValue("新加坡");
   expect(screen.queryByText("跟随项目")).not.toBeInTheDocument();
 });
 
@@ -95,7 +94,7 @@ test("keeps the large product card editable without forcing a square", () => {
   expect(screen.getByLabelText("创意 Brief 旧名称")).toBeInTheDocument();
 });
 
-test("labels and saves how multiple references belong to the product", async () => {
+test("shows multiple references for drag sorting without a relation selector", () => {
   const onSave = vi.fn().mockResolvedValue({ id: "sku-1", version: 2 });
   const groupedSku = {
     ...sku,
@@ -108,13 +107,11 @@ test("labels and saves how multiple references belong to the product", async () 
   };
   render(<ProductCard {...props} sku={groupedSku} assets={groupedSku.assets} onSave={onSave} />);
 
-  const relation = screen.getByLabelText("参考图关系 旧名称");
-  expect(relation).toHaveDisplayValue("同商品参考");
-  fireEvent.change(relation, { target: { value: "variant_group" } });
-  fireEvent.blur(relation);
-
-  await waitFor(() => expect(onSave).toHaveBeenCalledWith({ relation_type: "variant_group" }, 1));
+  expect(screen.queryByLabelText("参考图关系 旧名称")).not.toBeInTheDocument();
   expect(screen.getByRole("list", { name: "旧名称 参考图排序" })).toHaveTextContent("主参考");
+  expect(screen.getByRole("button", { name: "拖拽商品参考图 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "拖拽商品参考图 2" })).toBeInTheDocument();
+  expect(onSave).not.toHaveBeenCalled();
 });
 
 test("renders product details in a fixed side panel", () => {

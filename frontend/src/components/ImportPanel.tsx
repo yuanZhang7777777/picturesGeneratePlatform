@@ -51,7 +51,6 @@ export function ImportPanel({
 }) {
   const imagePicker = useRef<HTMLInputElement>(null);
   const folderPicker = useRef<HTMLInputElement>(null);
-  const [tab, setTab] = useState<"images" | "erp">("images");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [skuText, setSkuText] = useState("");
@@ -92,23 +91,23 @@ export function ImportPanel({
   const imageFiles = files.filter((file) => !uploadPath(file).toLowerCase().endsWith(".txt"));
   const txtCount = files.length - imageFiles.length;
 
-  return <section className="surface overflow-visible p-5" aria-label="添加商品面板">
-    <div className="mb-4 flex gap-2 border-b border-slate-100">
-      <button type="button" className={`pb-3 text-sm font-semibold ${tab === "images" ? "border-b-2 border-indigo-600 text-indigo-700" : "text-slate-500"}`} onClick={() => setTab("images")}>图片/文件夹</button>
-      <button type="button" className={`pb-3 text-sm font-semibold ${tab === "erp" ? "border-b-2 border-indigo-600 text-indigo-700" : "text-slate-500"}`} onClick={() => setTab("erp")}>ERP SKU</button>
-    </div>
-    {tab === "images" ? <>
-      <div className="relative">
-        <button className="secondary-button" type="button" aria-controls="asset-picker-menu" aria-expanded={pickerOpen} onClick={() => setPickerOpen((open) => !open)}>添加图片或文件夹</button>
-        {pickerOpen && <div id="asset-picker-menu" role="menu" aria-label="添加素材方式" className="absolute z-10 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" role="menuitem" type="button" onClick={() => imagePicker.current?.click()}>选择图片</button>
-          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" role="menuitem" type="button" onClick={() => folderPicker.current?.click()}>选择文件夹</button>
-        </div>}
-      </div>
-      <div className="mt-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center" onDragOver={(event) => event.preventDefault()} onDrop={dropFiles}>
-        <p className="font-medium text-slate-700">拖入图片或文件夹</p>
-        <p className="mt-1 text-xs text-slate-500">JPEG、PNG、WebP、UTF-8 TXT</p>
-      </div>
+  return <section className="surface overflow-visible p-4" aria-label="添加商品面板">
+    <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+      <div className="min-w-0 rounded-xl border border-slate-100 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-800">图片 / 文件夹</h2>
+          <div className="relative">
+            <button className="secondary-button min-h-9 px-3" type="button" aria-controls="asset-picker-menu" aria-expanded={pickerOpen} onClick={() => setPickerOpen((open) => !open)}>添加图片或文件夹</button>
+            {pickerOpen && <div id="asset-picker-menu" role="menu" aria-label="添加素材方式" className="absolute right-0 z-10 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+              <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" role="menuitem" type="button" onClick={() => imagePicker.current?.click()}>选择图片</button>
+              <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" role="menuitem" type="button" onClick={() => folderPicker.current?.click()}>选择文件夹</button>
+            </div>}
+          </div>
+        </div>
+        <div className="mt-3 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center" onDragOver={(event) => event.preventDefault()} onDrop={dropFiles}>
+          <p className="font-medium text-slate-700">拖入图片或文件夹</p>
+          <p className="mt-1 text-xs text-slate-500">JPEG、PNG、WebP、UTF-8 TXT</p>
+        </div>
       <input ref={imagePicker} className="sr-only" aria-label="选择图片" type="file" multiple accept={acceptedTypes} onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
       <input ref={folderPicker} className="sr-only" aria-label="选择文件夹" type="file" multiple accept={acceptedTypes} {...folderInputProps} onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
       {imageFiles.length > 0 && <div className="mt-4 grid grid-cols-5 gap-2 sm:grid-cols-8">{imageFiles.map((file, index) => <PendingImage key={`${uploadPath(file)}:${file.size}:${file.lastModified}`} file={file} index={index} />)}</div>}
@@ -118,14 +117,16 @@ export function ImportPanel({
         <button className="secondary-button" disabled={disabled || !files.length} onClick={() => void uploadFiles("auto")}>导入并自动出图</button>
         {files.length > 0 && <button className="text-sm font-semibold text-slate-600" type="button" onClick={() => setFiles([])}>清空</button>}
       </div>
-    </> : <>
-      <label className="block text-sm font-medium text-slate-700"><span className="mb-2 block">ERP SKU</span><textarea value={skuText} onChange={(event) => { setSkuText(event.target.value); setSkuErrors([]); }} placeholder="每行或空格分隔，单次最多 50 个" /></label>
-      {skuErrors.length > 0 && <ul className="mt-3 space-y-1 text-sm text-amber-800">{skuErrors.map((message) => <li key={message}>{message}</li>)}</ul>}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button className="primary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("organize")}>导入后整理</button>
-        <button className="secondary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("auto")}>导入并自动出图</button>
       </div>
-    </>}
+      <div className="min-w-0 rounded-xl border border-slate-100 p-3">
+        <label className="block text-sm font-medium text-slate-700"><span className="mb-2 block">ERP SKU</span><textarea className="min-h-28" value={skuText} onChange={(event) => { setSkuText(event.target.value); setSkuErrors([]); }} placeholder="每行或空格分隔，单次最多 50 个" /></label>
+        {skuErrors.length > 0 && <ul className="mt-3 space-y-1 text-sm text-amber-800">{skuErrors.map((message) => <li key={message}>{message}</li>)}</ul>}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button className="primary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("organize")}>导入后整理</button>
+          <button className="secondary-button" disabled={disabled || !skuLines().length} onClick={() => void importSkuList("auto")}>导入并自动出图</button>
+        </div>
+      </div>
+    </div>
   </section>;
 }
 

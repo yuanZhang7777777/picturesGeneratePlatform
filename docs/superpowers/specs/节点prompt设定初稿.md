@@ -293,7 +293,7 @@ N4 和 N6 只接收当前槽位的 `resolved_rules[].rule_id` 与精简 `prompt_
 }
 ```
 
-生产 Schema 对我方商品输出额外要求：`observed_identity.category_candidates` 非空、`observed_identity.overall_shape` 非空、`image_role` 为允许枚举值，且 `target_visibility/reference_quality` 为整数。缺失字段只允许以原始图像和原始输入修复一次；不得用通用品类或空身份结果继续 N2。
+生产 Schema 对我方商品输出额外要求：`observed_identity.category_candidates` 非空、`observed_identity.overall_shape` 非空、`image_role` 为允许枚举值，且 `target_visibility/reference_quality` 为整数。运行归一化允许视觉模型把我方商品图称为 `product/main_product/hero`、细节图称为 `product_detail/detail/closeup`、包装图称为 `package/packaging`，统一映射到生产枚举；不得因为这种同义角色误阻断。缺失字段只允许以原始图像和原始输入修复一次；不得用通用品类或空身份结果继续 N2。
 
 竞品分支必须将商品识别字段保持为空或 `null`，只输出以下白名单：
 
@@ -451,6 +451,7 @@ competitor_style 模式：
 - JSON 非法：同输入修复一次；仍失败则暂停该商品，不影响其他商品。
 - 全部图片均无有效实物：`decision=needs_input`、`target_appearances=[]`、`primary_asset_id=null`、补充图为空；部分图片失败不阻断其他外观。
 - 多个颜色/款式外观同时存在：全部保留为 `target_appearances`，不要求员工选择或确认关系。
+- N2 输出 `string`、空模板值或其他 Schema 占位时，不能写入商品事实；运行端先用 N1 的候选商品名、类别和外观描述兜底一次，仍无有效商品才阻断。
 - supporting 图含竞品、无效资产或超过三张：Schema 拒绝并做一次修复。
 
 ### 4.6 版本与快照字段

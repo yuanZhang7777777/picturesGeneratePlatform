@@ -158,7 +158,7 @@ test("opens a unified project workspace from the dashboard", async () => {
   renderApp("/projects/project-demo");
 
   expect(await screen.findByRole("heading", { name: "夏日家居上新" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "生产结果" })).toHaveAttribute("href", "/projects/project-demo/results");
+  expect(screen.getAllByRole("link", { name: "生产结果" })[0]).toHaveAttribute("href", "/projects/project-demo/results");
 });
 
 test("asks only for a project name before opening the project workbench", async () => {
@@ -166,10 +166,10 @@ test("asks only for a project name before opening the project workbench", async 
 
   expect(await screen.findByLabelText("项目名称")).toBeInTheDocument();
   expect(screen.queryByLabelText("平台")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("市场")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("国家")).not.toBeInTheDocument();
 });
 
-test("keeps platform and market directly in the compact toolbar", async () => {
+test("keeps platform and country directly in the compact toolbar", async () => {
   renderApp("/projects/project-demo");
 
   expect(await screen.findByRole("button", { name: "Shopee 虾皮" })).toHaveAttribute("aria-pressed", "true");
@@ -181,10 +181,8 @@ test("keeps the add-product panel permanently visible", async () => {
   renderApp("/projects/project-demo");
 
   expect(await screen.findByRole("region", { name: "添加商品面板" })).toBeInTheDocument();
-  expect(screen.queryByLabelText("ERP SKU")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "添加图片或文件夹" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "添加图片或文件夹" })).toBeInTheDocument();
 });
 
 test("does not hide the add-product panel behind a dialog", async () => {
@@ -209,7 +207,6 @@ test("shows two explicit import choices for both upload and ERP SKU entry", asyn
   expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("multiple");
   expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("webkitdirectory");
   expect(screen.getByText("拖入图片或文件夹")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
 });
 
@@ -312,9 +309,8 @@ test("imports ERP SKUs in organize mode", async () => {
   renderApp("/projects/project-demo");
 
   await openImportPanel();
-  fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
   fireEvent.change(await screen.findByLabelText("ERP SKU"), { target: { value: "LAMP-001\nLAMP-002" } });
-  fireEvent.click(screen.getByRole("button", { name: "导入后整理" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[1]);
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sku-import/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/sku-import/"));
@@ -326,9 +322,8 @@ test("marks ERP imports for automatic mode without generating before Prompt prep
   renderApp("/projects/project-demo");
 
   await openImportPanel();
-  fireEvent.click(screen.getByRole("button", { name: "ERP SKU" }));
   fireEvent.change(await screen.findByLabelText("ERP SKU"), { target: { value: "LAMP-001" } });
-  fireEvent.click(screen.getByRole("button", { name: "导入并自动出图" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "导入并自动出图" })[1]);
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sku-import/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/sku-import/"));
