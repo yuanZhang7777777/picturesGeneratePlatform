@@ -34,8 +34,8 @@ v3 当前运行输入以 `platform_app/services.py` 实际组装的 payload 为�
 
 | 节点 | 实际输入键 |
 | --- | --- |
-| N1 | `asset_id, asset_kind, product_name, confirmed_points`；图片走视觉输入 |
-| N2 | `product_name, confirmed_points, relation_type, observations, max_supporting_images` |
+| N1 | `asset_id, asset_kind, product_name, confirmed_points`；对当前商品的全部图片逐张执行，图片走视觉输入 |
+| N2 | `product_name, confirmed_points, relation_type, observations, max_supporting_images`；`observations` 必须覆盖当前全部可用图片 |
 | N3 | `product_name, confirmed_points, product_profile, identity_lock, owned_observations, market_context` |
 | N4 | `slot_order, role, product_name, product_profile, identity_lock, fact_ledger, primary_asset_id, supporting_asset_ids, resolved_rule_directives, rule_refs, size, resolution, prompt_limits` |
 | N5.* | `product_name, product_profile, identity_lock, fact_ledger, slots, market_context, seed_style` |
@@ -217,7 +217,7 @@ N4 和 N6 只接收当前槽位的 `resolved_rules[].rule_id` 与精简 `prompt_
 }
 ```
 
-`image_urls` 不得使用 base64 或 `{ "url": "..." }` 对象。白底图使用 N2 批准的一张主参考图和最多三张结构补充图；营销图优先使用已归档白底图，必要时只增加 N2 批准的一张互补结构参考。竞品图永远不能出现在该数组中。
+`image_urls` 不得使用 base64 或 `{ "url": "..." }` 对象。白底图按 N2 的 `target_appearances` 选择覆盖全部目标外观所需的最少已批准参考图；营销图优先使用已归档白底图，再按该槽 `appearance_ids` 只增加覆盖目标外观所需的最少原始参考图。竞品图永远不能出现在该数组中。
 
 ## 3. N1 逐图观察
 
@@ -371,8 +371,8 @@ competitor_style 模式：
 ### 4.1 执行器
 
 - 模型：`deepseek-v4-pro`
-- 输入：N1 的我方商品观察结果，不接收竞品原图或竞品商品内容
-- 输出：主外观、互补参考图、身份锁和商品档案
+- 输入：当前商品全部图片的 N1 观察结果，不接收竞品原图或竞品商品内容
+- 输出：目标外观集合、主参考、互补参考图、身份锁和商品档案
 
 ### 4.2 输入 JSON
 
@@ -403,6 +403,15 @@ competitor_style 模式：
     "other_variants": [],
     "known_conflicts": []
   },
+  "target_appearances": [
+    {
+      "appearance_id": "appearance.001",
+      "label": "",
+      "variant_attributes": [],
+      "asset_ids": [12],
+      "primary_asset_id": 12
+    }
+  ],
   "identity_lock": {
     "family_invariants": [],
     "primary_variant_attributes": [],
@@ -418,21 +427,21 @@ competitor_style 模式：
 }
 ```
 
-当 `decision=continue` 时，`product_profile.category`、`product_profile.primary_appearance`、`identity_lock.must_not_change`、`primary_asset_id` 均为必填；`supporting_asset_ids` 只能是与主图互补的我方资产、最多三张。ERP 或人工名称与观察到的核心结构冲突时输出 `decision=needs_input` 并给出冲突原因，不能以名称优先绕过检查。
+当 `decision=continue` 时，`product_profile.category`、`identity_lock.must_not_change`、非空 `target_appearances`、`primary_asset_id` 均为必填。`target_appearances` 按相同外观归并多角度，并把颜色、花纹、普通尺寸或款式差异保存为独立外观；每个外观只引用当前商品的有效资产。排序第一张必须作为全局 `primary_asset_id`，各外观再保存自己的 `primary_asset_id`。ERP 或人工名称与观察到的核心结构冲突时输出 `decision=needs_input` 并给出冲突原因；仅部分图片无效时继续，只有全部图片都无法确认有效商品时阻断。
 
 ### 4.4 系统提示词行为摘要
 
 ```text
-你是商品身份归并器。根据商品名、确认资料和逐图观察结果，选择一个真实主外观并建立不可变身份锁。
+你是商品身份归并器。根据商品名、确认资料和全部逐图观察结果，归并目标外观并建立不可变身份锁。
 
 1. 商品家族不变量包括核心品类、主体结构、工作或开合机制、关键部件拓扑、装配关系和共有内外结构。
 2. 颜色、花纹、普通尺寸、拍摄角度、开合状态和内容物摆放是可变属性，不能单独证明商品身份冲突。
-3. 主外观的颜色、纹理、Logo、装饰和外形只能来自 primary_asset_id 及与其明确一致的图片。
-4. 其他 SKU 图片只能补充高置信度共有结构，不能把其可变属性混入主外观。
+3. 相同颜色/款式的不同角度归入同一 appearance；颜色、花纹、普通尺寸或款式差异归为不同 appearance，不得静默丢弃。
+4. 排序第一张是全局主参考；每个 appearance 的可变属性只能来自其自己的 `asset_ids`，不同 appearance 共享的核心结构进入 family invariants。
 5. 精确数量只能来自 confirmed_points 或清晰、可可靠计数的图像观察。
 6. 看不见的内部结构、接口、配件和背面结构不得补全。
-7. supporting_asset_ids 最多三张，必须与主图互补，不能重复角度或包含竞品。
-8. 只要存在有效图片和已确认商品名，优先 continue；只有无法确认真实目标商品或核心结构存在不可消解冲突时 needs_input。
+7. supporting_asset_ids 只保留后向兼容的互补参考集合；下游必须以 `target_appearances` 和逐槽 `appearance_ids` 选择最少参考图，不能包含竞品。
+8. 只要至少一张图片能确认真实目标商品就优先 continue；只有全部图片都无有效商品，或核心结构存在不可消解冲突时 needs_input。
 
 只输出符合指定结构的 JSON。不要生成营销文案，不要创建新商品事实。
 ```
@@ -440,8 +449,8 @@ competitor_style 模式：
 ### 4.5 失败处理
 
 - JSON 非法：同输入修复一次；仍失败则暂停该商品，不影响其他商品。
-- 无有效实物图：`decision=needs_input`、`primary_asset_id=null`、补充图为空。
-- 多个外观版本无法选择：优先匹配用户确认名称或资料；仍无法消解才 `needs_input`。
+- 全部图片均无有效实物：`decision=needs_input`、`target_appearances=[]`、`primary_asset_id=null`、补充图为空；部分图片失败不阻断其他外观。
+- 多个颜色/款式外观同时存在：全部保留为 `target_appearances`，不要求员工选择或确认关系。
 - supporting 图含竞品、无效资产或超过三张：Schema 拒绝并做一次修复。
 
 ### 4.6 版本与快照字段
@@ -582,6 +591,7 @@ competitor_style 模式：
   "fact_ledger": {},
   "primary_asset_id": 12,
   "supporting_asset_ids": [13, 14],
+  "target_appearances": [],
   "resolved_rule_directives": [],
   "prompt_limits": {
     "max_characters": 3500,
@@ -631,7 +641,7 @@ competitor_style 模式：
 3. 商品完整、正面或最能验证结构的轻微三分之四视角、居中、无遮挡、不裁切。
 4. 使用真实材质、柔和影棚光和自然接触阴影。
 5. 禁止新增文字、促销、Logo、水印、边框、图标、人物、道具、包装、未确认配件和虚构结构。
-6. 不得把 supporting 图片中的其他 SKU 可变属性混入主外观。
+6. 标准白底或款式总览必须覆盖 `target_appearances` 中的全部目标外观；不得把一个外观的可变属性错误混入另一个外观。
 7. 不得依靠推断改变商品身份；inference_trace 应为空或只记录不影响身份的低风险展示判断。
 8. 合并重复否定句，Prompt 不超过 3500 字符。
 
@@ -713,6 +723,7 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
     {
       "slot_id": "02",
       "role": "second_angle_structure",
+      "appearance_ids": ["appearance.001"],
       "decision_task": "",
       "fact_refs": [],
       "inference_refs": [],
@@ -729,6 +740,7 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
     {
       "slot_id": "03",
       "role": "core_benefit",
+      "appearance_ids": ["appearance.001"],
       "decision_task": "",
       "fact_refs": [],
       "inference_refs": [],
@@ -745,6 +757,7 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
     {
       "slot_id": "04",
       "role": "material_detail",
+      "appearance_ids": ["appearance.001"],
       "decision_task": "",
       "fact_refs": [],
       "inference_refs": [],
@@ -761,6 +774,7 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
     {
       "slot_id": "05",
       "role": "usage_scene",
+      "appearance_ids": ["appearance.001"],
       "decision_task": "",
       "fact_refs": [],
       "inference_refs": [],
@@ -777,6 +791,7 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
     {
       "slot_id": "06",
       "role": "user_or_scale",
+      "appearance_ids": ["appearance.001"],
       "decision_task": "",
       "fact_refs": [],
       "inference_refs": [],
@@ -793,6 +808,7 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
     {
       "slot_id": "07",
       "role": "size_package_included",
+      "appearance_ids": ["appearance.001"],
       "decision_task": "",
       "fact_refs": [],
       "inference_refs": [],
@@ -809,6 +825,7 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
     {
       "slot_id": "08",
       "role": "platform_conversion",
+      "appearance_ids": ["appearance.001"],
       "decision_task": "",
       "fact_refs": [],
       "inference_refs": [],
@@ -825,6 +842,7 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
     {
       "slot_id": "09",
       "role": "supplemental_conversion",
+      "appearance_ids": ["appearance.001"],
       "decision_task": "",
       "fact_refs": [],
       "inference_refs": [],
@@ -843,7 +861,8 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
     "duplicate_scene_pairs": [],
     "duplicate_decision_tasks": [],
     "uncovered_slot_ids": [],
-    "high_risk_inference_refs": []
+    "high_risk_inference_refs": [],
+    "uncovered_appearance_ids": []
   }
 }
 ```
@@ -862,7 +881,8 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
 7. 内部结构、包装包含物、精确尺寸和配件只有存在证据时才能安排。
 8. seed_style 和 Style DNA 只影响抽象视觉策略，不得复刻竞品品牌、文字、人物、插画或版式。
 9. 本节点只引用规则 ID 和适用提示，不复制完整规则正文。
-10. coverage_check 必须显式报告重复、空槽和高风险推断。
+10. 每个计划必须使用 `appearance_ids` 引用 N2 的目标外观；白底或款式总览覆盖全部外观，其余槽位可使用子集，但整套的 `uncovered_appearance_ids` 必须为空。
+11. coverage_check 必须显式报告重复、空槽、高风险推断和未覆盖外观。
 
 11. 运行时必须为每个营销槽位计算 `decision_task`、`main_scene`、环境、镜头/构图与主要动作五维签名；任意两槽位不得在五维上完全相同，也不得只靠微小换词复用同一购买决策。
 
@@ -916,7 +936,7 @@ v3 发布 `N5.generic`、`N5.shopee`、`N5.tiktok`。三者共享身份、证据
   "resolved_rule_directives": [],
   "reference_plan": {
     "primary_asset_id": 12,
-    "supporting_asset_ids": [13, 14],
+    "supporting_asset_ids": [13],
     "completed_white_result_id": 301
   },
   "prompt_limits": {
@@ -1002,7 +1022,7 @@ N6 编译发生在白底结果归档前时，`completed_white_result_id` 可以�
 
 不得堆叠多个场景、动作链、候选机位、候选文案或重复否定句。
 
-`reference_plan` 只能使用 N2 批准资产；营销槽位把已完成白底图作为首要参考，只有确有结构补充必要时才加入一张互补我方结构图。它们不得把源图背景、机位或场景当作必须复刻的约束。
+`reference_plan` 只能使用 N2 批准资产；N6 根据当前槽 `appearance_ids` 选择覆盖这些外观所需的最少参考图。营销槽位把已完成白底图作为首要参考，白底已完整覆盖时不再附加原图；确有外观或结构补充必要时才加入最少互补我方参考图。它们不得把源图背景、机位或场景当作必须复刻的约束。
 
 ### 8.6 系统提示词行为摘要
 
@@ -1116,6 +1136,7 @@ N6 编译发生在白底结果归档前时，`completed_white_result_id` 可以�
 - 图片可见文字超过三行，或白底图存在新增文字。
 - 存在两个以上主场景或主要动作。
 - Prompt、文字或引用包含不存在的 fact ID、inference ID、规则 ID 或资产 ID。
+- 槽位引用不存在的 appearance ID，白底/款式总览未覆盖全部目标外观，或整套仍有未覆盖目标外观。
 - 竞品资产进入生成参考数组。
 - 营销图未关联本商品已完成白底图，或调度时白底图未完成归档。
 - 高风险推断进入消费者文案。
@@ -1173,7 +1194,7 @@ N6 编译发生在白底结果归档前时，`completed_white_result_id` 可以�
 提交前：
 
 1. 一个共享的提交验证器重读当前商品、有效配置、N2 身份快照、N4/N6 PromptVersion、同槽 N7 通过快照、规则/模板哈希和实际引用集；任何 Generation、重做、N8 修订、N9 简化或原图直通均不得绕过它。
-2. 上传一张主参考图和最多三张结构补充图。
+2. 按当前槽 `appearance_ids` 上传覆盖目标外观所需的最少 N2 批准参考图；白底/款式总览覆盖全部目标外观。
 3. 营销图额外上传或复用本商品已归档白底结果。
 4. 构造 URL 字符串数组，不传 base64 或 URL 对象。
 5. 保存完整请求快照和幂等键。
@@ -1448,11 +1469,11 @@ N6 编译发生在白底结果归档前时，`completed_white_result_id` 可以�
 ## 14. 最小验收清单
 
 1. N1 对我方图输出完整且严格的身份证据，对竞品图只输出白名单 Style DNA；缺字段只修复一次后阻断当前商品。
-2. N2 最多选择一张主图和三张结构补充图，且不混合其他 SKU 可变属性；ERP 名称与图像冲突时需要确认。
+2. N1 分析当前商品全部图片；N2 按角度归并并输出全部 `target_appearances`，排序首图为主参考，部分图片无效不阻断，只有全部图片无有效商品才阻断。
 3. N3 能保存 `confirmed / observed / inferred`，高风险推断不能进入文案。
 4. N4 产出无文字白底 Prompt，长度不超过 3500。
-5. N5 默认输出八个购买决策、场景、环境、镜头/构图和动作五维均不重复的营销槽位计划。
-6. N6 每槽只有一个场景、一个动作、最多三行目标语言文字，且只使用 N2 批准参考图。
+5. N5 默认输出八个购买决策、场景、环境、镜头/构图和动作五维均不重复的营销槽位计划；逐槽保存 `appearance_ids`，整套覆盖全部目标外观。
+6. N6 每槽只有一个场景、一个动作、最多三行目标语言文字，且只使用覆盖当前槽目标外观所需的最少 N2 批准参考图。
 7. N7 能阻断超长、禁字、身份冲突、语言错误、竞品参考、过期证据和硬规则违规。
 8. 白底未完成时槽位 02–09 不调用 `gpt-image-2`。
 9. N8 只改圈选区域并创建新版本。

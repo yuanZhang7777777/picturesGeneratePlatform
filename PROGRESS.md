@@ -92,7 +92,7 @@
 - Safety: archived products are excluded from preparation, generation, review and export. Prompt preparation and active/uncertain generation block structural edits or deletion. Automatic import waits for Prompt Worker completion instead of posting generation from stale frontend state.
 - Verification: backend 206 passed; frontend 51 passed; Vite build, Django check, migration drift, `git diff --check`, single-image browser E2E and native folder picker E2E passed.
 - Deployment: migration `0013` applied; Web, PostgreSQL, Prompt Worker, Generation Worker and Caddy are running; local and public `/health/ready` passed. Backup: `/opt/independent-image-platform-backups/20260731_112241`; the deployment lock was released.
-- Remaining: real ERP employee login/SKU import; upload request idempotency for lost acknowledgements; later roadmap phases.
+- Remaining: real employee ERP SKU/OSS browser smoke; upload request idempotency for lost acknowledgements; later roadmap phases.
 
 # ERP image download, logout, and explicit image pickers
 
@@ -110,3 +110,13 @@
 - Verification: backend 335 passed, frontend 83 passed, Vite build passed; remote migration `0015`, template seed, Django check, five services and `/health/ready` passed.
 - Rollback: `/opt/independent-image-platform-backups/20260731_195703-bd7293d`.
 - Remaining: real employee ERP SKU/OSS browser smoke and a new paid 1+8 operator quality review.
+
+# Workbench v4 implementation
+
+- Status: started 2026-08-01 on `lxc/workbench-v4` from `e98ad9f`.
+- Goal: persistent import, large product cards, ordered real thumbnails, a fixed non-reflowing side panel, and one shared 1+8 set for every image in a product card.
+- Completed: read project rules and six authoritative documents; updated the confirmed boundary, design, Prompt OS contract, roadmap, leader goal, STATUS, and CLAUDE.
+- Next: reproduce the known backend/frontend failures, update behavior tests first, then implement the smallest compatible API, Prompt OS, and React changes.
+- Reuse: `ClusterAsset`, `analysis_snapshot`, existing APIs, TanStack Query, and dnd-kit; no new table, state store, or frontend dependency.
+- Risk: preserve historical single-appearance snapshots while adding `target_appearances` and per-slot `appearance_ids`.
+- Forbidden: do not touch the untracked user-operation-flow document, secrets, or historical Prompt/generation/review records.
