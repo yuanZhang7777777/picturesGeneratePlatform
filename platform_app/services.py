@@ -5916,9 +5916,6 @@ def ensure_cluster_generations(
         for slot in to_create
     }
     reserve_generation_usage(user, len(to_create))
-    hero_refs = []
-    if hero is not None:
-        hero_refs = [result.storage_path for result in hero.result_assets.all()[:1]]
     approved_references = []
     if to_create:
         identity = locked.analysis_snapshot.get("identity", {})
@@ -5929,40 +5926,16 @@ def ensure_cluster_generations(
     created = []
     for slot in to_create:
         base_prompt_version = approved_prompts[slot.id]
-        references = approved_references
-        hero_for_gate = None
+        references = list(
+            base_prompt_version.input_snapshot.get("reference_snapshot", [])
+        ) or approved_references
         if slot.id != hero_slot.id:
-            prepared_references = base_prompt_version.input_snapshot.get(
-                "reference_snapshot",
-                [],
-            )
-            slot_references = [
+            references = [
                 reference
-                for reference in prepared_references
+                for reference in references
                 if reference in approved_references
             ] or approved_references
-            references = [hero_refs[0], *slot_references] if hero_refs else slot_references
-            hero_for_gate = hero if hero_refs else None
-        prompt_version = _create_gated_prompt_version(
-            cluster=locked,
-            batch=batch,
-            slot=slot,
-            user=user,
-            node_name=base_prompt_version.node_name,
-            template_version=base_prompt_version.template_version,
-            provider_model=base_prompt_version.provider_model,
-            prompt_text=base_prompt_version.prompt_text,
-            input_snapshot=base_prompt_version.input_snapshot,
-            structured_output=base_prompt_version.structured_output,
-            source_snapshot=base_prompt_version.source_snapshot,
-            references=references,
-            parent_prompt_version=None,
-            hero_generation=hero_for_gate,
-            fact_policy=base_prompt_version.evaluation.get(
-                "fact_policy",
-                "traceable-inference",
-            ),
-        )
+        prompt_version = base_prompt_version
         created.append(
             Generation.objects.create(
                 batch=batch,
