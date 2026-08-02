@@ -366,7 +366,41 @@ def test_compiled_n6_prompt_sends_image_model_direct_creative_instruction():
     assert "Product name:" not in compiled["prompt"]
     assert "Slot purpose:" not in compiled["prompt"]
     assert "Rule " not in compiled["prompt"]
-    assert "Use the supplied product reference images only as product identity evidence." in compiled["prompt"]
+    assert "Use the supplied product reference images only to understand product identity" in compiled["prompt"]
+
+
+def test_vn_image_prompt_does_not_render_chinese_internal_product_name():
+    from platform_app.models import Batch, OutputSlot, OutputTemplate
+    from platform_app.services import compile_slot_prompt
+
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="shopee", name="template")
+    slot = OutputSlot.objects.create(template=template, name="usage", order=5, purpose="Show realistic product use")
+    batch = Batch.objects.create(
+        owner=user,
+        name="vn",
+        platform="shopee",
+        site="VN",
+        market="VN",
+        output_template=template,
+    )
+    cluster = make_cluster(batch, product_name="餐具套装", facts="木质餐具套装")
+
+    compiled = compile_slot_prompt(
+        cluster,
+        slot,
+        slot_directive='Create a warm lifestyle scene for 餐具套装. Add title "餐具套装" and subtitle "Bộ dụng cụ ăn uống".',
+        visible_text_lines=["餐具套装", "Bộ dụng cụ ăn uống"],
+        main_scene="warm dining table",
+        main_action="adult uses the cutlery set naturally",
+        node_name="N6.shopee",
+    )
+
+    assert "餐具套装" not in compiled["prompt"]
+    assert "木质餐具套装" not in compiled["prompt"]
+    assert "Bộ dụng cụ ăn uống" in compiled["prompt"]
+    assert compiled["input_snapshot"]["visible_text_lines"] == ["Bộ dụng cụ ăn uống"]
+    assert "Do not reproduce the original seller photo" in compiled["prompt"]
 
 
 def test_confirm_generation_keeps_prompt_override_as_extra_creative_requirements():
@@ -1651,6 +1685,44 @@ def test_n3_to_n6_normalizers_reject_unknown_refs_overlong_prompts_and_duplicate
             ledger,
             set(),
         )
+
+    vn_prompt = _normalize_n6_prompt(
+        {
+            "slot_id": "2",
+            "main_scene": "kitchen",
+            "main_action": "none",
+            "visible_text_lines": ["餐具套装", "Bộ dụng cụ ăn uống"],
+            "localized_copy": {
+                "language": "vi-VN",
+                "lines": ["餐具套装", "Bộ dụng cụ ăn uống"],
+                "source_fact_refs": ["fact.name.001"],
+                "source_inference_refs": [],
+            },
+            "prompt": "Accurate travel mug in one kitchen scene.",
+            "character_count": 41,
+            "reference_plan": {
+                "primary_asset_id": identity["primary_asset_id"],
+                "supporting_asset_ids": [],
+                "completed_white_result_id": None,
+            },
+            "fact_trace": ["fact.name.001"],
+            "inference_trace": [],
+            "rule_refs": [],
+            "generation_parameters": {
+                "model": "gpt-image-2",
+                "n": 1,
+                "size": "1:1",
+                "resolution": "1k",
+            },
+            "review_required": True,
+        },
+        2,
+        identity,
+        ledger,
+        set(),
+    )
+    assert vn_prompt["visible_text_lines"] == ["Bộ dụng cụ ăn uống"]
+    assert vn_prompt["localized_copy"]["lines"] == ["Bộ dụng cụ ăn uống"]
 
 
 def test_n3_normalizer_repairs_unknown_evidence_refs_to_known_source():

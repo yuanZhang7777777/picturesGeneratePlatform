@@ -125,6 +125,7 @@
 | 2026-07-30 | N5 兼容真实 APIMart 包络并只修复一次 Schema | DeepSeek 实测会返回 `plans`、`slot_plans` 或 `slots` 等不同字段 | 按槽位名/编号归一化；缺槽时追加一次固定 Schema 修复，仍不合格才失败，不循环付费 |
 | 2026-07-29 | APIMart 的真实账号包络优先于文档示例 | 同一供应商不同模型端点的外层 JSON 已出现不一致，不能依赖单一伪造包络 | `deepseek-v4-pro` 账户实测为顶层 OpenAI Chat Completions 包络，非文档示例的 `code/data`；适配器必须按端点/模型显式解析并以真实 fixture 回归。GPT Image 2 已实测 `submitted → processing → completed`、结果 URL 与费用字段，完成后必须立即受限下载归档；`cancelled` 视为终态 |
 | 2026-08-02 | 预备生成与图片生成并发调度上线 | 多商品点击预备/正式生成后，运营应同时看到多个商品进入队列和加载态，而不是误以为只有第一张在工作 | N1/N2 对真实模型短 JSON、0–1 评分和不完整外观分配做归一化；Prompt Worker 默认 `16` 并发，Generation Worker 默认 `32` 线程；`MAX_ACTIVE_GENERATIONS=50` 控制真实同时生图，`GENERATION_USER_ACTIVE_SOFT_LIMIT=10` 做用户公平借用 |
+| 2026-08-02 | VN 等非中文国家禁止中文内部变量进入图片可见文字 | 线上样图在越南站把中文商品名渲染进图片标题，且参考图复刻过重 | 最终 GPT Image 2 Prompt 只允许 N6 锁定的目标语言文案作为可见文字；非中文市场会清理中文商品名/事实变量；参考图只锁商品身份和包含物，营销图强制新场景、新机位和新构图 |
 
 ## 阻塞与风险
 

@@ -65,6 +65,7 @@ STYLE_DNA_VALUES = {
 }
 STYLE_DNA_FIELDS = set(STYLE_DNA_VALUES)
 _UNSET = object()
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
 INFANT_KEYWORDS = ("baby", "infant", "newborn", "toddler", "婴", "幼儿", "宝宝")
 ADULT_KEYWORDS = ("adult", "clothing", "apparel", "beauty", "fashion", "成人", "服装", "美容")
 TEST_NODE_INSTRUCTIONS = {
@@ -2391,6 +2392,27 @@ def _prompt_node(node_name, node_template=_UNSET):
     return node_template.node_name, node_template.version, node_template.instruction
 
 
+def _language_allows_cjk(language):
+    return str(language or "").lower().startswith("zh")
+
+
+def _contains_cjk(value):
+    return bool(_CJK_RE.search(str(value or "")))
+
+
+def _visible_text_for_language(lines, language):
+    lines = [str(line).strip() for line in (lines or []) if str(line).strip()]
+    if _language_allows_cjk(language):
+        return lines
+    return [line for line in lines if not _contains_cjk(line)]
+
+
+def _sanitize_image_prompt_language(prompt, language):
+    if _language_allows_cjk(language):
+        return prompt
+    return _CJK_RE.sub("the uploaded product", prompt)
+
+
 def compile_slot_prompt(
     cluster,
     slot,
@@ -2436,7 +2458,8 @@ def compile_slot_prompt(
     composition = sanitized_style_dna.get("composition") or slot.purpose or "not specified"
     lighting = sanitized_style_dna.get("lighting") or "not specified"
     material = "Use only material explicitly stated in Product facts; otherwise not specified."
-    visible_text_lines = [str(line).strip() for line in (visible_text_lines or []) if str(line).strip()]
+    language = _market_language(market)
+    visible_text_lines = _visible_text_for_language(visible_text_lines, language)
     prompt_lines = [
         "Create one ecommerce product image using the supplied product references.",
         f"Product name: {product_name}",
@@ -2470,13 +2493,21 @@ def compile_slot_prompt(
     if slot_directive:
         prompt_lines = [
             str(slot_directive).strip(),
-            "Use the supplied product reference images only as product identity evidence.",
-            "Keep the real visible product shape, proportions, colors, quantities, and included parts consistent.",
-            "Do not copy the original background unless the prompt explicitly asks for it.",
+            "Use the supplied product reference images only to understand product identity, included parts, variants, proportions, and material cues.",
+            "Create a new ecommerce composition with a fresh camera angle, background, lighting, scene, and product arrangement.",
+            "Do not reproduce the original seller photo's exact composition, crop, camera angle, background, props, or layout.",
+            "Keep paired or repeated parts visible as paired/repeated when they are visible in the references; do not merge, omit, or invent included parts.",
             "Do not add unprovided claims, third-party logos, contact information, watermarks, or random text.",
         ]
-    if visible_text_lines and not all(line in "\n".join(prompt_lines) for line in visible_text_lines):
-        prompt_lines.append(f"Visible text (exactly these lines): {json.dumps(visible_text_lines, ensure_ascii=False)}")
+    if visible_text_lines:
+        prompt_lines.append(
+            "Only render these exact quoted visible text lines; do not translate, rewrite, add, omit, or render any other text: "
+            f"{json.dumps(visible_text_lines, ensure_ascii=False)}"
+        )
+    else:
+        prompt_lines.append(
+            "Do not render any new text, title, product name, label, caption, watermark, or random characters; preserve only text physically present on the product if unavoidable."
+        )
     input_snapshot = {
         "market": market,
         "product_name": cluster.product_name,
@@ -2497,6 +2528,7 @@ def compile_slot_prompt(
         "main_action": main_action or "none",
     }
     prompt, input_snapshot = apply_standard_product_hero_policy(slot, "\n".join(prompt_lines), input_snapshot)
+    prompt = _sanitize_image_prompt_language(prompt, language)
     gate = evaluate_prompt_rule_gate(
         batch,
         slot,
@@ -3641,6 +3673,14 @@ def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
         localized_copy["source_inference_refs"],
         inference_ids,
         "inference_refs",
+    )
+    localized_copy["lines"] = _visible_text_for_language(
+        localized_copy["lines"],
+        localized_copy["language"],
+    )
+    normalized["visible_text_lines"] = _visible_text_for_language(
+        normalized["visible_text_lines"],
+        localized_copy["language"],
     )
     if localized_copy["lines"] != normalized["visible_text_lines"]:
         raise ValueError("localized_copy lines must match visible_text_lines")
