@@ -1,8 +1,8 @@
 # 项目控制板
 
-最后更新：2026-08-01
+最后更新：2026-08-02
 维护者：主 Agent
-状态：Git `66ab314` 已部署到 `hermes-remote` 技术预览。已修复 N1/N2 识别容错、`string` 占位兜底、图片/文件夹与 ERP SKU 同屏导入、商品卡放大、滚动常驻生成按钮和“国家”界面文案；后端全量 pytest、前端 84 项、Vite build、Django check、diff 检查、远端 Compose 构建/迁移/模板发布/健康和公网健康通过。真实 ERP/OSS、新付费 1+8 和 50 商品浏览器验收仍未完成，不能标记为业务验收完成。
+状态：Git `478d17a` 已部署到 `hermes-remote` 技术预览。已继续压缩项目配置、把国家改为中文下拉、拆分比例/分辨率、把图片/文件夹与 ERP SKU 保持同屏导入、商品卡缩到更接近 5 个一排、预备/正式生成立即显示业务进度，并把模型 Schema/角色类技术错误脱敏为可操作提示；前端 85 项、Vite build、Django check、diff 检查、远端 Compose 构建/迁移/模板发布/健康和公网健康通过。迁移漂移检查本机仍超时；真实 ERP/OSS、新付费 1+8 和 50 商品浏览器验收仍未完成，不能标记为业务验收完成。
 
 ## 当前目标
 
@@ -44,7 +44,7 @@
 | C0-05 | 主 Agent | 收口精简需求边界 | 已填写 A–N 与双速流程决定 | 唯一边界、最终设计、实施计划和 `/goal` 任务书 | 需求、设计、计划、控制板 | 编号/矛盾/范围/命令自检 | 已完成 | 无 |
 | T2-01 | 前端体验 + 后端平台 | ERP 图片入口、退出登录与单/多图选择 | 当前 ERP 登录会话、受限图片下载、Django `POST /logout/` 与现有上传入口 | ERP 图片归档、成功后跳转登录页且失败可见、单/多图和文件夹选择入口 | `platform_app` ERP 下载/认证、`frontend/src/api.ts`、`layout.tsx`、`ImportPanel.tsx`、聚焦测试 | 后端 207 passed；前端 56 passed；生产真实 JPEG 下载、会话清除、UI 标签与健康检查通过 | 已部署（Git `27a580f`） | 真实员工浏览器 SKU/OSS smoke 待验收 |
 | R0-01 | 主 Agent + 后端 + Prompt OS + 前端体验 | 显式预备生成、商品工作台与 Prompt OS v3 | 已确认 v3 实施计划、现有项目/商品/API、旧长 Prompt 原文 | 通用电商/东南亚通用默认值；整理导入零 AI；预备 N1–N7；常驻导入区；放大商品卡；整行展开卡片；Prompt 标题中文槽位化；generic/shopee/tiktok 营销链；当前证据硬门禁 | Django、`frontend/`、Prompt 模板与五份权威文档；不改 `用户操作流程以及相关触发.md` | 后端 335 passed；前端 83 passed；本轮工作台 11 passed；Vite build；远端迁移、模板发布、Django check、健康检查通过 | 已部署（Git `1ef34e1`） | 真实员工 ERP/OSS 浏览器 E2E 与新一轮付费 1+8 待运营验收 |
-| R0-02 | 执行 Agent（主 Agent 签核） | Workbench v4 与一卡多外观 1+8 | `e98ad9f`、R0-01 API/ClusterAsset/analysis_snapshot、2026-08-01 确认边界 | 常驻导入、大卡、真实缩略图排序/跨卡移动、固定侧浮层；`asset_order`；`target_appearances`/逐槽 `appearance_ids`；generate 自动准备续跑 | 六份权威文档、`CLAUDE.md`、现有 Django/React 与测试；禁止触碰未跟踪操作流程文档 | 后端 348 passed；前端 84 passed；Vite build；小样本浏览器截图与 Console 零错误；远端 Compose/迁移/seed/五服务/健康/公网静态包读回通过 | 技术预览已部署（Git `241fdcc`） | 50 商品、真实员工 ERP/OSS 与新付费 1+8 仍待验收；回退备份 `20260801_220700-241fdcc` |
+| R0-02 | 执行 Agent（主 Agent 签核） | Workbench v4 与一卡多外观 1+8 | `e98ad9f`、R0-01 API/ClusterAsset/analysis_snapshot、2026-08-01 确认边界 | 常驻导入、大卡、真实缩略图排序/跨卡移动、固定侧浮层；`asset_order`；`target_appearances`/逐槽 `appearance_ids`；generate 自动准备续跑；2026-08-02 追加紧凑配置、同屏导入、国家下拉、SKU 加载态、预备进度和技术错误脱敏 | 六份权威文档、`CLAUDE.md`、现有 Django/React 与测试；禁止触碰未跟踪操作流程文档 | 后端关键 Prompt OS 回归 4 passed；前端 85 passed；Vite build；Django check；diff check；远端 Compose/迁移/seed/五服务/健康/公网健康通过 | 技术预览已部署（Git `478d17a`） | 50 商品、真实员工 ERP/OSS 与新付费 1+8 仍待验收；回退备份 `/opt/independent-image-platform-backups/20260802_143241-478d17a` |
 | P0-01 | 产品与 Prompt OS | Prompt OS v2 九节点、事实与身份锁 | 九节点规格、官网规则包 | N1 逐图观察、N2–N6 分析/编译、N7 确定性闸门、N8 修改导演、N9 失败简化；完整 2.1.0 核心提示词通过实际 system/视觉指令发送；推断台账和不可变快照 | `platform_app/services.py`、节点规格、测试 | 历史节点 smoke 已有；本轮发现新生成链路可能绕过合格 PromptVersion/N7，正在以 R0-01 重构修复 | 被 R0-01 收紧 | 新硬门禁、Worker CAS、质量基准与真实验收待完成 |
 | P0-02 | 前端体验 | 可用上传入口、推断台账和结构化 Prompt 编辑 | React 工作台与 Prompt OS v2 API | 图片/文件夹/拖拽、失败项重传、事实/推断/规则阻断展示、结构化 Prompt 保存 | `frontend/src/**` | 前端 45 passed、Vite build passed；登录态 multipart 图片/WebP/TXT 上传、OSS 读回与预览 passed | 已部署 | 浏览器原生文件夹选择 smoke 待人工执行 |
 | P0-03 | 后端平台 | 商品准备、9 图生成、修订与选择式导出 | Prompt OS v2 与商品资料接口 | 分文件上传结果、结构化 PromptVersion、白底门禁、Shopee VN 原图直通、人工审核后导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | 后端 193 passed；迁移 0012、商品名/关系保存、PostgreSQL 行锁和准备重试 passed | 已部署 | 真实 ERP 员工账号成功登录/SKU 导入 smoke 待验收 |
@@ -56,6 +56,7 @@
 
 | 日期 | 决定 | 原因 | 影响 |
 | --- | --- | --- | --- |
+| 2026-08-02 | 项目顶部配置压成一行，国家使用中文下拉，技术识别错误不直接暴露给运营 | 运营主要需要快速选平台、国家、比例、分辨率和提示词；模型 Schema/角色错误属于系统内部问题 | 图片/文件夹与 ERP SKU 保持同屏；SKU 按“加载 SKU”触发；商品卡更紧凑并使用 `object-contain`；预备/正式生成立即显示脉冲进度；可见错误只保留“换图/补充信息/重试”这类动作 |
 | 2026-08-01 | 生成操作改为滚动常驻，导入区图片/文件夹与 ERP SKU 同屏显示 | 商品很多时不应滑回顶部；导入是高频动作，不应藏在页签或抽屉里 | 顶部只保留项目配置和批量选择；右下固定显示预备生成、正式生成和生产结果；导入后整理继续作为主按钮 |
 | 2026-08-01 | N1/N2 对常见模型输出做生产归一化 | 真实模型会把商品图写成 `product/product_detail/packaging`，也会把 Schema 示例 `string` 回传 | 角色别名映射到生产枚举；N2 占位身份用 N1 商品名、类别和外观兜底；仍无有效商品才阻断 |
 | 2026-07-31 | 市场/国家只限定语言与硬规则，不限定营销场景 | 固定国家场景会压制创意并导致套图同质化 | N5/N6 按商品事实、购买问题、项目/单品风格与 Style DNA 生成场景；消费者可见文案按站点语言先固定，给 `gpt-image-2` 的控制指令保持英文 |

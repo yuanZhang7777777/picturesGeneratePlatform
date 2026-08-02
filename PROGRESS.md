@@ -129,3 +129,11 @@
 - Reuse: `ClusterAsset`, `analysis_snapshot`, existing APIs, TanStack Query, and dnd-kit; no new table, state store, or frontend dependency.
 - Risk: preserve historical single-appearance snapshots while adding `target_appearances` and per-slot `appearance_ids`.
 - Forbidden: do not touch the untracked user-operation-flow document, secrets, or historical Prompt/generation/review records.
+
+# Workbench v4 compact layout and preparation-error hotfix
+
+- Status: deployed 2026-08-02 as Git `478d17a` to `hermes-remote:/opt/independent-image-platform` under `global.lock`.
+- Scope: compacted the project toolbar into platform, country, ratio, resolution and project-style prompt controls; changed country selection to Chinese options; kept image/file and ERP SKU import in one panel; added SKU loading labels; reduced product card width for denser rows; made product images object-contain/lazy; added optimistic preparation progress; and hid internal N1 schema/role errors behind operator-facing retry or image/action guidance.
+- Verification: frontend 85 passed; Vite build passed; Django check passed; `git diff --check` passed with only Windows CRLF warnings; Prompt OS targeted backend regression 4 passed. Local `makemigrations --check --dry-run` timed out again; no model/migration files changed.
+- Deployment: remote Compose build/up, migration check, template seed, Django check, five services, local `/health/ready`, public `/health/ready`, and deployed marker readback passed. Backup: `/opt/independent-image-platform-backups/20260802_143241-478d17a`; `global.lock` released.
+- Remaining: 50-product browser scenario, real employee ERP SKU/OSS browser E2E and a new operator-reviewed paid 1+8.
