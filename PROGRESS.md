@@ -220,3 +220,10 @@
 - Change: added the missing paid-generation gate and employee-facing error boundary to the 4.1 spec, and made the GPT-5.5 plan explicitly implementation-only so the next agent does not create another 4.x design.
 - Deliverables: `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`, `docs/superpowers/specs/节点prompt设定初稿.md`, and `docs/project/LEADER-GOAL-PROMPT-OS-4.1.md`.
 - Next: give the 4.1 task book to GPT-5.5 and execute Task 0–9 with red/green tests and small commits.
+
+# Prompt OS 4.1 final node blueprint
+
+- Status: design-only refinement completed on 2026-08-02; implementation remains pending for GPT-5.5.
+- Change: added a binding section `4.0.2 GPT-5.5 执行用最终节点蓝图` that defines each N1–N9 node's sole responsibility, required inputs, required outputs, continuation/blocking boundary, shared variable handoff, system-prompt skeleton, and employee-facing error boundary.
+- Deliverables: updated `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`, and `docs/project/LEADER-GOAL-PROMPT-OS-4.1.md`.
+- Next: GPT-5.5 should execute the existing 4.1 Task 0–9 plan without creating another design version.

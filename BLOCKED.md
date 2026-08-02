@@ -11,3 +11,5 @@
 - 2026-08-02 Prompt OS 3.1 Task 3：无新增阻塞。仅更新 3.1 system prompt 文本与模板断言。
 
 - 2026-08-02 Prompt OS 3.1 Task 4：无新增阻塞。N6/N7 copy lock 与一次重写已在本地目标测试通过；同文件早前 N2 fallback 未提交改动仍需保持不混入本任务提交。
+
+- 2026-08-02 Prompt OS 4.1 final node blueprint：无新增阻塞。本轮只补设计、计划和任务书，未执行代码、付费 APIMart、ERP/OSS smoke 或部署。

@@ -12,6 +12,7 @@
 禁止读取、修改、删除或提交：`docs/project/用户操作流程以及相关触发.md`。
 
 不要新建 4.2/4.3 设计，不要再讨论流程取舍；4.1 设计和计划就是本次唯一基线。
+具体节点蓝图以 `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md` 的 `4.0.2 GPT-5.5 执行用最终节点蓝图` 为准；如果旧文档或旧代码冲突，改代码，不改业务方向。
 
 开工先写 `PROGRESS.md`：当前分支、基线提交、已存在脏文件、理解的执行顺序、最大风险。遇到真实阻塞写 `BLOCKED.md`，不要在聊天里等人。每完成一个 Task 立刻小提交；提交前只 stage 当前 Task 文件，不要把已有脏改带进去。
 
@@ -63,6 +64,7 @@
 必须按这一条变量线实现，任何一步缺值或过期都不能兜底生成：
 
 `N1 owned_observations/valid_asset_ids → N2 product_family/shared_identity_lock/target_appearances/primary_asset_id → N3 fact_ledger → N4 white_prompt_version → N5 slot_plans/appearance_coverage_plan → N6 localized_copy/final_english_image_prompt/reference_plan → N7 n7_pass_snapshot → Generation`
+完整链路必须包含 N5 的 `copywriting_chain`，作为 N6 文案候选和最终英文生图 Prompt 的依据。
 
 禁止用 `string`、空对象、旧 PromptVersion、`builtin-v1` 或通用 Prompt 补洞。
 
