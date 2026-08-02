@@ -28,6 +28,16 @@ MARKETING_STRATEGY_MODES = [
     "identity_signal",
 ]
 PROMPT_OS_VERSION = "3.1.0"
+NODE_TEMPERATURES = {
+    "N2": 0.3,
+    "N3": 0.2,
+    "N4": 0.4,
+    "N5": 1.6,
+    "N6": 0.9,
+    "N7": 0.2,
+    "N8": 0.4,
+    "N9": 0.2,
+}
 
 
 OBSERVED_IDENTITY_SCHEMA = _object(

@@ -3308,6 +3308,85 @@ def test_prompt_node_repair_preserves_original_system_and_input():
     assert '"extra": "blocked"' in client.payloads[1]["text"]
 
 
+def test_prompt_node_json_passes_node_temperature_to_deepseek_payload():
+    import json
+
+    from platform_app.models import PromptNodeTemplate
+    from platform_app.services import _prompt_node_json
+
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"],
+    }
+    for node_name in ("N5.shopee", "N6.shopee", "N7.shopee"):
+        PromptNodeTemplate.objects.create(
+            node_name=node_name,
+            version="temperature-test",
+            instruction=f"FULL {node_name} SYSTEM CONTRACT",
+            user_message_template="{{input_json}}",
+            output_schema=schema,
+            status=PromptNodeTemplate.Status.PUBLISHED,
+        )
+
+    class Client:
+        def __init__(self):
+            self.payloads = []
+
+        def optimize_prompt(self, payload):
+            self.payloads.append(payload)
+            return {"output_text": json.dumps({"ok": True})}
+
+    client = Client()
+
+    for node_name in ("N5.shopee", "N6.shopee", "N7.shopee"):
+        assert _prompt_node_json(client, node_name, "Run node.", {"input": node_name}) == {"ok": True}
+
+    assert [payload["temperature"] for payload in client.payloads] == [1.6, 0.9, 0.2]
+
+
+def test_prompt_version_snapshot_records_node_temperature(tmp_path, settings):
+    from platform_app.management.commands.seed_platform_templates import Command
+    from platform_app.models import Asset, Batch, OutputTemplate, PromptVersion
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    Command().handle()
+    user = make_user()
+    template = OutputTemplate.objects.create(
+        seed_key="temperature-snapshot",
+        platform="global",
+        site="",
+        name="Temperature snapshot",
+        version="2026.08",
+    )
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="benefit")
+    batch = Batch.objects.create(owner=user, name="Temperature batch", output_template=template)
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="d" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = make_cluster(batch)
+    cluster.cluster_assets.update(asset=asset)
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    assert process_prompt_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
+
+    prompt = PromptVersion.objects.get(cluster=cluster, output_slot__order=2)
+    assert prompt.input_snapshot["_node_temperature"] == 0.9
+    assert prompt.structured_output["_node_temperature"] == 0.9
+
+
 def test_configuration_change_cancels_waiting_auto_generate_intent():
     from django.core.management import call_command
 

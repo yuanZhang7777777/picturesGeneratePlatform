@@ -38,7 +38,7 @@ from .models import (
     RuleProfile,
     SkuImportItem,
 )
-from .prompt_templates_v3 import MARKETING_STRATEGY_MODES
+from .prompt_templates_v3 import MARKETING_STRATEGY_MODES, NODE_TEMPERATURES
 from .storage import StorageError, get_object_storage, validate_storage_path
 from .template_policy import (
     apply_standard_product_hero_policy,
@@ -102,6 +102,16 @@ class UploadError(ValueError):
 
 class RateLimited(ProviderError):
     pass
+
+
+def _validate_prompt_temperature(temperature):
+    try:
+        value = float(temperature)
+    except (TypeError, ValueError) as exc:
+        raise ProviderError("APIMart prompt temperature must be between 0 and 2") from exc
+    if value < 0 or value > 2:
+        raise ProviderError("APIMart prompt temperature must be between 0 and 2")
+    return value
 
 
 class CatalogError(Exception):
@@ -683,10 +693,10 @@ class APIMartClient:
             _raise_provider_error(response)
         return response.content
 
-    def complete_chat(self, messages, *, model=None):
-        temperature = settings.APIMART_PROMPT_TEMPERATURE
-        if temperature < 0 or temperature > 2:
-            raise ProviderError("APIMart prompt temperature must be between 0 and 2")
+    def complete_chat(self, messages, *, model=None, temperature=None):
+        temperature = _validate_prompt_temperature(
+            settings.APIMART_PROMPT_TEMPERATURE if temperature is None else temperature
+        )
         response = self.session.post(
             self._api_url("/api/v1/chat/completions"),
             json={
@@ -748,7 +758,8 @@ class APIMartClient:
                     or "Return only valid JSON for ecommerce image prompt planning.",
                 },
                 {"role": "user", "content": text},
-            ]
+            ],
+            temperature=payload.get("temperature"),
         )
 
 
@@ -2330,6 +2341,13 @@ def _node_family(node_name):
     return str(node_name or "").split(".", 1)[0]
 
 
+def _prompt_node_temperature(node_name):
+    temperature = NODE_TEMPERATURES.get(_node_family(node_name))
+    if temperature is None:
+        return None
+    return _validate_prompt_temperature(temperature)
+
+
 def _image_request_snapshot(*, size, resolution, model=None):
     return {
         "model": model or settings.APIMART_IMAGE_MODEL,
@@ -3585,7 +3603,7 @@ def _node_snapshot(node_id, model_id, input_snapshot, output_snapshot, *, slot_i
         if model_id == "deterministic-rule-engine"
         else "builtin-v2.0.0"
     )
-    return {
+    snapshot = {
         "snapshot_id": str(uuid.uuid4()),
         "trace_id": str(uuid.uuid4()),
         "node_id": node_id,
@@ -3601,34 +3619,45 @@ def _node_snapshot(node_id, model_id, input_snapshot, output_snapshot, *, slot_i
         "status": "succeeded",
         "created_at": timezone.now().isoformat(),
     }
+    temperature = _prompt_node_temperature(node_id)
+    if temperature is not None and model_id == settings.APIMART_PROMPT_MODEL:
+        snapshot["temperature"] = temperature
+    return snapshot
 
 
 def _prompt_node_json(client, node_id, instruction, payload, normalize=None, repair=None):
     system_instruction, _ = _prompt_node_contract(node_id)
     node_text = _render_node_user_message(node_id, instruction, payload)
-    response = client.optimize_prompt(
-        {
+    temperature = _prompt_node_temperature(node_id)
+    request_payload = {
+        "system": system_instruction,
+        "text": node_text,
+    }
+    if temperature is not None:
+        request_payload["temperature"] = temperature
+    response = client.optimize_prompt(request_payload)
+
+    def repair_invalid_json(text):
+        repair_payload = {
             "system": system_instruction,
-            "text": node_text,
+            "text": "\n".join(
+                [
+                    node_text,
+                    "The previous response was invalid. Repair it once.",
+                    _json_repair_prompt(
+                        text,
+                        f"Return the valid JSON object required by NODE {node_id}.",
+                    ),
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                ]
+            ),
         }
-    )
+        if temperature is not None:
+            repair_payload["temperature"] = temperature
+        return client.optimize_prompt(repair_payload)
+
     repair = repair or (
-        lambda text: client.optimize_prompt(
-            {
-                "system": system_instruction,
-                "text": "\n".join(
-                    [
-                        node_text,
-                        "The previous response was invalid. Repair it once.",
-                        _json_repair_prompt(
-                            text,
-                            f"Return the valid JSON object required by NODE {node_id}.",
-                        ),
-                        json.dumps(payload, ensure_ascii=False, sort_keys=True),
-                    ]
-                ),
-            }
-        )
+        repair_invalid_json
     )
     def validate(value):
         _validate_prompt_node_schema(node_id, value)
@@ -4680,6 +4709,7 @@ def process_prompt_once(client=None, storage=None):
                 "rule_gate": gate,
             }
             gate_blocks.extend(gate["hard_blocks"])
+            node_temperature = _prompt_node_temperature(compiled["node_name"])
             input_snapshot = copy.deepcopy(compiled["input_snapshot"])
             input_snapshot["_preparation_revision"] = claimed_revision
             input_snapshot["_effective_config_signature"] = config_signature
@@ -4687,6 +4717,8 @@ def process_prompt_once(client=None, storage=None):
             input_snapshot["_prompt_node_template"] = node_template_binding
             input_snapshot["_image_request"] = image_request
             input_snapshot["reference_snapshot"] = final_references
+            if node_temperature is not None:
+                input_snapshot["_node_temperature"] = node_temperature
             source_snapshot = copy.deepcopy(input_snapshot)
             structured_output = copy.deepcopy(compiled)
             structured_output["_preparation_revision"] = claimed_revision
@@ -4695,6 +4727,8 @@ def process_prompt_once(client=None, storage=None):
             structured_output["_prompt_node_template"] = node_template_binding
             structured_output["_image_request"] = image_request
             structured_output["reference_snapshot"] = final_references
+            if node_temperature is not None:
+                structured_output["_node_temperature"] = node_temperature
             prompt_values.append({
                 "output_slot": slot,
                 "node_name": compiled["node_name"],
@@ -5294,6 +5328,7 @@ def _create_gated_prompt_version(
     if gate["decision"] != "pass" or gate["hard_blocks"]:
         raise ValueError(", ".join(gate["hard_blocks"]) or "N7 semantic review blocked the prompt")
 
+    node_temperature = _prompt_node_temperature(node_name)
     for snapshot in (input_snapshot, source_snapshot, structured_output):
         snapshot["_preparation_revision"] = lineage["preparation_revision"]
         snapshot["_effective_config_signature"] = lineage[
@@ -5303,6 +5338,8 @@ def _create_gated_prompt_version(
         snapshot["_prompt_node_template"] = node_template_binding
         snapshot["_image_request"] = image_request
         snapshot["reference_snapshot"] = references
+        if node_temperature is not None:
+            snapshot["_node_temperature"] = node_temperature
         if parent_prompt_version is not None:
             snapshot["parent_prompt_version_id"] = str(parent_prompt_version.id)
     structured_output["prompt"] = prompt_text

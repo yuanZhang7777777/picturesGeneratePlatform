@@ -227,3 +227,11 @@
 - Change: added a binding section `4.0.2 GPT-5.5 执行用最终节点蓝图` that defines each N1–N9 node's sole responsibility, required inputs, required outputs, continuation/blocking boundary, shared variable handoff, system-prompt skeleton, and employee-facing error boundary.
 - Deliverables: updated `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`, and `docs/project/LEADER-GOAL-PROMPT-OS-4.1.md`.
 - Next: GPT-5.5 should execute the existing 4.1 Task 0–9 plan without creating another design version.
+
+# Prompt OS 3.1 Task 5 node temperatures
+
+- Status: completed local node-temperature slice; unrelated existing N2 fallback work remains unstaged.
+- Red evidence: targeted tests first failed on missing explicit `complete_chat(..., temperature=...)`, missing node payload temperature, and missing PromptVersion `_node_temperature`.
+- Change: DeepSeek prompt calls now use node-specific N2–N9 temperatures and save the actual node temperature into PromptVersion input/structured/source snapshots and Prompt OS node snapshots.
+- Verification: `pytest tests/test_apimart_client.py tests/test_prompt_os.py -k "temperature or snapshot" -q` passed 9.
+- Next: Task 6 implements the minimal PromptEditor display.

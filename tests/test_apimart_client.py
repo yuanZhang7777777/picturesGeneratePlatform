@@ -188,6 +188,46 @@ def test_optimize_prompt_rejects_temperature_outside_apimart_range(settings, tem
 
 @override_settings(
     APIMART_API_KEY="secret-key",
+    APIMART_BASE_URL="https://api.apimart.ai",
+    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    APIMART_PROMPT_TEMPERATURE=0.4,
+)
+def test_complete_chat_uses_explicit_temperature():
+    from platform_app.services import APIMartClient
+
+    session = Session(
+        [
+            Response(
+                200,
+                {"choices": [{"message": {"content": "{\"ok\": true}"}}]},
+            )
+        ]
+    )
+    client = APIMartClient(session=session)
+
+    client.complete_chat([{"role": "user", "content": "hello"}], temperature=0.9)
+
+    assert session.calls[0][2]["json"]["temperature"] == 0.9
+
+
+@pytest.mark.parametrize("temperature", [-0.1, 2.1])
+@override_settings(
+    APIMART_API_KEY="secret-key",
+    APIMART_BASE_URL="https://api.apimart.ai",
+    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    APIMART_PROMPT_TEMPERATURE=0.4,
+)
+def test_complete_chat_rejects_explicit_temperature_outside_range(temperature):
+    from platform_app.services import APIMartClient, ProviderError
+
+    client = APIMartClient(session=Session([]))
+
+    with pytest.raises(ProviderError, match="temperature"):
+        client.complete_chat([{"role": "user", "content": "hello"}], temperature=temperature)
+
+
+@override_settings(
+    APIMART_API_KEY="secret-key",
     APIMART_BASE_URL="https://api.apimart.ai/v1",
     APIMART_VISION_MODEL="gpt-5-nano-2025-08-07",
 )
