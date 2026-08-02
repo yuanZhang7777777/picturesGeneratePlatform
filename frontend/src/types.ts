@@ -31,6 +31,23 @@ export interface ProductPrompt {
   slot: string;
   text: string;
   readOnly?: boolean;
+  decisionTask?: string;
+  conversionGoal?: string;
+  creativeStrategy?: {
+    mode?: string;
+    userJob?: string;
+    consumerBenefit?: string;
+    mentalSimulation?: string;
+    emotionalShift?: string;
+    productVoice?: string;
+    identitySignal?: string;
+  };
+  localizedCopy?: {
+    language?: string;
+    lines?: string[];
+    backTranslation?: string;
+    strategyMode?: string;
+  };
 }
 
 export type PromptFactClass = "confirmed" | "observed" | "inferred";

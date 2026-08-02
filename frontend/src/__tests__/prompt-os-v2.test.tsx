@@ -78,6 +78,33 @@ test("shows the Prompt OS fact ledger and compliance block summary", () => {
   expect(screen.getByText(/发布前需人工复核材质/)).toBeInTheDocument();
 });
 
+test("shows marketing strategy, localized copy and final prompt without JSON field names", () => {
+  render(<PromptEditor sku={{
+    ...sku,
+    prompts: [
+      {
+        slotOrder: 2,
+        slot: "核心卖点图",
+        text: "Create a bright kitchen scene. Show quoted visible text exactly: \"Xay mịn mỗi sáng\" and \"Mang đi là xay\".",
+        decisionTask: "让用户想象早上随手现榨",
+        creativeStrategy: { mode: "scene_ownership", mentalSimulation: "通勤前把水果倒入杯中，按下就能带走" },
+        localizedCopy: {
+          language: "vi",
+          lines: ["Xay mịn mỗi sáng", "Mang đi là xay"],
+          backTranslation: "每天早上顺滑搅拌，带上就能榨",
+        },
+      },
+    ],
+  }} onSave={() => undefined} />);
+
+  expect(screen.getByText("场景代入")).toBeInTheDocument();
+  expect(screen.getByText(/让用户想象早上随手现榨/)).toBeInTheDocument();
+  expect(screen.getByText(/每天早上顺滑搅拌/)).toBeInTheDocument();
+  expect(screen.getAllByText(/Xay mịn mỗi sáng/).length).toBeGreaterThan(0);
+  expect((screen.getByLabelText("02 核心卖点图 Prompt") as HTMLTextAreaElement).value).toContain("Create a bright kitchen scene");
+  expect(screen.queryByText(/localized_copy|creative_strategy|back_translation/)).not.toBeInTheDocument();
+});
+
 test("posts edited prompts as a structured snake-case array", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ csrf_token: "csrf" }) })

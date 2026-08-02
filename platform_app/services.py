@@ -4391,6 +4391,7 @@ def process_prompt_once(client=None, storage=None):
         compiled_by_slot[hero_slot.id]["node_output"] = hero_plan
 
         marketing_plan = {"plans": []}
+        plans = {}
         if marketing_slots:
             _set_preparation_progress(cluster.id, claimed_revision, "N5", 4)
             fact_ids = {item["fact_id"] for item in ledger["facts"]}
@@ -4729,6 +4730,8 @@ def process_prompt_once(client=None, storage=None):
             structured_output["reference_snapshot"] = final_references
             if node_temperature is not None:
                 structured_output["_node_temperature"] = node_temperature
+            if slot.order in plans:
+                structured_output["marketing_plan"] = copy.deepcopy(plans[slot.order])
             prompt_values.append({
                 "output_slot": slot,
                 "node_name": compiled["node_name"],
@@ -6906,6 +6909,53 @@ def _project_status(status):
     return "draft"
 
 
+def _prompt_slot_metadata(prompt):
+    if prompt is None or not isinstance(prompt.structured_output, dict):
+        return {}
+    structured = prompt.structured_output
+    node_output = structured.get("node_output") if isinstance(structured.get("node_output"), dict) else {}
+    plan = structured.get("marketing_plan") if isinstance(structured.get("marketing_plan"), dict) else {}
+    localized_copy = (
+        node_output.get("localized_copy")
+        if isinstance(node_output.get("localized_copy"), dict)
+        else structured.get("localized_copy")
+        if isinstance(structured.get("localized_copy"), dict)
+        else {}
+    )
+    creative_strategy = plan.get("creative_strategy") if isinstance(plan.get("creative_strategy"), dict) else {}
+    metadata = {}
+    if plan.get("decision_task"):
+        metadata["decisionTask"] = str(plan["decision_task"])
+    if plan.get("conversion_goal"):
+        metadata["conversionGoal"] = str(plan["conversion_goal"])
+    if creative_strategy:
+        metadata["creativeStrategy"] = {
+            key: value
+            for key, value in {
+                "mode": creative_strategy.get("mode"),
+                "userJob": creative_strategy.get("user_job"),
+                "consumerBenefit": creative_strategy.get("consumer_benefit"),
+                "mentalSimulation": creative_strategy.get("mental_simulation"),
+                "emotionalShift": creative_strategy.get("emotional_shift"),
+                "productVoice": creative_strategy.get("product_voice"),
+                "identitySignal": creative_strategy.get("identity_signal"),
+            }.items()
+            if value
+        }
+    if localized_copy:
+        metadata["localizedCopy"] = {
+            key: value
+            for key, value in {
+                "language": localized_copy.get("language"),
+                "lines": _string_list(localized_copy.get("lines")),
+                "backTranslation": localized_copy.get("back_translation"),
+                "strategyMode": localized_copy.get("strategy_mode"),
+            }.items()
+            if value
+        }
+    return metadata
+
+
 def serialize_project(batch):
     assets = list(batch.assets.filter(archived_at__isnull=True).order_by("created_at", "id"))
     serialized_assets = {
@@ -6976,18 +7026,17 @@ def serialize_project(batch):
             if result is not None:
                 output["imageUrl"] = reverse("api_result_media", args=[result.id])
             outputs.append(output)
-        prompt_slots = [
-            {
+        prompt_slots = []
+        for slot in cluster_template.slots.order_by("order", "id"):
+            latest_prompt = latest_prompts.get(slot.id)
+            prompt_slots.append({
                 "slotOrder": slot.order,
                 "slot": slot.name,
-                "text": latest_prompts[slot.id].prompt_text if slot.id in latest_prompts else "",
-                "promptVersionId": (
-                    str(latest_prompts[slot.id].id) if slot.id in latest_prompts else None
-                ),
+                "text": latest_prompt.prompt_text if latest_prompt else "",
+                "promptVersionId": str(latest_prompt.id) if latest_prompt else None,
                 "readOnly": is_source_product_photo_slot(slot),
-            }
-            for slot in cluster_template.slots.order_by("order", "id")
-        ]
+                **_prompt_slot_metadata(latest_prompt),
+            })
         analysis = cluster.analysis_snapshot if isinstance(cluster.analysis_snapshot, dict) else {}
         public_product_name = "" if cluster.product_name == "名称待确认" or _is_schema_placeholder(cluster.product_name) else cluster.product_name
         public_identity = _strip_schema_placeholders(analysis.get("identity") or {})

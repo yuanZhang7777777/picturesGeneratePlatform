@@ -15,3 +15,5 @@
 - 2026-08-02 Prompt OS 4.1 final node blueprint：无新增阻塞。本轮只补设计、计划和任务书，未执行代码、付费 APIMart、ERP/OSS smoke 或部署。
 
 - 2026-08-02 Prompt OS 3.1 Task 5：无新增阻塞。节点温度与快照测试已通过；同文件早前 N2 fallback 未提交改动仍需保持不混入本任务提交。
+
+- 2026-08-02 Prompt OS 3.1 Task 6：无新增阻塞。PromptEditor 策略/文案展示、前端构建和 Django check 已通过；仍未执行真实付费生图或部署。

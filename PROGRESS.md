@@ -235,3 +235,11 @@
 - Change: DeepSeek prompt calls now use node-specific N2–N9 temperatures and save the actual node temperature into PromptVersion input/structured/source snapshots and Prompt OS node snapshots.
 - Verification: `pytest tests/test_apimart_client.py tests/test_prompt_os.py -k "temperature or snapshot" -q` passed 9.
 - Next: Task 6 implements the minimal PromptEditor display.
+
+# Prompt OS 3.1 Task 6 PromptEditor display
+
+- Status: completed local UI display slice; no new page, drawer, frontend dependency, data table, or backend model.
+- Red evidence: new PromptEditor test first failed because “场景代入”、localized copy and back translation were not rendered.
+- Change: PromptVersion structured output now carries the slot marketing plan into project snapshots; `sku.prompts` exposes decision task, creative strategy and localized copy; PromptEditor shows a compact strategy/copy/back-translation block above the editable final Prompt.
+- Verification: `npm --prefix frontend test -- --run src/__tests__/prompt-os-v2.test.tsx` passed 6; `npm --prefix frontend run build` passed; `manage.py check` passed.
+- Next: Task 7 adds the six-category benchmark and publish/release gate.

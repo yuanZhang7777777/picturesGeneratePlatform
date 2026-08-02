@@ -15,6 +15,13 @@ const defaultPrompts = [
 ].map((slot, index) => ({ slotOrder: index + 1, slot, text: "" }));
 
 const riskLabels: Record<string, string> = { low: "低风险", medium: "中风险", high: "高风险" };
+const strategyLabels: Record<string, string> = {
+  fab_value: "FAB价值",
+  scene_ownership: "场景代入",
+  emotion: "情绪触发",
+  personification: "商品拟人",
+  identity_signal: "身份表达",
+};
 
 type PromptDraft = {
   identityLock: string;
@@ -36,6 +43,18 @@ function draftFromSku(sku: ProductSku): PromptDraft {
 function ruleMessage(value: RuleGateMessage) {
   if (typeof value === "string") return value;
   return value.message ?? value.reason ?? value.statement ?? value.rule_id ?? "需人工复核";
+}
+
+function promptMeta(prompt: ProductPrompt) {
+  const mode = prompt.creativeStrategy?.mode ?? prompt.localizedCopy?.strategyMode;
+  const label = mode ? strategyLabels[mode] ?? mode : "";
+  const copyLines = prompt.localizedCopy?.lines?.filter(Boolean) ?? [];
+  return {
+    label,
+    copyLines,
+    task: prompt.decisionTask ?? prompt.conversionGoal ?? "",
+    backTranslation: prompt.localizedCopy?.backTranslation ?? "",
+  };
 }
 
 export function PromptEditor({
@@ -158,17 +177,22 @@ export function PromptEditor({
         </div>
         {preparing && <ProgressBar current={progressCurrent} total={progressTotal} />}
         <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {draft.prompts.map((prompt) => (
+          {draft.prompts.map((prompt) => {
+            const label = `${String(prompt.slotOrder).padStart(2, "0")} ${slotLabel(prompt.slot, prompt.slotOrder)} Prompt`;
+            return (
             <label className="block text-sm font-medium text-slate-700" key={prompt.slotOrder}>
-              <span className="mb-2 block">{String(prompt.slotOrder).padStart(2, "0")} {slotLabel(prompt.slot, prompt.slotOrder)} Prompt</span>
+              <span className="mb-2 block">{label}</span>
+              <PromptMeta prompt={prompt} />
               <textarea
+                aria-label={label}
                 disabled={prompt.readOnly}
                 placeholder={promptPlaceholder}
                 value={prompt.text}
                 onChange={(event) => updatePrompt(prompt.slotOrder, event.target.value)}
               />
             </label>
-          ))}
+          );
+          })}
         </div>
       </section>
       <button
@@ -185,4 +209,19 @@ export function PromptEditor({
 function ProgressBar({ current, total }: { current: number; total: number }) {
   const percent = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
   return <div className="progress-track mt-3" aria-label="预备生成进度" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={current}><span className="progress-fill progress-fill-active" style={{ width: `${percent}%` }} /></div>;
+}
+
+function PromptMeta({ prompt }: { prompt: ProductPrompt }) {
+  const meta = promptMeta(prompt);
+  if (!meta.label && !meta.task && !meta.backTranslation && meta.copyLines.length === 0) return null;
+  return (
+    <div className="mb-2 rounded-md bg-white px-3 py-2 text-xs text-slate-600">
+      <div className="flex flex-wrap gap-2">
+        {meta.label && <span className="rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700">{meta.label}</span>}
+        {meta.task && <span>购买任务：{meta.task}</span>}
+      </div>
+      {meta.copyLines.length > 0 && <p className="mt-1">图片文案：{meta.copyLines.join(" / ")}</p>}
+      {meta.backTranslation && <p className="mt-1 text-slate-500">回译：{meta.backTranslation}</p>}
+    </div>
+  );
 }
