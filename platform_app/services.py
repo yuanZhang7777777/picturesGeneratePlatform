@@ -6505,7 +6505,6 @@ def _seal_generation_submission(generation_id):
     )
     batch = (
         Batch.objects.select_for_update()
-        .select_related("output_template", "rule_profile")
         .get(id=candidate.batch_id)
     )
     cluster = Cluster.objects.select_for_update().get(
@@ -6618,7 +6617,6 @@ def _locked_submission_fingerprint_current(generation_id, fingerprint):
     )
     batch = (
         Batch.objects.select_for_update()
-        .select_related("output_template", "rule_profile")
         .get(id=candidate.batch_id)
     )
     cluster = Cluster.objects.select_for_update().get(
