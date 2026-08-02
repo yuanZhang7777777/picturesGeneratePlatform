@@ -168,3 +168,10 @@
 - Change: N5 slots now require `creative_strategy`; N6 `localized_copy` includes back translation, strategy mode and quality scores; N7 includes structured `copy_checks`.
 - Verification: targeted red test failed on missing 3.1 templates/schema, then `pytest tests/test_prompt_templates_v3.py tests/test_template_seed.py -q` passed 23.
 - Next: Task 2 will validate N5 consumer context, fact refs and strategy distribution in runtime normalization.
+
+# Prompt OS 3.2 node/workflow design handoff
+
+- Status: design-only handoff completed on 2026-08-02; no runtime code, paid call, OSS/ERP smoke or deployment was performed.
+- Change: added the 3.2 design and GPT-5.5 execution plan covering compact workbench triggers, thumbnail-only drag, side float layer, prepare/generate orchestration, public error mapping, N1/N2 multi-image `target_appearances`, N5/N6 marketing copy strategy and N7 gates.
+- Deliverables: `docs/superpowers/specs/2026-08-02-prompt-os-3.2-node-workflow-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-3.2-node-workflow-implementation.md`, `docs/project/LEADER-GOAL-PROMPT-OS-3.2.md`.
+- Next: GPT-5.5 should execute the 3.2 Task 0–7 plan; 3.1 remains a historical input, not the active execution plan.
