@@ -34,6 +34,7 @@
 - APIMart 中文文档与账户契约测试是模型 ID、端点、参数、响应、限流和计费的唯一接入依据；上游模型文档只作能力参考，发生冲突时以 APIMart 为准。
 - APIMart 当前契约：`deepseek-v4-pro` 文本节点走非流式 Chat Completions；`gpt-5-nano-2025-08-07` 视觉观察走 Responses，文本从 `output[].content[].text` 提取；`gpt-image-2` 生成前先 `/v1/uploads/images` 上传我方参考图，`image_urls` 使用 URL 字符串数组，不使用 base64 或 `{url: ...}` 对象数组。
 - Prompt OS v3 的 N1–N4/N8/N9 共用事实链，N5–N7 分为 generic、shopee、tiktok 三套营销链。生产模板必须保留完整角色、输入边界、营销/事实规则和严格 JSON 约束；DeepSeek 节点通过实际 `system` 消息接收完整模板。不得用一句职责摘要替代；`3500` 字符上限只约束最终单图 Prompt。
+- Prompt OS 4.0 是下一轮 GPT-5.5 执行基线；3.1–3.4 只保留为历史推演。4.0 的关键边界是：导入整理零 AI、正式生成缺 Prompt 自动预备、一卡多图共同产出一套 1+8、N2 输出 `target_appearances`、N5 五策略营销、N6 目标语言文案逐字锁进英文生图 Prompt、N7 无通过快照不得付费生图。
 - Prompt Worker 负责商品视觉理解、结构化 Brief/Prompt 和 9 槽 PromptVersion；Generation Worker 负责异步生图、白底图先行、轮询和归档。
 - 同一卡内全部图片共同定义一套图：N2 在 `analysis_snapshot` 保存 `target_appearances`，N5 为逐槽计划保存 `appearance_ids`；白底与款式总览覆盖全部目标外观，其余槽位可选子集，但整套必须覆盖全部外观。N6 为每槽选择覆盖目标外观所需的最少参考图。
 - 输出图生成成功后必须人工审核通过才可导出；未审核或要求修改的图不得进入 ZIP。取消选择、技术失败重做、主动再生成和圈选修改都创建或选择明确版本，不覆盖历史。
@@ -55,6 +56,9 @@
 - Prompt OS 3.4 节点与执行设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.4-node-execution-design.md`（当前推荐执行基线，收口多图外观、触发状态、营销文案、目标语言锁和员工错误脱敏）
 - Prompt OS 3.4 GPT-5.5 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-3.4-gpt55-implementation.md`
 - GPT-5.5 当前执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-3.4.md`
+- Prompt OS 4.0 节点生产设计：`docs/superpowers/specs/2026-08-02-prompt-os-4.0-node-production-design.md`（下一轮 GPT-5.5 执行基线）
+- Prompt OS 4.0 GPT-5.5 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-4.0-gpt55-implementation.md`
+- GPT-5.5 Prompt OS 4.0 执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-4.0.md`
 - Prompt OS 3.2 节点与工作流设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.2-node-workflow-design.md`
 - Prompt OS 3.2 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-3.2-node-workflow-implementation.md`
 - GPT-5.5 执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-3.2.md`
