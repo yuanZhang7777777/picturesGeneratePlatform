@@ -401,7 +401,7 @@ def test_vn_image_prompt_does_not_render_chinese_internal_product_name():
     assert "Bộ dụng cụ ăn uống" in compiled["prompt"]
     assert compiled["input_snapshot"]["visible_text_lines"] == ["Bộ dụng cụ ăn uống"]
     assert "Create a new ecommerce composition" in compiled["prompt"]
-    assert "Make the visible product set match the supplied references" in compiled["prompt"]
+    assert "For lifestyle/use scenes, make the functional product component" in compiled["prompt"]
 
 
 def test_confirm_generation_keeps_prompt_override_as_extra_creative_requirements():
@@ -3597,6 +3597,52 @@ def test_fallback_n6_creates_target_language_marketing_copy_for_named_product():
     assert "no extra" not in compiled["prompt"].lower()
     assert "missing" not in compiled["prompt"].lower()
     assert "duplicated" not in compiled["prompt"].lower()
+
+
+def test_fallback_n6_usage_set_does_not_force_holder_into_every_scene():
+    from platform_app.services import _fallback_n6_prompt
+
+    identity = {
+        "primary_asset_id": "asset-1",
+        "supporting_asset_ids": [],
+        "target_appearances": [
+            {
+                "appearance_id": "appearance.1",
+                "asset_ids": ["asset-1"],
+                "primary_asset_id": "asset-1",
+            }
+        ],
+    }
+    ledger = {
+        "facts": [
+            {
+                "fact_id": "fact.name.001",
+                "fact_class": "observed",
+                "text": "wooden chopsticks and spoon set with slim storage tray",
+            }
+        ]
+    }
+    slot_input = {
+        "slot_order": 5,
+        "product_name": "Wooden utensil set",
+        "slot_plan": {
+            **n5_plan(5, mode="emotion", fact_refs=("fact.name.001",), appearance_ids=["appearance.1"]),
+            "main_scene": "a warm meal usage scene",
+            "main_action": "show an adult hand actively using the utensil during a meal",
+            "composition": "human-eye lifestyle angle with the used utensil clearly visible",
+        },
+        "market_context": {"language": "en", "market": "SG"},
+        "size": "1:1",
+        "resolution": "1k",
+    }
+
+    compiled = _fallback_n6_prompt(slot_input, identity, ledger, set())
+
+    assert "functional product component" in compiled["prompt"]
+    assert "commercial lighting chosen to match the scene" in compiled["prompt"]
+    assert "Storage cases, trays, boxes" in compiled["prompt"]
+    assert "arrange them naturally as a set" not in compiled["prompt"]
+    assert "visible product set match" not in compiled["prompt"]
 
 
 def test_n5_rejects_unknown_creative_strategy_fact_ref():

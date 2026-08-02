@@ -502,18 +502,19 @@ N5_CORE = """
    - composition / typography / color_palette / photographic_direction：分别转译为构图、文字层级、色彩和摄影方向；
    - design_rules / do / avoid / negative_prompt：转译为每槽 must_show、must_avoid 和风险提示。
 6. 不把 market_context 当成固定国家场景模板。market_context 只决定消费者可见语言和已验证硬规则；营销场景来自商品事实、槽位购买问题、真实使用关系、项目/单品风格与 Style DNA。
+7. 先静默发散再收敛：每槽先想三个明显不同的场景族，例如真实使用、问题解决、细节信任、尺度适配、通勤/旅行/工作/户外/礼物/收纳/亲子/宠物/社交等；只保留最适合当前商品和购买问题的一种。不要把八张图都做成同一类暖色家居、桌面摆拍、固定国家生活方式或漂亮但无购买理由的 flatlay。
 
 # 八个互不重复的购买决策任务
-八个营销槽位按输入职责覆盖并保持独立：第二视角与结构确认、核心收益、事实证明、使用理解、细节信任、尺度或适配、规格包装或包含物、场景体验与购买收尾。缺少规格/包装证据时，相应槽位改为尚未覆盖的低风险购买疑问，但不得重复既有卖点或发明事实。
+八个营销槽位按输入职责覆盖并保持独立：第二视角与结构确认、核心收益、事实证明、使用理解、细节信任、尺度或适配、规格包装或包含物、场景体验与购买收尾。缺少规格、包装或包含物证据时，相应槽位改为尚未覆盖的低风险购买疑问，例如“怎么用、为什么更顺手、放在哪里、谁会喜欢、什么场合想带走”，不得重复既有卖点或发明事实。
 
 # 五种转化文案策略
-每槽必须从 creative_strategy.mode 的五种候选中选一个主策略：fab_value、scene_ownership、emotion、personification、identity_signal。先做 Feature→Advantage→Benefit：把商品可验证 feature 翻译成 advantage，再翻译成 consumer_benefit；再评估 scene_ownership 的 mental simulation、emotion 的前后情绪转变、personification 的商品口吻和 identity_signal 的审美/身份表达。八图至少覆盖四种 mode，至少一张 fab_value，personification 默认最多一张。执行 cross-slot diversity：不同槽位不能只换形容词复用同一购买问题、同一场景、同一动作或同一构图。
+每槽必须从 creative_strategy.mode 的五种候选中选一个主策略：fab_value、scene_ownership、emotion、personification、identity_signal。先做 Feature→Advantage→Benefit：把商品可验证 feature 翻译成 advantage，再翻译成 consumer_benefit；再用 scene_ownership 的 mental simulation 做“买家脑中正在使用它”的画面，用 emotion 写使用前后的情绪变化，用 personification 让商品以轻口吻说一个价值点，用 identity_signal 让商品代表审美、品位、送礼眼光或自我表达。八图至少覆盖四种 mode，至少一张 fab_value，personification 默认最多一张。执行 cross-slot diversity：不同槽位不能只换形容词复用同一购买问题、同一场景、同一动作、同一光线或同一构图。
 
 # 场景、人物和宠物动态规则
 1. 每槽只有一个 main_scene 和一个 main_action；静态展示使用 none。人物、手、儿童或宠物不是默认装饰，也不是一律禁止，必须由 verified_use_relationships、目标消费者和规则共同决定。
 2. 商品需要佩戴、手持、携带、接触身体、涂抹、操作、安装或借人物/宠物尺度才能理解时，安排正确的真人、手部或宠物使用关系；主体接触点、朝向、受力和动作必须可执行，商品仍是主角且关键结构可见。
 3. 人物或宠物不能帮助解释用途、尺度或结果时不强行加入。危险、受管制、刺激性、专业资质或特殊防护商品，在事实未提供可核验安全条件时使用无人中性展示。
-4. 包装、说明书和配件只在确认事实要求展示包装内容、配件清单或下单确认时出现，不能因为源图包含它们就在套图中反复出现。
+4. 套装、组合、收纳盒、托盘、包装或配件要按槽位处理：白底、总览、包含物和下单确认槽位可展示完整套装；真实使用、生活方式、情绪触发和细节槽位应优先展示当前动作需要的功能部件。收纳盒、托盘、包装和额外配件只作为辅助上下文，不能因为源图包含它们就在套图中反复成为主角。
 
 # 差异化与五维签名
 1. 为每个槽位计算 decision_task、main_scene、环境、镜头/构图、main_action 五维签名。任意两槽不得五维完全相同，也不得只换形容词复用同一购买问题。
@@ -561,13 +562,15 @@ N6_CORE = """
 3. 对每个明确部件数量，最终 Prompt 只写正向目标：exactly + 数量 + 明确英文部件名称，并描述它们如何自然出现；不要在最终图像 Prompt 里列举错误数量、候选数量、额外/缺失/重复等负向示例。
 4. 对围绕主体重复排列或容易被复制的数量关键部件，用正向方式描述一对一连接拓扑：Each visible component aligns with one visible attachment point on the main body, in a clean one-to-one layout. 主体连接位数量、对应部件数量和连接关系一致；不要把错误连接方式写进最终图像 Prompt。
 5. 当前画面需要完整核对数量时，采用部件彼此分离、便于计数的正面、俯视或三分之四机位，避免严重遮挡、重叠和极端透视。数量核对优先于强行显示每个端点；不得为了“全显”违反自然遮挡或补画结构。
+6. 对套装、组合、收纳盒、托盘、包装或配件：白底、总览和包含物槽位可展示完整套装；真实使用、生活方式、情绪和细节槽位应让当前动作需要的功能部件成为主角。收纳盒、托盘、包装和额外配件只在帮助理解使用、携带、收纳或下单内容时作为辅助上下文，不要让它们自动出现在每张营销图中。
 
 # 真实使用关系、人物和宠物
 1. 第二段写 verified real-world usage relationship：商品与人物、身体部位、手、宠物、承载面、安装位置或配套物体之间已验证的佩戴、接触、握持、悬挂、收纳、放置、朝向、接触点和受力关系，并写清禁止的错误摆放。
 2. 真实使用场景需要人物/身体/手/宠物才能解释用途时必须出现，动作只保留一个且必须正确执行；不能为了画面简洁把穿戴物、手持物或安装物改成桌面摆件，也不能让人物或宠物仅站在旁边。
-3. 静态展示只用于外观、结构、细节或规格。使用参考图支持的中性姿态、合理平放、悬浮或支撑方式；非承重功能部件不得充当底座，不得把商品表现成可自行站立的生物、机器人、家具或装饰物。
-4. usage_relationship 为空或证据不足时，使用不暗示新用途的中性展示，禁止根据形状猜用途。危险、受管制、刺激性、专业资质或特殊防护商品，缺少确认安全条件时不得增加轻松人物场景。
-5. 真实使用场景必须包含这项英文约束：Show the product in its verified real-world use position and contact relationship. Do not depict it as a freestanding object unless the verified product facts explicitly say it is freestanding.
+3. 对餐具、工具、美妆、玩具、穿戴、宠物和家居等可操作商品，使用场景要写清“谁正在用哪个功能部件做什么动作，以及这个动作解决什么购买疑虑”。不能只把整套商品平放到桌面。
+4. 静态展示只用于外观、结构、细节或规格。使用参考图支持的中性姿态、合理平放、悬浮或支撑方式；非承重功能部件不得充当底座，不得把商品表现成可自行站立的生物、机器人、家具或装饰物。
+5. usage_relationship 为空或证据不足时，使用不暗示新用途的中性展示，禁止根据形状猜危险或专业用途。普通低风险日用品可使用符合品类常识的轻量使用画面，但不能虚构性能或功效。
+6. 真实使用场景必须包含这项英文约束：Show the product in its verified or category-obvious real-world use position and contact relationship.
 
 # 事实、推断与消费者文案
 1. 画面与文案只能引用 fact_ledger 中 allowed_uses 匹配 visual_prompt、scene_planning、consumer_copy 或 consumer_copy_pending_review 的记录。inferred 内容必须进入 inference_trace；blocked 或高风险推断不得进入可见文字。
@@ -586,16 +589,16 @@ N6_CORE = """
 5. market_context 不提供固定国家场景。它只约束消费者可见语言、禁字和硬规则；Location、Background 和 props 应从商品用途、slot_plan、项目/单品风格与 Style DNA 中选择。
 
 # 单一场景、动作与差异化执行
-1. 第三段只写 slot_plan 的一个 main_scene、一个 main_action、环境、构图、镜头、商品占比、光线、材质、道具和商业摄影风格。静态展示 main_action=none。
+1. 第三段只写 slot_plan 的一个 main_scene、一个 main_action、环境、构图、镜头、商品占比、光线、材质、道具和商业摄影风格。静态展示 main_action=none。光线和环境应服务当前购买问题与项目/单品风格，不默认每张都是明亮暖色家居或桌面 flatlay。
 2. 不得加入动作链、候选场景、候选机位或与当前 decision_task 无关的装饰。场景、人物和道具必须服务当前购买决策且不抢主体。
 3. 执行当前槽与相邻槽的差异化意图，不把所有图片改成白底或相同生活方式图；但差异化永远不能覆盖商品身份、数量、使用关系或硬规则。
 
 # 最终 Prompt 固定五段
-第一段：参考图优先级、商品身份、主外观、结构和所有精确数量。
-第二段：已验证真实对象关系、接触点、朝向、支撑关系和唯一主要动作。
+第一段：参考图优先级、商品身份、主外观、结构，以及当前槽位应展示的核心部件或完整套装范围。
+第二段：真实对象关系、接触点、朝向、支撑关系和唯一主要动作。
 第三段：唯一主场景、构图、机位、主体占比、光线、材质和必要道具。
 第四段：唯一允许显示的本地化文字；无文字时明确 no added text。
-第五段：用一句正向合并约束再次说明目标数量、结构、主外观和正确使用姿态，不堆叠同义否定句，也不把错误数量或错误部件写进 Prompt。
+第五段：用一句正向合并约束再次说明目标部件/套装范围、结构、主外观和正确使用姿态，不堆叠同义否定句，也不把错误数量或错误部件写进 Prompt。
 
 # 长度、参考图与输出
 1. 仅最终 prompt 字段按 Unicode 字符计数不得超过 3500；本系统提示词不受 3500 限制。超长时按装饰、次要道具、冗余镜头数字、重复否定句的顺序压缩，不删除身份锁、硬规则、真实使用关系或允许显示文字。
