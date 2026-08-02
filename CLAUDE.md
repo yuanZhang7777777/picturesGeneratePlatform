@@ -55,6 +55,9 @@
 - Prompt OS 3.2 节点与工作流设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.2-node-workflow-design.md`
 - Prompt OS 3.2 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-3.2-node-workflow-implementation.md`
 - GPT-5.5 执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-3.2.md`
+- Prompt OS 3.3 生产节点设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.3-production-node-design.md`（当前推荐执行基线，合并 3.1 营销文案与 3.2 工作台/多图链路）
+- Prompt OS 3.3 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-3.3-implementation-plan.md`
+- GPT-5.5 最新执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-3.3.md`
 - Prompt OS 3.1 营销文案设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.1-marketing-copy-design.md`（历史设计，3.2 已补工作台/状态/错误/多图链路）
 - Prompt OS 3.1 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-3.1-marketing-copy-implementation.md`（历史计划）
 - GPT-5.5 旧执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-3.1.md`（历史任务书）

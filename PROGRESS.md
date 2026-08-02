@@ -175,3 +175,10 @@
 - Change: added the 3.2 design and GPT-5.5 execution plan covering compact workbench triggers, thumbnail-only drag, side float layer, prepare/generate orchestration, public error mapping, N1/N2 multi-image `target_appearances`, N5/N6 marketing copy strategy and N7 gates.
 - Deliverables: `docs/superpowers/specs/2026-08-02-prompt-os-3.2-node-workflow-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-3.2-node-workflow-implementation.md`, `docs/project/LEADER-GOAL-PROMPT-OS-3.2.md`.
 - Next: GPT-5.5 should execute the 3.2 Task 0–7 plan; 3.1 remains a historical input, not the active execution plan.
+
+# Prompt OS 3.3 production-node design handoff
+
+- Status: design-only handoff completed on 2026-08-02; no runtime code, paid call, OSS/ERP smoke or deployment was performed.
+- Change: consolidated the latest user decisions into a single 3.3 baseline: organize import remains zero AI, prepare/formal generation share N1–N7, one product card with multiple images produces one 1+8 set, N2 owns `target_appearances`, N5 owns five creative copy strategies, N6 locks target-language visible copy into an English GPT Image 2 prompt, and N7 blocks only fact/rule/version/copy-lock failures.
+- Deliverables: `docs/superpowers/specs/2026-08-02-prompt-os-3.3-production-node-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-3.3-implementation-plan.md`, `docs/project/LEADER-GOAL-PROMPT-OS-3.3.md`.
+- Next: GPT-5.5 should execute the 3.3 Task 0–8 plan; 3.1 and 3.2 are historical inputs.
