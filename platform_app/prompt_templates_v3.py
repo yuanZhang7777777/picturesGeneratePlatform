@@ -497,6 +497,9 @@ N5_CORE = """
 # 八个互不重复的购买决策任务
 八个营销槽位按输入职责覆盖并保持独立：第二视角与结构确认、核心收益、事实证明、使用理解、细节信任、尺度或适配、规格包装或包含物、场景体验与购买收尾。缺少规格/包装证据时，相应槽位改为尚未覆盖的低风险购买疑问，但不得重复既有卖点或发明事实。
 
+# 五种转化文案策略
+每槽必须从 creative_strategy.mode 的五种候选中选一个主策略：fab_value、scene_ownership、emotion、personification、identity_signal。先做 Feature→Advantage→Benefit：把商品可验证 feature 翻译成 advantage，再翻译成 consumer_benefit；再评估 scene_ownership 的 mental simulation、emotion 的前后情绪转变、personification 的商品口吻和 identity_signal 的审美/身份表达。八图至少覆盖四种 mode，至少一张 fab_value，personification 默认最多一张。执行 cross-slot diversity：不同槽位不能只换形容词复用同一购买问题、同一场景、同一动作或同一构图。
+
 # 场景、人物和宠物动态规则
 1. 每槽只有一个 main_scene 和一个 main_action；静态展示使用 none。人物、手、儿童或宠物不是默认装饰，也不是一律禁止，必须由 verified_use_relationships、目标消费者和规则共同决定。
 2. 商品需要佩戴、手持、携带、接触身体、涂抹、操作、安装或借人物/宠物尺度才能理解时，安排正确的真人、手部或宠物使用关系；主体接触点、朝向、受力和动作必须可执行，商品仍是主角且关键结构可见。
@@ -560,10 +563,11 @@ N6_CORE = """
 # 事实、推断与消费者文案
 1. 画面与文案只能引用 fact_ledger 中 allowed_uses 匹配 visual_prompt、scene_planning、consumer_copy 或 consumer_copy_pending_review 的记录。inferred 内容必须进入 inference_trace；blocked 或高风险推断不得进入可见文字。
 2. 不得新增价格、折扣、认证、疗效、减重、美容前后对比、绝对效果、安全保证、质保、产地、精确容量、兼容保证或站外导流。包装、配件和内部结构必须有事实引用。
-3. 根据 market_context 先写母语级电商短文案，不逐字翻译；再自检它是否流畅、无歧义、符合当前场景和商品事实。visible_text_lines 最多三行，每行短、自然、只出现一次；允许零行。text_enabled=false 或规则禁字时 localized_copy.lines 与 visible_text_lines 都为空。
-4. localized_copy.lines 是冻结文本：最终 prompt 只能把这些行作为 quoted visible text 逐字交给 gpt-image-2，不允许模型再翻译、改写、增删、替换同义词或自动生成额外文字。
-5. 最终 prompt 的图片控制指令必须是英文；只有 quoted visible_text_lines 与商品本身真实品牌/型号可使用目标语言或原文。Prompt 必须明确：Only render the quoted localized copy below exactly as quoted; do not translate, rewrite, add, omit, or render field labels, site codes, language names, internal instructions, or any other text.
-6. 文案区只能有一个，保持移动端可读，不遮挡商品关键结构。不要把 Headline、Subheadline、Callouts、slot_id、role、screen、module、layout 等字段名渲染进图。
+3. 目标语言直接创作：根据 market_context 先静默生成三个候选，分别偏向清晰收益、具体场景和情绪/身份表达；不要先写中文再翻译，也不要输出候选过程。用 semantic back translation 做语义回译，检查它是否流畅、无歧义、符合当前场景和商品事实，再选择 quality 分最高的一版作为 localized_copy.lines。
+4. visible_text_lines 最多三行，每行短、自然、只出现一次；允许零行。text_enabled=false 或规则禁字时 localized_copy.lines 与 visible_text_lines 都为空。
+5. 逐字冻结：localized_copy.lines 是冻结文本，最终 prompt 只能把这些行作为 quoted visible text 逐字交给 gpt-image-2，不允许模型再翻译、改写、增删、替换同义词或自动生成额外文字。
+6. 英文图片控制：最终 prompt 的图片控制指令必须是英文；只有 quoted visible_text_lines 与商品本身真实品牌/型号可使用目标语言或原文。Prompt 必须明确：Only render the quoted localized copy below exactly as quoted; do not translate, rewrite, add, omit, or render field labels, site codes, language names, internal instructions, or any other text.
+7. 文案区只能有一个，保持移动端可读，不遮挡商品关键结构。不要把 Headline、Subheadline、Callouts、slot_id、role、screen、module、layout 等字段名渲染进图。
 
 # Style DNA 转译框架
 1. 若 slot_plan 或输入风格包含 style_fidelity_anchors、source_content_to_avoid、visual_deconstruction、composition、typography、color_palette、photographic_direction、design_rules、do、avoid、negative_prompt，最终英文 Prompt 必须把这些拆成可执行的图片语言。
@@ -624,10 +628,11 @@ N7_CORE = """
 
 # Prompt、文字与语义检查
 1. 最终 Prompt 按 Unicode 字符计数超过 3500、visible_text_lines 超过三行、存在两个以上主场景/动作、白底图新增文字、规则禁字仍有文字，均为 hard block。
-2. 可见文字必须匹配目标语言且每行只出现一次，只允许列出的本地化文案和商品真实品牌/型号。检查本地化文字是否流畅、无歧义、符合当前场景和商品事实；不流畅、歧义明显、语境不合或像机器直译时列入 semantic_risks，可能误导消费者时 block。字段名、站点代码、乱码、额外促销文案或站外联系信息必须阻断。
-3. 价格、虚假促销、未验证认证、疗效、减重、美容前后对比、绝对效果、站外导流、未授权 IP、危险或歧视内容不得通过。高风险 inferred 进入消费者文案必须 block。
-4. 只判断具体语义问题，结论必须引用输入 rule_id、fact_id 或 inference fact_id。不得因文案营销性强就自动违规，也不得虚构平台官方规则。
-5. ADVICE 未满足只能进入 warnings；UNVERIFIED 只提示人工复核。仅明确 HARD_PLATFORM、HARD_MALL、系统安全或 APIMart 契约可形成相应硬阻断。
+2. copy_checks 必须复核 localized_copy.lines 与 visible_text_lines 逐字一致，且每行在最终 prompt 中恰好出现一次。可见文字必须匹配目标语言，只允许列出的本地化文案和商品真实品牌/型号。检查本地化文字是否流畅、无歧义、符合当前场景和商品事实；不流畅、歧义明显、语境不合或像机器直译时列入 semantic_risks，可能误导消费者时 block。字段名、站点代码、乱码、额外促销文案或站外联系信息必须阻断。
+3. 对空泛、重复或低具体性的文案只标记为可自动重写一次，不直接当成平台硬规则；自动重写仍必须保留事实引用、目标语言和文字锁。若重写后仍空泛或重复，则 block 当前槽位。
+4. 价格、虚假促销、未验证认证、疗效、减重、美容前后对比、绝对效果、站外导流、未授权 IP、危险或歧视内容不得通过。高风险 inferred 进入消费者文案必须 block。
+5. 只判断具体语义问题，结论必须引用输入 rule_id、fact_id 或 inference fact_id。不得因文案营销性强就自动违规，也不得虚构平台官方规则。
+6. ADVICE 未满足只能进入 warnings；UNVERIFIED 只提示人工复核。仅明确 HARD_PLATFORM、HARD_MALL、系统安全或 APIMart 契约可形成相应硬阻断。
 
 # 决策和严格输出
 保留确定性引擎已有结论；发现新增硬问题时 decision=block 并追加 hard_blocks。无法确认且涉及未解析语义硬规则时 block；其他不确定内容写 semantic_risks 并要求人工复核。pass 只表示可提交本次请求，不表示生成结果审核通过或可导出。

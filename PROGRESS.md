@@ -177,6 +177,14 @@
 - Verification: `pytest tests/test_prompt_os.py -k "creative_strategy or consumer_context or marketing" -q` passed targeted N5 regressions.
 - Next: Task 3 writes the full N5/N6/N7 system prompt content without changing schemas or adding nodes.
 
+# Prompt OS 3.1 Task 3 system prompt content
+
+- Status: completed local template-content slice; no schema, model, table or dependency changes.
+- Red evidence: new template test failed because N5 lacked explicit five-mode/FAB/cross-slot markers.
+- Change: N5 system prompt now states the five strategy modes, Feature→Advantage→Benefit conversion, mental simulation and cross-slot diversity; N6 now requires three silent target-language candidates, semantic back translation, literal copy freezing and English image control; N7 now checks `copy_checks`, `localized_copy.lines`, literal consistency and one automatic rewrite path for vague/repeated copy.
+- Verification: `pytest tests/test_prompt_templates_v3.py tests/test_prompt_os.py -k "marketing or localized or creative" -q` passed 7.
+- Next: Task 4 implements deterministic N6/N7 copy lock and automatic rewrite behavior in runtime services.
+
 # Prompt OS 3.2 node/workflow design handoff
 
 - Status: design-only handoff completed on 2026-08-02; no runtime code, paid call, OSS/ERP smoke or deployment was performed.

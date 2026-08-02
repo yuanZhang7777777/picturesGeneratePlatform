@@ -423,6 +423,48 @@ def test_market_context_controls_language_not_fixed_country_scenes():
         assert marker not in combined
 
 
+def test_marketing_copy_prompts_encode_conversion_strategy_and_copy_locking():
+    from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
+
+    n5 = PROMPT_TEMPLATES["N5.generic"]["instruction"]
+    n6 = PROMPT_TEMPLATES["N6.generic"]["instruction"]
+    n7 = PROMPT_TEMPLATES["N7.generic"]["instruction"]
+
+    assert all(
+        marker in n5
+        for marker in (
+            "fab_value",
+            "scene_ownership",
+            "emotion",
+            "personification",
+            "identity_signal",
+            "Feature→Advantage→Benefit",
+            "mental simulation",
+            "cross-slot diversity",
+        )
+    )
+    assert all(
+        marker in n6
+        for marker in (
+            "三个候选",
+            "目标语言直接创作",
+            "语义回译",
+            "逐字冻结",
+            "英文图片控制",
+        )
+    )
+    assert all(
+        marker in n7
+        for marker in (
+            "copy_checks",
+            "localized_copy.lines",
+            "逐字一致",
+            "空泛",
+            "自动重写",
+        )
+    )
+
+
 def test_marketing_nodes_include_style_dna_framework():
     from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
 

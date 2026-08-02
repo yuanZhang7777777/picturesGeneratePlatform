@@ -7,3 +7,5 @@
 - 2026-08-02 Prompt OS 3.3 设计交接：无新增阻塞。本轮只写设计、计划和 GPT-5.5 任务书，未执行真实付费、ERP/OSS smoke 或部署。
 
 - 2026-08-02 Prompt OS 3.1 Task 2：无新增阻塞。同文件存在早前 N2 fallback 未提交改动，Task 2 提交只暂存 N5 consumer_context / creative_strategy 相关块。
+
+- 2026-08-02 Prompt OS 3.1 Task 3：无新增阻塞。仅更新 3.1 system prompt 文本与模板断言。
