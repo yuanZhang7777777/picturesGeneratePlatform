@@ -13,6 +13,7 @@ REGIONAL_TARGETS = {
     "shopee": {"SG", "MY", "TH", "VN", "PH", "ID", "TW", "BR"},
     "tiktok": {"SG", "MY", "TH", "VN", "PH", "US"},
 }
+PROMPT_OS_VERSION = "3.1.0"
 
 
 def test_seed_platform_templates_creates_published_global_baseline_and_drafts():
@@ -96,7 +97,7 @@ def test_seed_creates_verified_rule_profiles_and_vietnam_general_template():
         (1, "Seller original product photo"),
         (2, "Standard white-background product hero"),
     ]
-    prompt_nodes = PromptNodeTemplate.objects.filter(version="3.0.0", status="published")
+    prompt_nodes = PromptNodeTemplate.objects.filter(version=PROMPT_OS_VERSION, status="published")
     assert set(prompt_nodes.values_list("node_name", flat=True)) == {
         "N1",
         "N2",
@@ -123,7 +124,7 @@ def test_seed_creates_verified_rule_profiles_and_vietnam_general_template():
 def test_seed_publishes_new_prompt_version_without_overwriting_old_version():
     old = PromptNodeTemplate.objects.create(
         node_name="N1",
-        version="2.0.0",
+        version="3.0.0",
         status=PromptNodeTemplate.Status.PUBLISHED,
         instruction="administrator preserved instruction",
         output_schema={"type": "object"},
@@ -132,7 +133,7 @@ def test_seed_publishes_new_prompt_version_without_overwriting_old_version():
     call_command("seed_platform_templates")
 
     old.refresh_from_db()
-    current = PromptNodeTemplate.objects.get(node_name="N1", version="3.0.0")
+    current = PromptNodeTemplate.objects.get(node_name="N1", version=PROMPT_OS_VERSION)
     assert old.status == PromptNodeTemplate.Status.RETIRED
     assert old.instruction == "administrator preserved instruction"
     assert current.status == PromptNodeTemplate.Status.PUBLISHED

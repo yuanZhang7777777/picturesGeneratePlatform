@@ -3,7 +3,7 @@ from datetime import date
 from django.core.management.base import BaseCommand
 
 from platform_app.models import OutputSlot, OutputTemplate, PromptNodeTemplate, RuleProfile
-from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
+from platform_app.prompt_templates_v3 import PROMPT_OS_VERSION, PROMPT_TEMPLATES
 from platform_app.template_policy import STANDARD_PRODUCT_HERO_NAME, STANDARD_PRODUCT_HERO_PURPOSE
 
 
@@ -50,7 +50,6 @@ SHOPEE_TW_SOURCE = (
     "https://cdngarenanow-a.akamaihd.net/shopee/seller/seller_cms/"
     "7658bd13abe2ad617a834190a75ba1a5/%E8%9D%A6%E7%9A%AE%E5%95%86%E5%9F%8E%E4%B8%8A%E6%9E%B6%E8%A6%8F%E7%AF%84.pdf"
 )
-PROMPT_OS_VERSION = "3.0.0"
 PROMPT_OS_NODES = {
     "N1": """
 你是商品视觉证据观察器。一次只观察一张图片，不做身份归并、营销策划、事实推断或图片生成。

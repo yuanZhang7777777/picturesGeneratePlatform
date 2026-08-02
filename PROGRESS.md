@@ -161,3 +161,10 @@
 - Order: Task 1 contract/schema/version, then N5 strategy validation, N5/N6/N7 prompts, N7 copy lock, node temperature, minimal PromptEditor display, final benchmark.
 - Baseline: `pytest -q` exit 0, frontend 89 passed, Django check passed, Vite build passed.
 - Max risk: current working tree already has prior edits in shared files; every change must stay inside the explicit whitelist and be committed in small slices.
+
+# Prompt OS 3.1 Task 1 contract
+
+- Status: completed local contract slice; `PROMPT_OS_VERSION=3.1.0` is the seed source version and 3.0.0 nodes retire without overwrite.
+- Change: N5 slots now require `creative_strategy`; N6 `localized_copy` includes back translation, strategy mode and quality scores; N7 includes structured `copy_checks`.
+- Verification: targeted red test failed on missing 3.1 templates/schema, then `pytest tests/test_prompt_templates_v3.py tests/test_template_seed.py -q` passed 23.
+- Next: Task 2 will validate N5 consumer context, fact refs and strategy distribution in runtime normalization.

@@ -25,6 +25,15 @@ EXPECTED_NODE_NAMES = {
     "N7.tiktok",
 }
 
+PROMPT_OS_VERSION = "3.1.0"
+MARKETING_MODES = {
+    "fab_value",
+    "scene_ownership",
+    "emotion",
+    "personification",
+    "identity_signal",
+}
+
 
 def test_seed_publishes_all_prompt_os_v3_variants_and_preserves_history():
     old = PromptNodeTemplate.objects.create(
@@ -45,7 +54,7 @@ def test_seed_publishes_all_prompt_os_v3_variants_and_preserves_history():
     call_command("seed_platform_templates")
 
     published = PromptNodeTemplate.objects.filter(
-        version="3.0.0",
+        version=PROMPT_OS_VERSION,
         status=PromptNodeTemplate.Status.PUBLISHED,
     )
     assert set(published.values_list("node_name", flat=True)) == EXPECTED_NODE_NAMES
@@ -61,7 +70,7 @@ def test_seeded_v3_prompts_are_full_production_instructions():
     call_command("seed_platform_templates")
     prompts = {
         item.node_name: item.instruction
-        for item in PromptNodeTemplate.objects.filter(version="3.0.0")
+        for item in PromptNodeTemplate.objects.filter(version=PROMPT_OS_VERSION)
     }
 
     required_markers = {
@@ -95,8 +104,8 @@ def test_seeded_v3_prompts_are_full_production_instructions():
 
 def test_generic_sea_is_an_english_one_plus_eight_strategy_not_a_fallback():
     call_command("seed_platform_templates")
-    director = PromptNodeTemplate.objects.get(node_name="N5.generic", version="3.0.0").instruction
-    compiler = PromptNodeTemplate.objects.get(node_name="N6.generic", version="3.0.0").instruction
+    director = PromptNodeTemplate.objects.get(node_name="N5.generic", version=PROMPT_OS_VERSION).instruction
+    compiler = PromptNodeTemplate.objects.get(node_name="N6.generic", version=PROMPT_OS_VERSION).instruction
 
     assert "1+8" in director
     assert "英语" in director
@@ -126,12 +135,12 @@ def test_v3_output_schemas_are_strict_and_match_seed_source_and_runtime():
 
     assert set(PROMPT_TEMPLATES) == EXPECTED_NODE_NAMES
     for node_name, source in PROMPT_TEMPLATES.items():
-        seeded = PromptNodeTemplate.objects.get(node_name=node_name, version="3.0.0")
+        seeded = PromptNodeTemplate.objects.get(node_name=node_name, version=PROMPT_OS_VERSION)
         runtime_instruction, runtime_version = _prompt_node_contract(node_name)
         schema = seeded.output_schema
 
         assert seeded.instruction == source["instruction"] == runtime_instruction
-        assert runtime_version == "3.0.0"
+        assert runtime_version == PROMPT_OS_VERSION
         assert schema == source["output_schema"]
         assert schema["type"] == "object"
         assert schema["additionalProperties"] is False
@@ -170,7 +179,7 @@ def test_seed_refreshes_existing_published_prompt_instructions():
     from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
 
     call_command("seed_platform_templates")
-    template = PromptNodeTemplate.objects.get(node_name="N5.shopee", version="3.0.0")
+    template = PromptNodeTemplate.objects.get(node_name="N5.shopee", version=PROMPT_OS_VERSION)
     template.instruction = "stale published instruction"
     template.save(update_fields=["instruction"])
 
@@ -199,7 +208,7 @@ def test_v3_user_message_templates_are_seeded_and_bound_exactly_at_runtime():
         "N9": ("failure_class", "original_prompt", "rule_snapshot", "max_simplification_attempts"),
     }
     for node_name, source in PROMPT_TEMPLATES.items():
-        seeded = PromptNodeTemplate.objects.get(node_name=node_name, version="3.0.0")
+        seeded = PromptNodeTemplate.objects.get(node_name=node_name, version=PROMPT_OS_VERSION)
         user_template = source["user_message_template"]
         base_node = node_name.split(".", 1)[0]
         representative = expected_input_keys.get(node_name) or expected_input_keys[f"{base_node}.generic"]
@@ -208,7 +217,7 @@ def test_v3_user_message_templates_are_seeded_and_bound_exactly_at_runtime():
         assert "{{input_json}}" in user_template
         assert all(key in user_template for key in representative)
 
-        binding = _prompt_node_template_binding(node_name, "3.0.0")
+        binding = _prompt_node_template_binding(node_name, PROMPT_OS_VERSION)
         expected_hash = _snapshot_hash(
             {
                 "instruction": source["instruction"],
@@ -250,7 +259,7 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
             "rule_refs", "generation_parameters", "review_required",
         },
         "N7.generic": {
-            "decision", "hard_blocks", "semantic_risks", "warnings", "prompt_checks",
+            "decision", "hard_blocks", "semantic_risks", "warnings", "copy_checks", "prompt_checks",
             "resolved_rule_refs", "review_required",
         },
         "N8": {
@@ -289,6 +298,7 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
         "hard_blocks",
         "semantic_risks",
         "warnings",
+        "copy_checks",
         "resolved_rule_refs",
         "prompt_checks",
         "review_required",
@@ -308,6 +318,63 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
     assert n6_reference["properties"]["supporting_asset_ids"]["maxItems"] == 1
     assert "已完成白底图" in PROMPT_TEMPLATES["N6.generic"]["instruction"]
     assert "最多一张" in PROMPT_TEMPLATES["N6.generic"]["instruction"]
+
+
+def test_n5_n6_n7_publish_marketing_copy_contract():
+    from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
+
+    for platform in ("generic", "shopee", "tiktok"):
+        n5 = PROMPT_TEMPLATES[f"N5.{platform}"]
+        n6 = PROMPT_TEMPLATES[f"N6.{platform}"]
+        n7 = PROMPT_TEMPLATES[f"N7.{platform}"]
+
+        plan = n5["output_schema"]["properties"]["plans"]["items"]
+        strategy = plan["properties"]["creative_strategy"]
+        assert strategy["additionalProperties"] is False
+        assert set(strategy["properties"]["mode"]["enum"]) == MARKETING_MODES
+        assert set(strategy["required"]) == set(strategy["properties"])
+
+        localized = n6["output_schema"]["properties"]["localized_copy"]
+        assert set(localized["properties"]) >= {
+            "language",
+            "lines",
+            "back_translation",
+            "strategy_mode",
+            "quality",
+            "source_fact_refs",
+            "source_inference_refs",
+        }
+        quality = localized["properties"]["quality"]
+        assert quality["additionalProperties"] is False
+        assert set(quality["properties"]) >= {
+            "relevance",
+            "specificity",
+            "imagery",
+            "naturalness",
+            "truthfulness",
+            "mobile_readability",
+            "generic_phrase_hits",
+        }
+
+        assert "copy_checks" in n7["output_schema"]["properties"]
+
+
+def test_seeded_prompt_os_31_retire_30_without_overwriting_history():
+    old = PromptNodeTemplate.objects.create(
+        node_name="N5.shopee",
+        version="3.0.0",
+        status=PromptNodeTemplate.Status.PUBLISHED,
+        instruction="old 3.0.0 marketing director",
+        output_schema={"type": "object"},
+    )
+
+    call_command("seed_platform_templates")
+
+    old.refresh_from_db()
+    current = PromptNodeTemplate.objects.get(node_name="N5.shopee", version=PROMPT_OS_VERSION)
+    assert old.status == PromptNodeTemplate.Status.RETIRED
+    assert old.instruction == "old 3.0.0 marketing director"
+    assert current.status == PromptNodeTemplate.Status.PUBLISHED
 
 
 def test_market_context_controls_language_not_fixed_country_scenes():

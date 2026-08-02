@@ -20,6 +20,14 @@ INTEGER = {"type": "integer"}
 NUMBER = {"type": "number"}
 STRING_ARRAY = _array(STRING)
 INTEGER_ARRAY = _array(INTEGER)
+MARKETING_STRATEGY_MODES = [
+    "fab_value",
+    "scene_ownership",
+    "emotion",
+    "personification",
+    "identity_signal",
+]
+PROMPT_OS_VERSION = "3.1.0"
 
 
 OBSERVED_IDENTITY_SCHEMA = _object(
@@ -208,11 +216,29 @@ N4_SCHEMA = _object(
     }
 )
 
+CREATIVE_STRATEGY_SCHEMA = _object(
+    {
+        "mode": {"type": "string", "enum": MARKETING_STRATEGY_MODES},
+        "source_fact_refs": STRING_ARRAY,
+        "user_job": STRING,
+        "consumer_tension": STRING,
+        "feature": STRING,
+        "advantage": STRING,
+        "consumer_benefit": STRING,
+        "mental_simulation": STRING,
+        "emotional_shift": STRING,
+        "product_voice": STRING,
+        "identity_signal": STRING,
+        "selection_reason": STRING,
+    }
+)
+
 SLOT_PLAN_SCHEMA = _object(
     {
         "slot_order": INTEGER,
         "role": STRING,
         "appearance_ids": STRING_ARRAY,
+        "creative_strategy": CREATIVE_STRATEGY_SCHEMA,
         "scene_family": STRING,
         "environment": STRING,
         "camera": STRING,
@@ -261,8 +287,21 @@ N6_SCHEMA = _object(
             {
                 "language": STRING,
                 "lines": STRING_ARRAY,
+                "back_translation": STRING,
+                "strategy_mode": {"type": "string", "enum": MARKETING_STRATEGY_MODES},
                 "source_fact_refs": STRING_ARRAY,
                 "source_inference_refs": STRING_ARRAY,
+                "quality": _object(
+                    {
+                        "relevance": INTEGER,
+                        "specificity": INTEGER,
+                        "imagery": INTEGER,
+                        "naturalness": INTEGER,
+                        "truthfulness": INTEGER,
+                        "mobile_readability": INTEGER,
+                        "generic_phrase_hits": STRING_ARRAY,
+                    }
+                ),
             }
         ),
         "prompt": STRING,
@@ -282,6 +321,15 @@ N7_SCHEMA = _object(
         "hard_blocks": STRING_ARRAY,
         "semantic_risks": STRING_ARRAY,
         "warnings": STRING_ARRAY,
+        "copy_checks": _object(
+            {
+                "lines_match_visible_text": BOOLEAN,
+                "each_line_present_once": BOOLEAN,
+                "language_match": BOOLEAN,
+                "fact_refs_valid": BOOLEAN,
+                "generic_phrase_hits": STRING_ARRAY,
+            }
+        ),
         "prompt_checks": _object(
             {
                 "character_count": INTEGER,
