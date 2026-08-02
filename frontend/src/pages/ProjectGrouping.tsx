@@ -6,10 +6,10 @@ import { Link, useParams } from "react-router-dom";
 import { ApiError, deleteAsset, deleteCluster, generateProject, importSkus, mergeAsset, prepareProject, splitAsset, updateCluster, updateProjectSettings, uploadAssets, type UploadResult } from "../api";
 import { ImportPanel } from "../components/ImportPanel";
 import { ProductCard } from "../components/ProductCard";
-import { commonMarkets, extraMarkets, marketValue, platforms } from "../labels";
+import { commonMarkets, extraMarkets, platforms } from "../labels";
 import { EmptyState, ErrorPanel, Shell } from "../layout";
 import { useProjectSnapshot } from "../queries";
-import type { ClusterUpdateInput, ImportMode, ProductConfiguration } from "../types";
+import type { ClusterUpdateInput, ImportMode, ProductConfiguration, Project } from "../types";
 
 const slotOrders = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
@@ -33,8 +33,19 @@ export default function ProjectGrouping() {
   };
   const upload = useMutation({ mutationFn: ({ files, mode }: { files: File[]; mode: ImportMode }) => uploadAssets(projectId!, files, mode), onSuccess: async (result) => { setUploadResult(result); await invalidate(); } });
   const skuImport = useMutation({ mutationFn: ({ skus, mode }: { skus: string[]; mode: ImportMode }) => importSkus(projectId!, skus, mode), onSuccess: invalidate });
-  const prepare = useMutation({ mutationFn: () => prepareProject(projectId!, selectedClusters.map((sku) => sku.id)), onSuccess: invalidate });
-  const generate = useMutation({ mutationFn: () => generateProject(projectId!, { clusterIds: selectedClusters.map((sku) => sku.id), slotOrders }), onSuccess: invalidate });
+  const markSelectedPreparing = () => {
+    const ids = new Set(selectedClusters.map((sku) => sku.id));
+    queryClient.setQueryData<Project>(["project", projectId], (current) => current ? {
+      ...current,
+      skus: current.skus.map((sku) => ids.has(sku.id) ? {
+        ...sku,
+        preparationStatus: "preparing",
+        preparation: { status: "preparing", stage: "N1", current: 0, total: 7, error: "" },
+      } : sku),
+    } : current);
+  };
+  const prepare = useMutation({ mutationFn: () => prepareProject(projectId!, selectedClusters.map((sku) => sku.id)), onMutate: markSelectedPreparing, onSuccess: invalidate });
+  const generate = useMutation({ mutationFn: () => generateProject(projectId!, { clusterIds: selectedClusters.map((sku) => sku.id), slotOrders }), onMutate: markSelectedPreparing, onSuccess: invalidate });
   const save = useMutation({ mutationFn: ({ skuId, expectedVersion, payload }: { skuId: string; expectedVersion: number; payload: ClusterUpdateInput }) => updateCluster(skuId, expectedVersion, payload), onSuccess: invalidate });
   const removeAsset = useMutation({ mutationFn: deleteAsset, onSuccess: invalidate });
   const removeCluster = useMutation({ mutationFn: deleteCluster, onSuccess: invalidate });
@@ -120,6 +131,7 @@ function ProductGrid({ children }: { children: ReactNode }) {
 }
 
 function ProjectToolbar({ project, selectedCount, pending, onSave, onSelectAll, onDeselectAll, onInvert }: { project: { id: string; name: string; defaultConfig?: ProductConfiguration; platform: string; market: string; size: string; resolution?: string }; selectedCount: number; pending: boolean; onSave: (input: ProductConfiguration) => Promise<unknown>; onSelectAll: () => void; onDeselectAll: () => void; onInvert: () => void }) {
+  const allMarkets = [...commonMarkets, ...extraMarkets];
   const initial = () => ({
     platform: project.defaultConfig?.platform || project.platform?.toLowerCase() || "generic",
     market: project.defaultConfig?.market || project.market || "SEA",
@@ -130,8 +142,6 @@ function ProjectToolbar({ project, selectedCount, pending, onSave, onSelectAll, 
   });
   const [draft, setDraft] = useState<ProductConfiguration>(initial);
   const [saved, setSaved] = useState<ProductConfiguration>(initial);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [search, setSearch] = useState("");
   const pendingSaved = useRef<string | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   useEffect(() => {
@@ -151,15 +161,15 @@ function ProjectToolbar({ project, selectedCount, pending, onSave, onSelectAll, 
       // The mutation error is rendered by the page; keep this draft dirty for retry.
     }
   };
-  const searchedMarkets = extraMarkets.filter(([code, label]) => label.includes(search.trim()) || code.includes(search.trim().toUpperCase()));
-  return <section className="surface mb-5 p-4" aria-label="项目工具栏">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-bold tracking-tight">{project.name}</h1><div className="flex flex-wrap gap-2"><button className="toolbar-choice" type="button" onClick={onSelectAll}>全选</button><button className="toolbar-choice" type="button" onClick={onDeselectAll}>取消全选</button><button className="toolbar-choice" type="button" onClick={onInvert}>反选</button><span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">已选 {selectedCount}</span><Link className="secondary-button" to={`/projects/${project.id}/results`}>生产结果</Link></div></div>
-    <div className="mt-4 grid gap-3 xl:grid-cols-[auto_1fr_auto_auto_minmax(180px,1fr)] xl:items-end">
-      <fieldset><legend className="mb-1 text-xs font-medium text-slate-500">平台</legend><div className="flex flex-wrap gap-1">{platforms.map(([code, label]) => <button key={code} aria-pressed={draft.platform === code} className={`toolbar-choice ${draft.platform === code ? "toolbar-choice-active" : ""}`} type="button" disabled={pending} onClick={() => void save({ ...draft, platform: code })}>{label}</button>)}</div></fieldset>
-      <fieldset className="min-w-0"><legend className="mb-1 text-xs font-medium text-slate-500">国家</legend><div className="flex flex-wrap gap-1">{commonMarkets.map(([code, label]) => <button key={code} aria-pressed={draft.market === code} className={`toolbar-choice ${draft.market === code ? "toolbar-choice-active" : ""}`} type="button" disabled={pending} onClick={() => void save({ ...draft, market: code })}>{label}</button>)}<span className="relative"><button className="toolbar-choice" type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>更多国家</button>{moreOpen && <span className="absolute left-0 top-full z-20 mt-2 block w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-lg"><input aria-label="搜索更多国家" className="mb-2" placeholder="搜索或输入国家/地区" value={search} onChange={(event) => setSearch(event.target.value)} />{searchedMarkets.map(([code, label]) => <button className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" key={code} type="button" onClick={() => { void save({ ...draft, market: code }); setMoreOpen(false); }}>{label}</button>)}{search.trim() && <button className="mt-1 block w-full rounded-lg bg-slate-100 px-3 py-2 text-left text-sm font-semibold text-slate-700" type="button" onClick={() => { void save({ ...draft, market: marketValue(search) }); setMoreOpen(false); }}>使用“{search.trim()}”</button>}</span>}</span></div></fieldset>
-      <label className="text-xs font-medium text-slate-500">比例<select aria-label="图片比例" className="mt-1 min-w-24" value={draft.size} onChange={(event) => void save({ ...draft, size: event.target.value })}><option value="1:1">1:1</option><option value="3:4">3:4</option></select></label>
-      <label className="text-xs font-medium text-slate-500">分辨率<select aria-label="图片分辨率" className="mt-1 min-w-24" value={draft.resolution} onChange={(event) => void save({ ...draft, resolution: event.target.value })}><option value="1k">1K</option><option value="2k">2K</option></select></label>
-      <label className="text-xs font-medium text-slate-500">项目风格<input aria-label="项目风格" className="mt-1" value={draft.globalPrompt} placeholder="全项目默认风格（选填）" onChange={(event) => setDraft({ ...draft, globalPrompt: event.target.value })} onBlur={() => { if (dirty) void save(draft); }} /></label>
+  return <section className="surface mb-4 p-3" aria-label="项目工具栏">
+    <div className="grid gap-2 xl:grid-cols-[minmax(120px,1fr)_auto_9rem_6rem_6rem_minmax(180px,1fr)_auto] xl:items-end">
+      <h1 className="self-center text-2xl font-bold tracking-tight">{project.name}</h1>
+      <fieldset><legend className="mb-1 text-xs font-medium text-slate-500">平台</legend><div className="flex flex-nowrap gap-1">{platforms.map(([code, label]) => <button key={code} aria-pressed={draft.platform === code} className={`toolbar-choice whitespace-nowrap ${draft.platform === code ? "toolbar-choice-active" : ""}`} type="button" disabled={pending} onClick={() => void save({ ...draft, platform: code })}>{label}</button>)}</div></fieldset>
+      <label className="text-xs font-medium text-slate-500">国家<select aria-label="项目国家" className="mt-1" value={draft.market} onChange={(event) => void save({ ...draft, market: event.target.value })}>{allMarkets.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
+      <label className="text-xs font-medium text-slate-500">比例<select aria-label="图片比例" className="mt-1" value={draft.size} onChange={(event) => void save({ ...draft, size: event.target.value })}><option value="1:1">1:1</option><option value="3:4">3:4</option></select></label>
+      <label className="text-xs font-medium text-slate-500">分辨率<select aria-label="图片分辨率" className="mt-1" value={draft.resolution} onChange={(event) => void save({ ...draft, resolution: event.target.value })}><option value="1k">1K</option><option value="2k">2K</option></select></label>
+      <label className="text-xs font-medium text-slate-500">项目风格提示词<textarea aria-label="项目风格提示词" className="mt-1 min-h-10 py-2" value={draft.globalPrompt} placeholder="全项目默认提示词（选填）" onChange={(event) => setDraft({ ...draft, globalPrompt: event.target.value })} onBlur={() => { if (dirty) void save(draft); }} /></label>
+      <div className="flex flex-wrap justify-end gap-2"><button className="toolbar-choice" type="button" onClick={onSelectAll}>全选</button><button className="toolbar-choice" type="button" onClick={onDeselectAll}>取消全选</button><button className="toolbar-choice" type="button" onClick={onInvert}>反选</button><span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">已选 {selectedCount}</span><Link className="secondary-button min-h-8 px-3 text-xs" to={`/projects/${project.id}/results`}>生产结果</Link></div>
     </div>
   </section>;
 }

@@ -65,7 +65,7 @@ test("keeps failed ERP SKUs visible after a partial import", async () => {
   })} />);
 
   fireEvent.change(screen.getByLabelText("ERP SKU"), { target: { value: "OK-1\nMISSING" } });
-  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[1]);
+  fireEvent.click(screen.getByRole("button", { name: "加载 SKU" }));
 
   expect(await screen.findByText("MISSING：SKU 不存在或无可用商品图片")).toBeInTheDocument();
   expect(screen.getByLabelText("ERP SKU")).toHaveValue("MISSING");
@@ -108,7 +108,7 @@ test("shows multiple references for drag sorting without a relation selector", (
   render(<ProductCard {...props} sku={groupedSku} assets={groupedSku.assets} onSave={onSave} />);
 
   expect(screen.queryByLabelText("参考图关系 旧名称")).not.toBeInTheDocument();
-  expect(screen.getByRole("list", { name: "旧名称 参考图排序" })).toHaveTextContent("主参考");
+  expect(screen.getByRole("list", { name: "旧名称 参考图排序" })).toHaveTextContent("主");
   expect(screen.getByRole("button", { name: "拖拽商品参考图 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "拖拽商品参考图 2" })).toBeInTheDocument();
   expect(onSave).not.toHaveBeenCalled();

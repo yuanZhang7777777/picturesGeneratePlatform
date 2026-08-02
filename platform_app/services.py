@@ -2553,8 +2553,13 @@ def _has_nonempty_value(value):
     return value is not None and value is not False
 
 
-def _normalize_owned_image_role(value):
-    role = _required_string({"image_role": value}, "image_role").strip().lower().replace("-", "_").replace(" ", "_")
+def _normalize_owned_image_role(value, *, fallback=None):
+    try:
+        role = _required_string({"image_role": value}, "image_role").strip().lower().replace("-", "_").replace(" ", "_")
+    except ValueError:
+        if fallback:
+            return fallback
+        raise
     aliases = {
         "clean_product": "clean_product",
         "product": "clean_product",
@@ -2577,6 +2582,8 @@ def _normalize_owned_image_role(value):
     }
     normalized = aliases.get(role)
     if normalized is None:
+        if fallback:
+            return fallback
         raise ValueError("image_role must identify an owned product reference")
     return normalized
 
@@ -2590,13 +2597,16 @@ def _normalize_n1_observation(payload, expected_asset_id):
     asset_kind = _required_string(payload, "asset_kind")
     if asset_kind != "owned_product":
         raise ValueError("asset_kind must be owned_product")
-    image_role = _normalize_owned_image_role(payload.get("image_role"))
     contains_target = payload.get("contains_target_product")
     if not isinstance(contains_target, bool):
         raise ValueError("contains_target_product must be boolean")
     target_is_physical = payload.get("target_is_physical_product")
     if not isinstance(target_is_physical, bool):
         raise ValueError("target_is_physical_product must be boolean")
+    image_role = _normalize_owned_image_role(
+        payload.get("image_role"),
+        fallback="clean_product" if contains_target and target_is_physical else "detail",
+    )
     target_complete = payload.get("target_complete")
     if not isinstance(target_complete, bool):
         raise ValueError("target_complete must be boolean")

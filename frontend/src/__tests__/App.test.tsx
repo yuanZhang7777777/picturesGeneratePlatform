@@ -173,7 +173,7 @@ test("keeps platform and country directly in the compact toolbar", async () => {
   renderApp("/projects/project-demo");
 
   expect(await screen.findByRole("button", { name: "Shopee 虾皮" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: "新加坡" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByLabelText("项目国家")).toHaveValue("SG");
   expect(screen.queryByLabelText("项目店铺类型")).not.toBeInTheDocument();
 });
 
@@ -182,7 +182,7 @@ test("keeps the add-product panel permanently visible", async () => {
 
   expect(await screen.findByRole("region", { name: "添加商品面板" })).toBeInTheDocument();
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "添加图片或文件夹" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "选择图片/文件夹" })).toBeInTheDocument();
 });
 
 test("does not hide the add-product panel behind a dialog", async () => {
@@ -198,7 +198,7 @@ test("shows two explicit import choices for both upload and ERP SKU entry", asyn
   renderApp("/projects/project-demo");
 
   await openImportPanel();
-  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  fireEvent.click(screen.getByRole("button", { name: "选择图片/文件夹" }));
   expect(screen.getByRole("menu", { name: "添加素材方式" })).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "选择图片" })).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "选择文件夹" })).toBeInTheDocument();
@@ -215,7 +215,7 @@ test("marks uploaded files for automatic mode without generating before Prompt p
   renderApp("/projects/project-demo");
 
   await openImportPanel();
-  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  fireEvent.click(screen.getByRole("button", { name: "选择图片/文件夹" }));
   const input = await screen.findByLabelText("选择图片");
   const file = new File(["image"], "front.png", { type: "image/png" });
   fireEvent.change(input, { target: { files: [file] } });
@@ -232,7 +232,7 @@ test("posts uploaded files in organize mode without starting generation", async 
   renderApp("/projects/project-demo");
 
   await openImportPanel();
-  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  fireEvent.click(screen.getByRole("button", { name: "选择图片/文件夹" }));
   fireEvent.change(await screen.findByLabelText("选择图片"), {
     target: { files: [new File(["image"], "front.png", { type: "image/png" })] },
   });
@@ -257,7 +257,7 @@ test("previews pending images without filenames and does not resubmit successful
   renderApp("/projects/project-demo");
 
   await openImportPanel();
-  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  fireEvent.click(screen.getByRole("button", { name: "选择图片/文件夹" }));
   const input = await screen.findByLabelText("选择图片");
   fireEvent.change(input, {
     target: { files: [new File(["front"], "front.png", { type: "image/png" })] },
@@ -269,7 +269,7 @@ test("previews pending images without filenames and does not resubmit successful
   await waitFor(() => expect(screen.queryByRole("img", { name: "待导入商品图 1" })).not.toBeInTheDocument());
 
   await openImportPanel();
-  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  fireEvent.click(screen.getByRole("button", { name: "选择图片/文件夹" }));
   fireEvent.change(await screen.findByLabelText("选择图片"), {
     target: { files: [new File(["side"], "side.png", { type: "image/png" })] },
   });
@@ -294,7 +294,7 @@ test("keeps pending files when the first upload request fails", async () => {
   renderApp("/projects/project-demo");
 
   await openImportPanel();
-  fireEvent.click(screen.getByRole("button", { name: "添加图片或文件夹" }));
+  fireEvent.click(screen.getByRole("button", { name: "选择图片/文件夹" }));
   fireEvent.change(await screen.findByLabelText("选择图片"), {
     target: { files: [new File(["front"], "front.png", { type: "image/png" })] },
   });
@@ -310,7 +310,7 @@ test("imports ERP SKUs in organize mode", async () => {
 
   await openImportPanel();
   fireEvent.change(await screen.findByLabelText("ERP SKU"), { target: { value: "LAMP-001\nLAMP-002" } });
-  fireEvent.click(screen.getAllByRole("button", { name: "导入后整理" })[1]);
+  fireEvent.click(screen.getByRole("button", { name: "加载 SKU" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sku-import/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/sku-import/"));
@@ -323,7 +323,7 @@ test("marks ERP imports for automatic mode without generating before Prompt prep
 
   await openImportPanel();
   fireEvent.change(await screen.findByLabelText("ERP SKU"), { target: { value: "LAMP-001" } });
-  fireEvent.click(screen.getAllByRole("button", { name: "导入并自动出图" })[1]);
+  fireEvent.click(screen.getByRole("button", { name: "加载 SKU 并自动出图" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sku-import/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/sku-import/"));

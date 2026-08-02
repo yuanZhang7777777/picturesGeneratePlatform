@@ -115,20 +115,15 @@ test("renders the compact toolbar with confirmed defaults and searchable extra m
 
   expect(await screen.findByRole("heading", { name: "夏日上新" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "通用电商" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: "东南亚通用" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByLabelText("项目国家")).toHaveDisplayValue("东南亚通用");
   expect(screen.getByLabelText("图片比例")).toHaveValue("1:1");
   expect(screen.getByLabelText("图片分辨率")).toHaveValue("1k");
   expect(screen.queryByRole("button", { name: "项目默认配置" })).not.toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "更多国家" }));
-  fireEvent.change(screen.getByLabelText("搜索更多国家"), { target: { value: "美国" } });
-  expect(screen.getByRole("button", { name: "美国" })).toBeInTheDocument();
-
-  fireEvent.change(screen.getByLabelText("搜索更多国家"), { target: { value: "法属波利尼西亚" } });
-  fireEvent.click(screen.getByRole("button", { name: "使用“法属波利尼西亚”" }));
+  fireEvent.change(screen.getByLabelText("项目国家"), { target: { value: "US" } });
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/settings/")).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url) === "/api/projects/project-1/settings/");
-  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ market: "法属波利尼西亚" });
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ market: "US" });
 });
 
 test("keeps an unsaved project style when saving fails and the project snapshot refreshes", async () => {
@@ -141,7 +136,7 @@ test("keeps an unsaved project style when saving fails and the project snapshot 
   });
   vi.stubGlobal("fetch", fetchMock);
   const { queryClient } = renderApp();
-  const style = await screen.findByLabelText("项目风格");
+  const style = await screen.findByLabelText("项目风格提示词");
 
   fireEvent.change(style, { target: { value: "本地未保存风格" } });
   fireEvent.blur(style);
@@ -153,7 +148,7 @@ test("keeps an unsaved project style when saving fails and the project snapshot 
       defaultConfig: { ...project.defaultConfig, globalPrompt: "服务器轮询值" },
     });
   });
-  expect(screen.getByLabelText("项目风格")).toHaveValue("本地未保存风格");
+  expect(screen.getByLabelText("项目风格提示词")).toHaveValue("本地未保存风格");
 });
 
 test("prepares only selected products through the explicit preparation endpoint", async () => {
@@ -179,6 +174,8 @@ test("shows the add-product panel inline with organize as the primary import act
   expect(screen.getByLabelText("ERP SKU")).toBeInTheDocument();
   expect(screen.getByLabelText("选择图片")).toHaveAttribute("multiple");
   expect(screen.getByLabelText("选择文件夹")).toHaveAttribute("webkitdirectory");
+  expect(screen.getByRole("button", { name: "选择图片/文件夹" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "加载 SKU" })).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "导入后整理" })[0]).toHaveClass("primary-button");
   expect(screen.getAllByRole("button", { name: "导入并自动出图" })[0]).toHaveClass("secondary-button");
 });
@@ -199,7 +196,7 @@ test("shows editable compact card fields and exact preparation progress without 
   expect(screen.getByRole("button", { name: "反选" })).toBeInTheDocument();
   expect(screen.getByLabelText("滚动常驻生成动作")).toHaveTextContent("预备生成（2）");
   expect(screen.getByLabelText("滚动常驻生成动作")).toHaveTextContent("正式生成（2）");
-  expect(screen.getByLabelText("商品国家 桌面灯")).toHaveAttribute("list", "product-market-options-one");
+  expect(screen.getByLabelText("商品国家 桌面灯").tagName).toBe("SELECT");
   expect(screen.getAllByText("单品风格（选填）")).not.toHaveLength(0);
   expect(screen.queryByText("one-secret.jpg")).not.toBeInTheDocument();
   expect(screen.queryByText("generic")).not.toBeInTheDocument();
@@ -241,14 +238,30 @@ test("accepts an arbitrary per-product market and reports mixed generation failu
   renderApp();
 
   const market = await screen.findByLabelText("商品国家 桌面灯");
-  fireEvent.change(market, { target: { value: "法属波利尼西亚" } });
+  fireEvent.change(market, { target: { value: "US" } });
   fireEvent.blur(market);
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/clusters/one/")).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url) === "/api/clusters/one/");
-  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ market_override: "法属波利尼西亚" });
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ market_override: "US" });
   expect(screen.getByText(/有 2 张失败/)).toHaveTextContent("出图已结束 · 7/9 · 有 2 张失败");
   expect(screen.queryByText(/预备完成/)).not.toBeInTheDocument();
+});
+
+test("hides technical preparation errors from operators", async () => {
+  const failedProject = {
+    ...project,
+    skus: [{
+      ...project.skus[0],
+      preparationStatus: "failed",
+      preparation: { status: "failed", stage: "failed", current: 0, total: 7, error: "image_role must identify an owned product reference" },
+    }],
+  };
+  stubFetch({ projectSnapshot: failedProject });
+  renderApp();
+
+  expect(await screen.findByText("预备失败 · 系统识别异常，请重试预备生成")).toBeInTheDocument();
+  expect(screen.queryByText(/image_role/)).not.toBeInTheDocument();
 });
 
 test("opens one product in a fixed side panel and consumes the first outside click", async () => {

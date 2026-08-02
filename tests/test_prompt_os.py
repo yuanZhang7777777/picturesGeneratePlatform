@@ -1967,6 +1967,34 @@ def test_n1_normalizes_common_owned_product_image_roles(role, normalized_role):
     assert normalized["image_role"] == normalized_role
 
 
+def test_n1_falls_back_unknown_owned_role_when_product_is_visible():
+    from platform_app.services import _normalize_n1_observation
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    payload = strict_n1({
+        "asset_id": asset_id,
+        "asset_kind": "owned_product",
+        "image_role": "owned_product_reference",
+        "contains_target_product": True,
+        "target_is_physical_product": True,
+        "target_visibility": 92,
+        "target_complete": True,
+        "background_complexity": "low",
+        "observed_identity": {
+            "category_candidates": ["chopsticks set"],
+            "overall_shape": "two chopsticks and a spoon in slim trays",
+        },
+        "reference_quality": 90,
+        "recommended_use": "reuse",
+        "candidate_product_name": "Chopsticks set",
+        "candidate_product_name_confidence": 0.9,
+    })
+
+    normalized = _normalize_n1_observation(payload, asset_id)
+
+    assert normalized["image_role"] == "clean_product"
+
+
 def test_blocked_identity_does_not_write_placeholder_product_name(tmp_path, settings):
     import json
 
@@ -2083,7 +2111,6 @@ def test_n2_continue_requires_nonempty_identity_lock_and_product_profile():
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
-        ("image_role", "unrecognized_role", "image_role"),
         (
             "observed_identity",
             {"category_candidates": [123], "overall_shape": "round"},

@@ -2,7 +2,7 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useEffect, useState } from "react";
 
 import { ApiError } from "../api";
-import { commonMarkets, extraMarkets, marketLabel, marketValue, platformLabel, platforms, stageLabels } from "../labels";
+import { commonMarkets, extraMarkets, marketLabel, platformLabel, platforms, stageLabels } from "../labels";
 import type { ClusterUpdateInput, ClusterUpdateResult, ProductAsset, ProductSku, RelationType } from "../types";
 import { PromptEditor } from "./PromptEditor";
 
@@ -35,9 +35,15 @@ function progressText(sku: ProductSku) {
     const stage = preparation?.stage ?? "";
     return `预备生成中${stage ? ` · ${stage} ${stageLabels[stage] ?? "处理中"}` : ""} · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
   }
-  if (status === "blocked") return `预备受阻${preparation?.error ? ` · ${preparation.error}` : ""}`;
-  if (status === "failed") return `预备失败${preparation?.error ? ` · ${preparation.error}` : ""}`;
+  if (status === "blocked") return `预备受阻${preparation?.error ? ` · ${friendlyPreparationError(preparation.error)}` : ""}`;
+  if (status === "failed") return `预备失败${preparation?.error ? ` · ${friendlyPreparationError(preparation.error)}` : ""}`;
   return `待预备生成 · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
+}
+
+function friendlyPreparationError(error: string) {
+  if (/image_role|visible product identity|schema|JSON|observed_identity/i.test(error)) return "系统识别异常，请重试预备生成";
+  if (/no product|cannot confirm|identity_needs_input|product identity/i.test(error)) return "图片中没有可识别商品，请换图或补充商品信息";
+  return error;
 }
 
 function progressMeta(sku: ProductSku) {
@@ -79,6 +85,8 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
   const [saving, setSaving] = useState(false);
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
   const label = draft.name.trim() || "未命名商品";
+  const allMarkets = [...commonMarkets, ...extraMarkets];
+  const marketOptions = allMarkets.some(([code]) => code === draft.market) ? allMarkets : [[draft.market, marketLabel(draft.market)], ...allMarkets] as [string, string][];
   const nameSourceText = sku.productNameSource === "ai" ? "AI 识别，可修改" : sku.productNameSource === "erp" ? "来自 ERP" : "";
   const progress = progressMeta(sku);
 
@@ -135,8 +143,8 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       className={`surface product-card min-w-0 overflow-hidden ${droppable.isOver ? "ring-2 ring-indigo-500" : ""}`}
       onClick={(event) => { if (!(event.target as HTMLElement).closest("input,select,textarea,button,summary,a")) onOpen(); }}
     >
-      <div className="relative aspect-square bg-slate-100">
-        {assets[0]?.imageUrl ? <img className="relative size-full object-contain" src={assets[0].imageUrl} alt={`${label} 商品参考图`} /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
+      <div className="relative aspect-[4/3] bg-slate-100">
+        {assets[0]?.imageUrl ? <img className="relative size-full object-contain" src={assets[0].imageUrl} alt={`${label} 商品参考图`} loading="lazy" decoding="async" /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
         <span className="absolute bottom-2 left-2 rounded-full bg-slate-950/80 px-2 py-1 text-xs font-semibold text-white">{assets.length} 张</span>
         <label className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm"><input aria-label={`选择 ${label}`} className="size-4" type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} />选择</label>
       </div>
@@ -148,7 +156,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
         {nameSourceText && <p className="text-[11px] text-slate-500">{nameSourceText}</p>}
         <div className="grid grid-cols-2 gap-1.5">
           <select aria-label={`商品平台 ${label}`} className="h-9 min-h-9 py-1 text-xs" value={draft.platform} onChange={(event) => setDraft({ ...draft, platform: event.target.value })} onBlur={() => void submit()}>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select>
-          <span><input aria-label={`商品国家 ${label}`} className="h-9 min-h-9 py-1 text-xs" list={`product-market-options-${sku.id}`} value={marketLabel(draft.market)} onChange={(event) => setDraft({ ...draft, market: marketValue(event.target.value) })} onBlur={() => void submit()} /><datalist id={`product-market-options-${sku.id}`}>{[...commonMarkets, ...extraMarkets].map(([code, text]) => <option key={code} value={text} />)}</datalist></span>
+          <select aria-label={`商品国家 ${label}`} className="h-9 min-h-9 py-1 text-xs" value={draft.market} onChange={(event) => setDraft({ ...draft, market: event.target.value })} onBlur={() => void submit()}>{marketOptions.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select>
         </div>
         <textarea aria-label={`创意 Brief ${label}`} className="min-h-16 resize-none py-1.5 text-xs" value={draft.productFacts} placeholder="补充材质、功能或使用要求" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void submit()} />
         <details className="rounded-lg bg-slate-50 px-2 py-1">
@@ -185,7 +193,7 @@ function DraggableAsset({ asset, index, onDelete, disabled }: { asset: ProductAs
   const droppable = useDroppable({ id: `asset-target:${asset.id}`, data: { type: "asset-target", assetId: asset.id }, disabled });
   const style = draggable.transform ? { transform: `translate3d(${draggable.transform.x}px, ${draggable.transform.y}px, 0)` } : undefined;
   const setRef = (node: HTMLElement | null) => { draggable.setNodeRef(node); droppable.setNodeRef(node); };
-  return <div className="relative size-18 shrink-0" role="listitem"><button ref={setRef} style={style} {...draggable.listeners} {...draggable.attributes} data-dnd-activator aria-label={`拖拽商品参考图 ${index + 1}`} className={`size-18 overflow-hidden rounded-lg border bg-slate-100 ${droppable.isOver ? "border-indigo-500 ring-2 ring-indigo-200" : "border-slate-200"}`}>{asset.imageUrl ? <img className="size-full object-contain" src={asset.imageUrl} alt={`商品参考图 ${index + 1}`} /> : <span className="grid size-full place-items-center text-xs text-slate-400">待预览</span>}</button>{index === 0 && <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-slate-950/80 px-1 text-[10px] text-white">主参考</span>}<button aria-label={`删除商品参考图 ${index + 1}`} className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-slate-950 text-xs text-white" type="button" disabled={disabled} onClick={() => { if (window.confirm(`删除第 ${index + 1} 张商品参考图？`)) onDelete(); }}>×</button></div>;
+  return <div className="relative size-12 shrink-0" role="listitem"><button ref={setRef} style={style} {...draggable.listeners} {...draggable.attributes} data-dnd-activator aria-label={`拖拽商品参考图 ${index + 1}`} className={`size-12 overflow-hidden rounded-lg border bg-slate-100 ${droppable.isOver ? "border-indigo-500 ring-2 ring-indigo-200" : "border-slate-200"}`}>{asset.imageUrl ? <img className="size-full object-contain" src={asset.imageUrl} alt={`商品参考图 ${index + 1}`} loading="lazy" decoding="async" /> : <span className="grid size-full place-items-center text-xs text-slate-400">待预览</span>}</button>{index === 0 && <span className="pointer-events-none absolute bottom-0.5 left-0.5 rounded bg-slate-950/80 px-1 text-[10px] text-white">主</span>}<button aria-label={`删除商品参考图 ${index + 1}`} className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-slate-950 text-xs text-white" type="button" disabled={disabled} onClick={() => { if (window.confirm(`删除第 ${index + 1} 张商品参考图？`)) onDelete(); }}>×</button></div>;
 }
 
 function ProgressBar({ current, total }: { current: number; total: number }) {
