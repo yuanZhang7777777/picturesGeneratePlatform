@@ -41,7 +41,7 @@ function progressText(sku: ProductSku) {
 }
 
 function friendlyPreparationError(error: string) {
-  if (/image_role|visible product identity|schema|JSON|observed_identity/i.test(error)) return "系统识别异常，请重试预备生成";
+  if (/image_role|visible product identity|schema|JSON|observed_identity|N2 may only|owned product reference|placeholder string|must be|must identify|additionalProperties|evidence_refs|fact_refs|reference_plan/i.test(error)) return "系统识别异常，请重试预备生成";
   if (/no product|cannot confirm|identity_needs_input|product identity/i.test(error)) return "图片中没有可识别商品，请换图或补充商品信息";
   return error;
 }
@@ -76,21 +76,25 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
   onDelete: () => void;
   disabled?: boolean;
 }) {
-  const draggable = useDraggable({ id: `cluster:${sku.id}`, data: { type: "cluster", clusterId: sku.id }, disabled });
   const droppable = useDroppable({ id: `cluster:${sku.id}`, data: { type: "cluster", clusterId: sku.id }, disabled });
   const [draft, setDraft] = useState(() => draftFromSku(sku));
   const [savedDraft, setSavedDraft] = useState(() => draftFromSku(sku));
   const [currentVersion, setCurrentVersion] = useState(sku.version);
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
   const label = draft.name.trim() || "未命名商品";
   const allMarkets = [...commonMarkets, ...extraMarkets];
   const marketOptions = allMarkets.some(([code]) => code === draft.market) ? allMarkets : [[draft.market, marketLabel(draft.market)], ...allMarkets] as [string, string][];
   const nameSourceText = sku.productNameSource === "ai" ? "AI 识别，可修改" : sku.productNameSource === "erp" ? "来自 ERP" : "";
   const progress = progressMeta(sku);
+  const previewAsset = assets.find((asset) => asset.id === previewAssetId) ?? assets[0];
 
   useEffect(() => { setCurrentVersion(sku.version); }, [sku.id, sku.version]);
+  useEffect(() => {
+    if (previewAssetId && !assets.some((asset) => asset.id === previewAssetId)) setPreviewAssetId(null);
+  }, [assets, previewAssetId]);
   useEffect(() => {
     if (!dirty) {
       const next = draftFromSku(sku);
@@ -128,28 +132,21 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
     setCurrentVersion(result.version);
     return result;
   };
-  const style = draggable.transform ? { transform: `translate3d(${draggable.transform.x}px, ${draggable.transform.y}px, 0)` } : undefined;
-  const setCardRef = (node: HTMLElement | null) => { draggable.setNodeRef(node); droppable.setNodeRef(node); };
-
   return <div className="min-w-0" data-expanded-product={expanded ? sku.id : undefined}>
     <article
-      ref={setCardRef}
-      style={style}
-      {...draggable.listeners}
-      {...draggable.attributes}
-      data-dnd-activator
+      ref={droppable.setNodeRef}
       role="group"
       aria-label={`${label} 商品卡片（可拖拽合并）`}
       className={`surface product-card min-w-0 overflow-hidden ${droppable.isOver ? "ring-2 ring-indigo-500" : ""}`}
       onClick={(event) => { if (!(event.target as HTMLElement).closest("input,select,textarea,button,summary,a")) onOpen(); }}
     >
-      <div className="relative aspect-[4/3] bg-slate-100">
-        {assets[0]?.imageUrl ? <img className="relative size-full object-contain" src={assets[0].imageUrl} alt={`${label} 商品参考图`} loading="lazy" decoding="async" /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
+      <div className="relative block aspect-[4/3] w-full bg-slate-100 text-left" aria-label={`${label} 商品主预览`}>
+        {previewAsset?.imageUrl ? <img className="relative size-full object-contain" src={previewAsset.imageUrl} alt={`${label} 商品参考图`} loading="lazy" decoding="async" /> : <span className="grid size-full place-items-center text-sm text-slate-400">等待图片</span>}
         <span className="absolute bottom-2 left-2 rounded-full bg-slate-950/80 px-2 py-1 text-xs font-semibold text-white">{assets.length} 张</span>
         <label className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm"><input aria-label={`选择 ${label}`} className="size-4" type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} />选择</label>
       </div>
       <div className="flex max-w-full gap-2 overflow-x-auto p-3 pb-2" role="list" aria-label={`${label} 参考图排序`}>
-        {assets.map((asset, index) => <DraggableAsset key={asset.id} asset={asset} index={index} disabled={saving || disabled} onDelete={() => onDeleteAsset(asset.id)} />)}
+        {assets.map((asset, index) => <DraggableAsset key={asset.id} asset={asset} index={index} active={asset.id === previewAsset?.id} disabled={saving || disabled} onPreview={() => setPreviewAssetId(asset.id)} onDelete={() => onDeleteAsset(asset.id)} />)}
       </div>
       <div className="flex flex-col gap-2 p-3">
         <input aria-label={`商品名称 ${label}`} className="h-9 min-h-9 font-semibold" value={draft.name} placeholder="可不填，预备生成时识别" onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void submit()} />
@@ -165,7 +162,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
         </details>
         {saveError && <p className="text-xs text-amber-700">{saveError}</p>}
         <div className="mt-auto space-y-2 text-xs">
-          <div className="flex items-center justify-between gap-2"><span className="truncate text-slate-600">{progress.text}</span><button className="shrink-0 font-semibold text-indigo-700" type="button" onClick={onOpen}>查看 {label} 详情</button></div>
+          <div className="flex items-start justify-between gap-2"><span className={`leading-5 ${/失败|受阻/.test(progress.text) ? "rounded-lg bg-rose-50 px-2 py-1 text-rose-700" : "text-slate-600"}`} title={progress.text}>{progress.text}</span><button className="shrink-0 font-semibold text-indigo-700" type="button" onClick={onOpen}>查看 {label} 详情</button></div>
           {progress.active && <ProgressBar current={progress.current} total={progress.total} />}
         </div>
       </div>
@@ -188,12 +185,12 @@ function IdentitySummary({ sku }: { sku: ProductSku }) {
   return <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4" role="region" aria-label="商品身份卡"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-slate-800">商品身份卡</h3>{typeof identity.confidence === "number" && <span className="text-xs text-slate-500">识别置信度 {Math.round(identity.confidence * 100)}%</span>}</div><dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">{identity.product_name && <div><dt className="text-xs text-slate-500">商品名称</dt><dd>{identity.product_name}</dd></div>}{profile?.category && <div><dt className="text-xs text-slate-500">商品类别</dt><dd>{profile.category}</dd></div>}{profile?.primary_appearance && <div><dt className="text-xs text-slate-500">主要外观</dt><dd>{profile.primary_appearance}</dd></div>}{appearances.length ? <div className="sm:col-span-2"><dt className="text-xs text-slate-500">目标外观</dt><dd>{appearances.map((item) => item.label || item.variant_attributes?.join("/") || item.appearance_id).join("、")}</dd></div> : null}{profile?.shared_structure?.length ? <div><dt className="text-xs text-slate-500">共同结构</dt><dd>{profile.shared_structure.join("、")}</dd></div> : null}{lock?.must_not_change?.length ? <div className="sm:col-span-2"><dt className="text-xs text-slate-500">不可改变</dt><dd>{lock.must_not_change.join("、")}</dd></div> : null}</dl></section>;
 }
 
-function DraggableAsset({ asset, index, onDelete, disabled }: { asset: ProductAsset; index: number; onDelete: () => void; disabled?: boolean }) {
+function DraggableAsset({ asset, index, active, onPreview, onDelete, disabled }: { asset: ProductAsset; index: number; active: boolean; onPreview: () => void; onDelete: () => void; disabled?: boolean }) {
   const draggable = useDraggable({ id: `asset:${asset.id}`, data: { type: "asset", assetId: asset.id }, disabled });
   const droppable = useDroppable({ id: `asset-target:${asset.id}`, data: { type: "asset-target", assetId: asset.id }, disabled });
   const style = draggable.transform ? { transform: `translate3d(${draggable.transform.x}px, ${draggable.transform.y}px, 0)` } : undefined;
   const setRef = (node: HTMLElement | null) => { draggable.setNodeRef(node); droppable.setNodeRef(node); };
-  return <div className="relative size-12 shrink-0" role="listitem"><button ref={setRef} style={style} {...draggable.listeners} {...draggable.attributes} data-dnd-activator aria-label={`拖拽商品参考图 ${index + 1}`} className={`size-12 overflow-hidden rounded-lg border bg-slate-100 ${droppable.isOver ? "border-indigo-500 ring-2 ring-indigo-200" : "border-slate-200"}`}>{asset.imageUrl ? <img className="size-full object-contain" src={asset.imageUrl} alt={`商品参考图 ${index + 1}`} loading="lazy" decoding="async" /> : <span className="grid size-full place-items-center text-xs text-slate-400">待预览</span>}</button>{index === 0 && <span className="pointer-events-none absolute bottom-0.5 left-0.5 rounded bg-slate-950/80 px-1 text-[10px] text-white">主</span>}<button aria-label={`删除商品参考图 ${index + 1}`} className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-slate-950 text-xs text-white" type="button" disabled={disabled} onClick={() => { if (window.confirm(`删除第 ${index + 1} 张商品参考图？`)) onDelete(); }}>×</button></div>;
+  return <div className="relative size-12 shrink-0" role="listitem"><button ref={setRef} style={style} {...draggable.listeners} {...draggable.attributes} data-dnd-activator aria-label={`查看并拖拽商品参考图 ${index + 1}`} className={`size-12 overflow-hidden rounded-lg border bg-slate-100 ${active ? "border-indigo-500 ring-2 ring-indigo-200" : droppable.isOver ? "border-indigo-500 ring-2 ring-indigo-200" : "border-slate-200"}`} onClick={(event) => { event.stopPropagation(); onPreview(); }}>{asset.imageUrl ? <img className="size-full object-contain" src={asset.imageUrl} alt={`商品参考图 ${index + 1}`} loading="lazy" decoding="async" /> : <span className="grid size-full place-items-center text-xs text-slate-400">待预览</span>}</button>{index === 0 && <span className="pointer-events-none absolute bottom-0.5 left-0.5 rounded bg-slate-950/80 px-1 text-[10px] text-white">主</span>}<button aria-label={`删除商品参考图 ${index + 1}`} className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-slate-950 text-xs text-white" type="button" disabled={disabled} onClick={(event) => { event.stopPropagation(); if (window.confirm(`删除第 ${index + 1} 张商品参考图？`)) onDelete(); }}>×</button></div>;
 }
 
 function ProgressBar({ current, total }: { current: number; total: number }) {

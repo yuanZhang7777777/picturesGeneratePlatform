@@ -254,14 +254,14 @@ test("hides technical preparation errors from operators", async () => {
     skus: [{
       ...project.skus[0],
       preparationStatus: "failed",
-      preparation: { status: "failed", stage: "failed", current: 0, total: 7, error: "image_role must identify an owned product reference" },
+      preparation: { status: "failed", stage: "failed", current: 0, total: 7, error: "evidence_refs contains an unknown evidence reference" },
     }],
   };
   stubFetch({ projectSnapshot: failedProject });
   renderApp();
 
   expect(await screen.findByText("预备失败 · 系统识别异常，请重试预备生成")).toBeInTheDocument();
-  expect(screen.queryByText(/image_role/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/evidence_refs/)).not.toBeInTheDocument();
 });
 
 test("opens one product in a fixed side panel and consumes the first outside click", async () => {

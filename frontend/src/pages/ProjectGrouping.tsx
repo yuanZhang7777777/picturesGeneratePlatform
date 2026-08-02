@@ -9,7 +9,7 @@ import { ProductCard } from "../components/ProductCard";
 import { commonMarkets, extraMarkets, platforms } from "../labels";
 import { EmptyState, ErrorPanel, Shell } from "../layout";
 import { useProjectSnapshot } from "../queries";
-import type { ClusterUpdateInput, ImportMode, ProductConfiguration, Project } from "../types";
+import type { ClusterUpdateInput, ImportMode, ProductAsset, ProductConfiguration, Project } from "../types";
 
 const slotOrders = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
@@ -51,6 +51,39 @@ export default function ProjectGrouping() {
   const removeCluster = useMutation({ mutationFn: deleteCluster, onSuccess: invalidate });
   const saveSettings = useMutation({ mutationFn: (input: ProductConfiguration) => updateProjectSettings(projectId!, input), onSuccess: invalidate });
   const reorganize = useMutation({
+    onMutate: async ({ activeId, overId }) => {
+      await queryClient.cancelQueries({ queryKey: ["project", projectId] });
+      const previous = queryClient.getQueryData<Project>(["project", projectId]);
+      queryClient.setQueryData<Project>(["project", projectId], (current) => {
+        const assetId = activeId.startsWith("asset:") ? activeId.slice(6) : "";
+        if (!current || !assetId) return current;
+        const source = current.skus.find((sku) => sku.assetIds.includes(assetId));
+        const overAssetId = overId.startsWith("asset-target:") ? overId.slice(13) : "";
+        const target = overAssetId ? current.skus.find((sku) => sku.assetIds.includes(overAssetId)) : overId.startsWith("cluster:") ? current.skus.find((sku) => sku.id === overId.slice(8)) : null;
+        if (!source || !target || (source.id !== target.id && target.assetIds.includes(assetId))) return current;
+        const asset = current.assets.find((item) => item.id === assetId) ?? source.assets?.find((item) => item.id === assetId);
+        const skus = current.skus.map((sku) => {
+          if (sku.id === source.id && sku.id === target.id) {
+            const nextIds = sku.assetIds.filter((id) => id !== assetId);
+            const insertAt = overAssetId ? nextIds.indexOf(overAssetId) : nextIds.length;
+            nextIds.splice(insertAt < 0 ? nextIds.length : insertAt, 0, assetId);
+            const byId = new Map((sku.assets ?? []).map((item) => [item.id, item]));
+            return { ...sku, assetIds: nextIds, assets: nextIds.map((id) => byId.get(id)).filter((item): item is ProductAsset => Boolean(item)) };
+          }
+          if (sku.id === source.id) return { ...sku, assetIds: sku.assetIds.filter((id) => id !== assetId), assets: sku.assets?.filter((item) => item.id !== assetId) };
+          if (sku.id === target.id) {
+            const nextIds = sku.assetIds.filter((id) => id !== assetId);
+            const insertAt = overAssetId ? nextIds.indexOf(overAssetId) : nextIds.length;
+            nextIds.splice(insertAt < 0 ? nextIds.length : insertAt, 0, assetId);
+            const byId = new Map([...(sku.assets ?? []), asset].filter((item): item is ProductAsset => Boolean(item)).map((item) => [item.id, item]));
+            return { ...sku, assetIds: nextIds, assets: nextIds.map((id) => byId.get(id)).filter((item): item is ProductAsset => Boolean(item)) };
+          }
+          return sku;
+        }).filter((sku) => sku.assetIds.length);
+        return { ...current, skus };
+      });
+      return { previous };
+    },
     mutationFn: async ({ activeId, overId }: { activeId: string; overId: string }) => {
       if (activeId.startsWith("asset:") && overId === "blank-grid") return splitAsset(activeId.slice(6));
       if (activeId.startsWith("asset:") && overId.startsWith("asset-target:")) {
@@ -83,7 +116,10 @@ export default function ProjectGrouping() {
         version += 1;
       }
     },
-    onSuccess: invalidate,
+    onError: (_error, _variables, context) => {
+      if (context?.previous) queryClient.setQueryData(["project", projectId], context.previous);
+    },
+    onSettled: invalidate,
   });
 
   useEffect(() => {
@@ -118,7 +154,7 @@ export default function ProjectGrouping() {
     {globalError && <div className="mb-5"><ErrorPanel error={globalError} /></div>}
     <DndContext sensors={sensors} onDragEnd={onDragEnd}><ProductGrid>{project.skus.map((sku) => {
       const assets = sku.assets ?? project.assets.filter((asset) => sku.assetIds.includes(asset.id));
-      return <ProductCard key={sku.id} sku={sku} assets={assets} selected={!deselectedIds.has(sku.id)} expanded={expandedId === sku.id} disabled={busy} onOpen={() => setExpandedId(sku.id)} onClose={() => setExpandedId(null)} onSave={(payload, expectedVersion) => save.mutateAsync({ skuId: sku.id, expectedVersion, payload })} onReload={() => projectQuery.refetch()} onDeleteAsset={(assetId) => removeAsset.mutate(assetId)} onDelete={() => removeCluster.mutate(sku.id)} onSelect={(next) => setDeselectedIds((current) => { const copy = new Set(current); if (next) copy.delete(sku.id); else copy.add(sku.id); return copy; })} />;
+      return <ProductCard key={sku.id} sku={sku} assets={assets} selected={!deselectedIds.has(sku.id)} expanded={expandedId === sku.id} disabled={save.isPending || removeAsset.isPending || removeCluster.isPending} onOpen={() => setExpandedId(sku.id)} onClose={() => setExpandedId(null)} onSave={(payload, expectedVersion) => save.mutateAsync({ skuId: sku.id, expectedVersion, payload })} onReload={() => projectQuery.refetch()} onDeleteAsset={(assetId) => removeAsset.mutate(assetId)} onDelete={() => removeCluster.mutate(sku.id)} onSelect={(next) => setDeselectedIds((current) => { const copy = new Set(current); if (next) copy.delete(sku.id); else copy.add(sku.id); return copy; })} />;
     })}</ProductGrid></DndContext>
     {!project.skus.length && <EmptyState title="还没有商品素材" description="在上方导入图片、文件夹或 ERP SKU。" />}
     <FloatingActions projectId={project.id} selectedCount={selectedClusters.length} busy={busy} onPrepare={() => prepare.mutate()} onGenerate={() => generate.mutate()} />

@@ -762,7 +762,10 @@ def api_asset_media(request, asset_id):
         data = LocalStorage().read(storage_path)
     except (ValueError, FileNotFoundError):
         raise Http404()
-    return FileResponse(BytesIO(data), content_type=asset.content_type)
+    response = FileResponse(BytesIO(data), content_type=asset.content_type)
+    response["Cache-Control"] = "private, max-age=86400"
+    response["ETag"] = f'"asset-{asset.id}-{asset.sha256}"'
+    return response
 
 
 @login_required
@@ -791,7 +794,10 @@ def api_result_media(request, result_id):
     except (ValueError, FileNotFoundError):
         raise Http404()
     content_type = mimetypes.guess_type(storage_path)[0] or "application/octet-stream"
-    return FileResponse(BytesIO(data), content_type=content_type)
+    response = FileResponse(BytesIO(data), content_type=content_type)
+    response["Cache-Control"] = "private, max-age=86400"
+    response["ETag"] = f'"result-{result.id}-{result.created_at.timestamp():.0f}"'
+    return response
 
 
 @login_required

@@ -109,9 +109,41 @@ test("shows multiple references for drag sorting without a relation selector", (
 
   expect(screen.queryByLabelText("参考图关系 旧名称")).not.toBeInTheDocument();
   expect(screen.getByRole("list", { name: "旧名称 参考图排序" })).toHaveTextContent("主");
-  expect(screen.getByRole("button", { name: "拖拽商品参考图 1" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "拖拽商品参考图 2" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "查看并拖拽商品参考图 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "查看并拖拽商品参考图 2" })).toBeInTheDocument();
   expect(onSave).not.toHaveBeenCalled();
+});
+
+test("clicking a thumbnail changes the large preview without changing primary order", () => {
+  const groupedSku = {
+    ...sku,
+    assetIds: ["asset-1", "asset-2"],
+    assets: [
+      ...sku.assets!,
+      { id: "asset-2", name: "second.png", kind: "image" as const, imageUrl: "/image-2" },
+    ],
+  };
+  render(<ProductCard {...props} sku={groupedSku} assets={groupedSku.assets} onSave={vi.fn()} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "查看并拖拽商品参考图 2" }));
+
+  expect(screen.getByRole("img", { name: "旧名称 商品参考图" })).toHaveAttribute("src", "/image-2");
+  expect(screen.getByRole("list", { name: "旧名称 参考图排序" })).toHaveTextContent("主");
+});
+
+test("only the thumbnail strip starts asset drag interactions", () => {
+  const groupedSku = {
+    ...sku,
+    assetIds: ["asset-1", "asset-2"],
+    assets: [
+      ...sku.assets!,
+      { id: "asset-2", name: "second.png", kind: "image" as const, imageUrl: "/image-2" },
+    ],
+  };
+  const view = render(<ProductCard {...props} sku={groupedSku} assets={groupedSku.assets} onSave={vi.fn()} />);
+
+  expect(screen.getByRole("button", { name: "查看并拖拽商品参考图 1" })).toHaveAttribute("data-dnd-activator");
+  expect(view.container.querySelector('[aria-label="旧名称 商品主预览"]')).not.toHaveAttribute("data-dnd-activator");
 });
 
 test("renders product details in a fixed side panel", () => {

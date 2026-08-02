@@ -19,6 +19,9 @@ export function useWorkspaceSnapshot() {
   return useQuery({
     queryKey: ["workspace"],
     queryFn: loadWorkspace,
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnMount: false,
     refetchInterval: (query) => snapshotPollInterval(
       query.state.data?.projects.some(projectHasActiveWork) ?? false,
       hidden,
@@ -32,6 +35,9 @@ export function useProjectSnapshot(projectId: string | undefined) {
     queryKey: ["project", projectId],
     queryFn: () => loadProject(projectId!),
     enabled: Boolean(projectId),
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnMount: false,
     refetchInterval: (query) => snapshotPollInterval(
       query.state.data ? projectHasActiveWork(query.state.data) : false,
       hidden,

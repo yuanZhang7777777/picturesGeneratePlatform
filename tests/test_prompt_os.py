@@ -1620,6 +1620,39 @@ def test_n3_to_n6_normalizers_reject_unknown_refs_overlong_prompts_and_duplicate
         )
 
 
+def test_n3_normalizer_repairs_unknown_evidence_refs_to_known_source():
+    from platform_app.services import _normalize_n3_ledger
+
+    ledger = _normalize_n3_ledger(
+        {
+            "ledger_version": "2.0.0",
+            "facts": [
+                {
+                    "fact_id": "fact.observed.001",
+                    "statement": "可见木色商品主体",
+                    "fact_class": "observed",
+                    "confidence": 0.8,
+                    "evidence_refs": ["image"],
+                    "risk_level": "low",
+                    "allowed_uses": ["identity", "visual_prompt"],
+                    "review_note": "",
+                }
+            ],
+            "blocked_claim_topics": [],
+            "unresolved_questions": [],
+            "review_summary": {
+                "confirmed_count": 0,
+                "observed_count": 1,
+                "inferred_count": 0,
+                "high_risk_count": 0,
+            },
+        },
+        known_evidence_refs={"product_name", "asset:asset-1"},
+    )
+
+    assert ledger["facts"][0]["evidence_refs"] == ["asset:asset-1"]
+
+
 def test_rule_gate_blocks_when_locked_copy_is_missing_or_changed():
     from platform_app.models import Batch, OutputTemplate
     from platform_app.services import evaluate_prompt_rule_gate
