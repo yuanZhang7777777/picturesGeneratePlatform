@@ -4421,7 +4421,7 @@ def _claim_prompt_cluster(candidate):
 
 
 def _restore_stale_preparations():
-    stale_before = timezone.now() - timedelta(seconds=600)
+    stale_before = timezone.now() - timedelta(seconds=120)
     Cluster.objects.filter(
         preparation_status=Cluster.PreparationStatus.PREPARING,
         updated_at__lt=stale_before,
