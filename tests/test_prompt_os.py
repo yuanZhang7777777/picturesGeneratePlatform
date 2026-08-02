@@ -2480,6 +2480,94 @@ def test_n1_falls_back_unknown_owned_role_when_product_is_visible():
     assert normalized["image_role"] == "clean_product"
 
 
+def test_n1_tolerates_provider_short_json_when_product_is_visible():
+    from platform_app.services import _normalize_n1_observation
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    normalized = _normalize_n1_observation(
+        {
+            "asset_id": asset_id,
+            "asset_kind": "product",
+            "image_role": "ecommerce listing photo",
+            "contains_target_product": True,
+            "target_visibility": 0.92,
+            "reference_quality": 0.8,
+            "observed_identity": {
+                "category_candidates": ["餐具套装"],
+                "overall_shape": "两套餐具放在收纳盒中",
+            },
+            "candidate_product_name": "餐具套装",
+            "candidate_product_name_confidence": 0.9,
+        },
+        asset_id,
+    )
+
+    assert normalized["asset_kind"] == "owned_product"
+    assert normalized["image_role"] == "clean_product"
+    assert normalized["target_visibility"] == 92
+    assert normalized["reference_quality"] == 80
+    assert normalized["observed_identity"]["dominant_colors"] == []
+
+
+def test_n2_fills_incomplete_identity_when_valid_product_images_exist():
+    from platform_app.services import _n2_observation_fallbacks, _normalize_n2_identity
+
+    observations = [
+        {
+            "asset_id": "asset-1",
+            "contains_target_product": True,
+            "target_is_physical_product": True,
+            "candidate_product_name": "木质餐具套装",
+            "candidate_product_name_confidence": 0.85,
+            "observed_identity": {
+                "category_candidates": ["餐具套装"],
+                "overall_shape": "木勺与筷子收纳在盒内",
+                "dominant_colors": ["木色"],
+            },
+        },
+        {
+            "asset_id": "asset-2",
+            "contains_target_product": True,
+            "target_is_physical_product": True,
+            "candidate_product_name": "深色餐具套装",
+            "candidate_product_name_confidence": 0.75,
+            "observed_identity": {
+                "category_candidates": ["餐具套装"],
+                "overall_shape": "深色款餐具组合",
+                "dominant_colors": ["深棕色"],
+            },
+        },
+    ]
+    repaired = _n2_observation_fallbacks(
+        {
+            "decision": "needs_input",
+            "needs_input_reason": "not sure",
+            "product_name": "string",
+            "confidence": 0.4,
+            "conflict_state": "uncertain",
+            "product_profile": {},
+            "identity_lock": {},
+            "primary_asset_id": "bad",
+            "supporting_asset_ids": ["bad"],
+            "target_appearances": [{"appearance_id": "bad", "asset_ids": ["bad"]}],
+            "standardization_mode": "string",
+            "standardization_reason": "",
+        },
+        {"product_name": "", "observations": observations},
+    )
+
+    normalized = _normalize_n2_identity(
+        repaired,
+        {"asset-1", "asset-2"},
+        required_primary_asset_id="asset-1",
+        require_continue_when_valid=True,
+    )
+
+    assert normalized["decision"] == "continue"
+    assert normalized["primary_asset_id"] == "asset-1"
+    assert [item["primary_asset_id"] for item in normalized["target_appearances"]] == ["asset-1", "asset-2"]
+
+
 def test_blocked_identity_does_not_write_placeholder_product_name(tmp_path, settings):
     import json
 

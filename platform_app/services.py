@@ -2648,6 +2648,19 @@ def _normalized_confidence(value, field="confidence"):
     return confidence
 
 
+def _normalized_percent(value, field, *, default=None):
+    if value is None and default is not None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be numeric")
+    percent = float(value)
+    if 0 <= percent <= 1:
+        percent *= 100
+    if not 0 <= percent <= 100:
+        raise ValueError(f"{field} must be between 0 and 100")
+    return int(round(percent))
+
+
 def _required_string_list(payload, field):
     value = payload.get(field)
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
@@ -2713,26 +2726,33 @@ def _normalize_n1_observation(payload, expected_asset_id):
     asset_id = _required_string(payload, "asset_id")
     if asset_id != str(expected_asset_id):
         raise ValueError("N1 asset_id does not match the requested cluster asset")
-    asset_kind = _required_string(payload, "asset_kind")
-    if asset_kind != "owned_product":
+    asset_kind = _required_string(payload, "asset_kind").strip().lower()
+    if asset_kind not in {"owned_product", "owned_reference", "product", "reference"}:
         raise ValueError("asset_kind must be owned_product")
+    asset_kind = "owned_product"
+    observed_identity = payload.get("observed_identity")
+    if not isinstance(observed_identity, dict):
+        observed_identity = {}
+    candidate_name = payload.get("candidate_product_name", payload.get("product_name"))
+    candidate_name = _clean_schema_placeholder(candidate_name)
+    visible_identity = _has_nonempty_value(observed_identity) or bool(candidate_name)
     contains_target = payload.get("contains_target_product")
     if not isinstance(contains_target, bool):
-        raise ValueError("contains_target_product must be boolean")
+        contains_target = visible_identity
     target_is_physical = payload.get("target_is_physical_product")
     if not isinstance(target_is_physical, bool):
-        raise ValueError("target_is_physical_product must be boolean")
+        target_is_physical = contains_target
     image_role = _normalize_owned_image_role(
         payload.get("image_role"),
         fallback="clean_product" if contains_target and target_is_physical else "detail",
     )
     target_complete = payload.get("target_complete")
     if not isinstance(target_complete, bool):
-        raise ValueError("target_complete must be boolean")
-    background_complexity = _required_string(payload, "background_complexity")
+        target_complete = bool(contains_target)
+    background_complexity = str(payload.get("background_complexity") or "medium").strip()
     if background_complexity not in {"low", "medium", "high"}:
-        raise ValueError("background_complexity must be low, medium, or high")
-    recommended_use = _required_string(payload, "recommended_use")
+        background_complexity = "medium"
+    recommended_use = str(payload.get("recommended_use") or "").strip()
     if recommended_use not in {
         "reuse",
         "cutout_source",
@@ -2740,54 +2760,19 @@ def _normalize_n1_observation(payload, expected_asset_id):
         "evidence_only",
         "reject",
     }:
-        raise ValueError("recommended_use is invalid")
-    observed_identity = payload.get("observed_identity")
-    if not isinstance(observed_identity, dict):
-        raise ValueError("observed_identity must be an object")
-    if contains_target and not _has_nonempty_value(observed_identity):
-        raise ValueError("observed_identity must contain visible identity evidence, not placeholder strings")
+        recommended_use = "reuse" if contains_target else "reject"
+    observed_identity = copy.deepcopy(observed_identity)
     if contains_target:
-        category_candidates = observed_identity.get("category_candidates")
-        if (
-            not isinstance(category_candidates, list)
-            or not category_candidates
-            or any(
-                not isinstance(item, str) or not item.strip()
-                for item in category_candidates
-            )
-        ):
-            raise ValueError(
-                "observed_identity.category_candidates must contain strings"
-            )
-        category_candidates = [
-            item.strip()
-            for item in category_candidates
-            if item.strip() and not _is_schema_placeholder(item)
-        ]
+        category_candidates = _string_list(observed_identity.get("category_candidates"))
         if not category_candidates:
-            raise ValueError("observed_identity.category_candidates contain only placeholder strings")
-        overall_shape = observed_identity.get("overall_shape")
-        if not isinstance(overall_shape, str) or not overall_shape.strip():
-            raise ValueError("observed_identity.overall_shape is required")
-        if _is_schema_placeholder(overall_shape):
-            raise ValueError("observed_identity.overall_shape cannot be a placeholder string")
-        observed_identity = copy.deepcopy(observed_identity)
+            category_candidates = _string_list([candidate_name]) or ["可见商品"]
+        overall_shape = _clean_schema_placeholder(observed_identity.get("overall_shape"))
+        if not isinstance(overall_shape, str) or not overall_shape:
+            overall_shape = candidate_name or category_candidates[0]
         observed_identity["category_candidates"] = category_candidates
         observed_identity["overall_shape"] = overall_shape.strip()
-    target_visibility = payload.get("target_visibility")
-    if (
-        isinstance(target_visibility, bool)
-        or not isinstance(target_visibility, int)
-        or not 0 <= target_visibility <= 100
-    ):
-        raise ValueError("target_visibility must be an integer between 0 and 100")
-    reference_quality = payload.get("reference_quality")
-    if (
-        isinstance(reference_quality, bool)
-        or not isinstance(reference_quality, int)
-        or not 0 <= reference_quality <= 100
-    ):
-        raise ValueError("reference_quality must be an integer between 0 and 100")
+    target_visibility = _normalized_percent(payload.get("target_visibility"), "target_visibility", default=80 if contains_target else 0)
+    reference_quality = _normalized_percent(payload.get("reference_quality"), "reference_quality", default=80 if contains_target else 0)
     if contains_target:
         target_visibility = max(target_visibility, 1)
         reference_quality = max(reference_quality, 1)
@@ -2798,8 +2783,12 @@ def _normalize_n1_observation(payload, expected_asset_id):
         "controls_ports_connectors",
         "distinctive_parts",
     ):
-        _required_list(observed_identity, field)
-    count_observations = _required_list(observed_identity, "count_observations")
+        if not isinstance(observed_identity.get(field), list):
+            observed_identity[field] = []
+    count_observations = observed_identity.get("count_observations")
+    if not isinstance(count_observations, list):
+        count_observations = []
+        observed_identity["count_observations"] = count_observations
     for item in count_observations:
         if not isinstance(item, dict):
             raise ValueError("observed_identity.count_observations items must be objects")
@@ -2815,19 +2804,11 @@ def _normalize_n1_observation(payload, expected_asset_id):
         "package_or_text_clues",
         "conflicts_with_confirmed_points",
     ):
-        _required_list(payload, field)
-    if "style_dna" not in payload or payload["style_dna"] is not None:
-        raise ValueError("style_dna must be null for owned product assets")
-    if not isinstance(payload.get("reason"), str):
-        raise ValueError("reason must be a string")
-    candidate_name = payload.get("candidate_product_name", payload.get("product_name"))
-    if (not isinstance(candidate_name, str) or not candidate_name.strip()) and contains_target:
-        raise ValueError("candidate_product_name is required")
-    if contains_target and _is_schema_placeholder(candidate_name):
-        raise ValueError("candidate_product_name cannot be a placeholder string")
+        if not isinstance(payload.get(field), list):
+            payload[field] = []
     candidate_confidence = payload.get(
         "candidate_product_name_confidence",
-        payload.get("confidence"),
+        payload.get("confidence", 0.5 if contains_target else 0),
     )
     normalized = copy.deepcopy(payload)
     normalized.update(
@@ -2843,7 +2824,9 @@ def _normalize_n1_observation(payload, expected_asset_id):
             "observed_identity": observed_identity,
             "reference_quality": reference_quality,
             "recommended_use": recommended_use,
-            "candidate_product_name": "" if not isinstance(candidate_name, str) or _is_schema_placeholder(candidate_name) else candidate_name.strip(),
+            "style_dna": None,
+            "reason": str(payload.get("reason") or ""),
+            "candidate_product_name": "" if not isinstance(candidate_name, str) else candidate_name.strip(),
             "candidate_product_name_confidence": _normalized_confidence(
                 candidate_confidence,
                 "candidate_product_name_confidence",
@@ -3049,34 +3032,71 @@ def _n2_observation_fallbacks(payload, identity_input):
     fallback_shape = _clean_schema_placeholder(observed_identity.get("overall_shape")) or "; ".join(
         _string_list(first_observation.get("product_facts"))
     )
+    fallback_name = fallback_name or fallback_category or fallback_shape or "可见商品"
+    fallback_category = fallback_category or fallback_name
+    fallback_shape = fallback_shape or fallback_name
     valid_asset_ids = [str(item["asset_id"]) for item in observations if item.get("asset_id")]
     if valid_asset_ids and normalized.get("decision") != "continue":
         normalized["decision"] = "continue"
+    if valid_asset_ids:
         normalized["needs_input_reason"] = ""
-        normalized["primary_asset_id"] = valid_asset_ids[0]
-        normalized["supporting_asset_ids"] = valid_asset_ids[1:4]
+        if str(normalized.get("primary_asset_id") or "") not in valid_asset_ids:
+            normalized["primary_asset_id"] = valid_asset_ids[0]
+        primary = str(normalized["primary_asset_id"])
+        supporting = normalized.get("supporting_asset_ids")
+        if not isinstance(supporting, list):
+            supporting = []
+        normalized["supporting_asset_ids"] = [
+            str(asset_id)
+            for asset_id in supporting
+            if str(asset_id) in valid_asset_ids and str(asset_id) != primary
+        ][:3] or [asset_id for asset_id in valid_asset_ids if asset_id != primary][:3]
         normalized["confidence"] = normalized.get("confidence") or first_observation.get("candidate_product_name_confidence") or 0.5
         normalized["conflict_state"] = normalized.get("conflict_state") if normalized.get("conflict_state") in {"match", "unknown", "conflict"} else "unknown"
+        normalized["standardization_mode"] = "reuse"
+        normalized["standardization_reason"] = str(normalized.get("standardization_reason") or "")
     if fallback_name and not _clean_schema_placeholder(normalized.get("product_name")):
         normalized["product_name"] = fallback_name
     profile = normalized.get("product_profile")
-    if isinstance(profile, dict):
-        profile = copy.deepcopy(profile)
-        if fallback_category and not _clean_schema_placeholder(profile.get("category")):
-            profile["category"] = fallback_category
-        if fallback_shape and not _clean_schema_placeholder(profile.get("primary_appearance")):
-            profile["primary_appearance"] = fallback_shape
-        normalized["product_profile"] = profile
+    if not isinstance(profile, dict):
+        profile = {}
+    profile = copy.deepcopy(profile)
+    if fallback_category and not _clean_schema_placeholder(profile.get("category")):
+        profile["category"] = fallback_category
+    if fallback_shape and not _clean_schema_placeholder(profile.get("primary_appearance")):
+        profile["primary_appearance"] = fallback_shape
+    for field in (
+        "shared_structure",
+        "visible_fixed_counts",
+        "verified_use_relationships",
+        "included_items",
+        "other_variants",
+        "known_conflicts",
+    ):
+        if not isinstance(profile.get(field), list):
+            profile[field] = []
+    normalized["product_profile"] = profile
     lock = normalized.get("identity_lock")
-    if isinstance(lock, dict):
-        lock = copy.deepcopy(lock)
-        must_not_change = _string_list(lock.get("must_not_change"))
-        if not must_not_change:
-            lock["must_not_change"] = _string_list([fallback_shape, fallback_category, fallback_name])
-        normalized["identity_lock"] = lock
-    appearances = normalized.get("target_appearances")
-    if valid_asset_ids and not appearances:
-        normalized["target_appearances"] = [
+    if not isinstance(lock, dict):
+        lock = {}
+    lock = copy.deepcopy(lock)
+    for field in (
+        "family_invariants",
+        "primary_variant_attributes",
+        "exact_component_constraints",
+        "verified_hidden_or_internal_structure",
+        "use_relationship_constraints",
+        "must_not_change",
+    ):
+        if not isinstance(lock.get(field), list):
+            lock[field] = []
+    must_not_change = _string_list(lock.get("must_not_change"))
+    if not must_not_change:
+        lock["must_not_change"] = _string_list([fallback_shape, fallback_category, fallback_name])
+    normalized["identity_lock"] = lock
+
+    def fallback_appearances():
+        return [
             {
                 "appearance_id": f"appearance.{index + 1}",
                 "label": _clean_schema_placeholder(item.get("candidate_product_name")) or fallback_category or fallback_name or f"Appearance {index + 1}",
@@ -3087,19 +3107,44 @@ def _n2_observation_fallbacks(payload, identity_input):
             for index, item in enumerate(observations)
             if item.get("asset_id")
         ]
+
     appearances = normalized.get("target_appearances")
     if isinstance(appearances, list):
         cleaned = []
+        assigned = set()
         for item in appearances:
             if not isinstance(item, dict):
-                cleaned.append(item)
                 continue
             appearance = copy.deepcopy(item)
+            asset_ids = [
+                str(asset_id)
+                for asset_id in appearance.get("asset_ids", [])
+                if str(asset_id) in valid_asset_ids and str(asset_id) not in assigned
+            ]
+            if not asset_ids:
+                continue
+            primary_asset_id = str(appearance.get("primary_asset_id") or asset_ids[0])
+            if primary_asset_id not in asset_ids:
+                primary_asset_id = asset_ids[0]
+            appearance["asset_ids"] = asset_ids
+            appearance["primary_asset_id"] = primary_asset_id
             if fallback_category and not _clean_schema_placeholder(appearance.get("label")):
                 appearance["label"] = fallback_category
             appearance["variant_attributes"] = _string_list(appearance.get("variant_attributes"))
             cleaned.append(appearance)
+            assigned.update(asset_ids)
+        for missing_asset_id in [asset_id for asset_id in valid_asset_ids if asset_id not in assigned]:
+            index = len(cleaned) + 1
+            cleaned.append({
+                "appearance_id": f"appearance.{index}",
+                "label": fallback_category or fallback_name or f"Appearance {index}",
+                "variant_attributes": [],
+                "asset_ids": [missing_asset_id],
+                "primary_asset_id": missing_asset_id,
+            })
         normalized["target_appearances"] = cleaned
+    elif valid_asset_ids:
+        normalized["target_appearances"] = fallback_appearances()
     return normalized
 
 
@@ -5804,6 +5849,25 @@ def _claim_generation_for_submission(generation_id):
     ).get(id=generation_id)
 
 
+def _claim_generation_for_polling(generation_id):
+    claimed = Generation.objects.filter(
+        id=generation_id,
+        status__in=[Generation.Status.SUBMITTED, Generation.Status.PROCESSING],
+        cluster__archived_at__isnull=True,
+    ).update(
+        status=Generation.Status.ARCHIVING,
+        updated_at=timezone.now(),
+    )
+    if not claimed:
+        return None
+    return Generation.objects.select_related(
+        "batch",
+        "cluster",
+        "output_slot",
+        "output_slot__template",
+    ).get(id=generation_id)
+
+
 def _current_n2_reference_relations(cluster):
     identity = (
         cluster.analysis_snapshot.get("identity", {})
@@ -6177,41 +6241,101 @@ def _provider_payload_with(generation, **values):
     return payload
 
 
+PROVIDER_ACTIVE_GENERATION_STATUSES = (
+    Generation.Status.SUBMITTING,
+    Generation.Status.SUBMITTED,
+    Generation.Status.PROCESSING,
+)
+
+
+def _generation_active_limit():
+    provider_limit = max(1, int(getattr(settings, "GENERATION_PROVIDER_ACTIVE_LIMIT", 500)))
+    configured = max(1, int(getattr(settings, "MAX_ACTIVE_GENERATIONS", provider_limit)))
+    return min(configured, provider_limit)
+
+
+def _active_provider_generation_count():
+    return Generation.objects.filter(
+        status__in=PROVIDER_ACTIVE_GENERATION_STATUSES,
+        cluster__archived_at__isnull=True,
+    ).count()
+
+
+def generation_worker_batch_size(requested):
+    requested = max(1, int(requested))
+    active_count = _active_provider_generation_count()
+    active_limit = _generation_active_limit()
+    if active_count >= active_limit:
+        return requested
+    return min(requested, max(1, active_limit - active_count))
+
+
+def _active_generation_user_counts():
+    user_ids = Generation.objects.filter(
+        status__in=PROVIDER_ACTIVE_GENERATION_STATUSES,
+        cluster__archived_at__isnull=True,
+    ).values_list("created_by_id", "batch__owner_id")
+    counts = Counter()
+    for created_by_id, owner_id in user_ids:
+        counts[created_by_id or owner_id] += 1
+    return counts
+
+
+def _generation_owner_id(generation):
+    return generation.created_by_id or generation.batch.owner_id
+
+
+def _queue_is_fair_candidate(candidate, active_by_user, queued_owner_ids):
+    soft_limit = max(1, int(getattr(settings, "GENERATION_USER_ACTIVE_SOFT_LIMIT", 10)))
+    owner_id = _generation_owner_id(candidate)
+    if active_by_user[owner_id] < soft_limit:
+        return True
+    return not any(active_by_user[queued_owner_id] < soft_limit for queued_owner_id in queued_owner_ids)
+
+
 def process_generation_once(client=None, storage=None):
     client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
     queued = None
     rejected_queued = False
+    active_count = _active_provider_generation_count()
+    active_limit = _generation_active_limit()
     queued_candidates = (
         Generation.objects.select_related("batch", "batch__owner", "cluster", "output_slot__template", "prompt_version")
         .filter(status=Generation.Status.QUEUED, cluster__archived_at__isnull=True)
         .order_by("created_at", "id")
     )
-    for candidate in queued_candidates:
-        hero_slot = standard_product_hero_slot(candidate.output_slot.template)
-        if hero_slot is not None and candidate.output_slot_id == hero_slot.id:
+    if active_count < active_limit:
+        queued_candidates = list(queued_candidates)
+        active_by_user = _active_generation_user_counts()
+        queued_owner_ids = [_generation_owner_id(candidate) for candidate in queued_candidates]
+        for candidate in queued_candidates:
+            if not _queue_is_fair_candidate(candidate, active_by_user, queued_owner_ids):
+                continue
+            hero_slot = standard_product_hero_slot(candidate.output_slot.template)
+            if hero_slot is not None and candidate.output_slot_id == hero_slot.id:
+                queued = candidate
+                break
+            hero = (
+                Generation.objects.filter(
+                    batch_id=candidate.batch_id,
+                    cluster_id=candidate.cluster_id,
+                    output_slot=hero_slot,
+                )
+                .order_by("-attempt", "-created_at", "-id")
+                .first()
+            )
+            if hero is None:
+                candidate.status = Generation.Status.FAILED
+                candidate.failure_reason = "A completed standard product hero is required before detail outputs can be generated"
+                candidate.save(update_fields=["status", "failure_reason", "updated_at"])
+                candidate.batch.recompute_status()
+                rejected_queued = True
+                continue
+            if hero.status != Generation.Status.COMPLETED:
+                continue
             queued = candidate
             break
-        hero = (
-            Generation.objects.filter(
-                batch_id=candidate.batch_id,
-                cluster_id=candidate.cluster_id,
-                output_slot=hero_slot,
-            )
-            .order_by("-attempt", "-created_at", "-id")
-            .first()
-        )
-        if hero is None:
-            candidate.status = Generation.Status.FAILED
-            candidate.failure_reason = "A completed standard product hero is required before detail outputs can be generated"
-            candidate.save(update_fields=["status", "failure_reason", "updated_at"])
-            candidate.batch.recompute_status()
-            rejected_queued = True
-            continue
-        if hero.status != Generation.Status.COMPLETED:
-            continue
-        queued = candidate
-        break
 
     if queued is not None:
         queued = _claim_generation_for_submission(queued.id)
@@ -6260,6 +6384,9 @@ def process_generation_once(client=None, storage=None):
     )
     if active is None:
         return 1 if rejected_queued else 0
+    active = _claim_generation_for_polling(active.id)
+    if active is None:
+        return 0
 
     payload = client.get_task(active.provider_task_id)
     provider_status = _normalize_provider_status(payload)

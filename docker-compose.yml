@@ -22,9 +22,12 @@ x-app-environment: &app-environment
   OSS_PREFIX: "${OSS_PREFIX:-independent-image-platform}"
   PLATFORM_ADMIN_ERP_USERS: "${PLATFORM_ADMIN_ERP_USERS:-}"
   LOCAL_MEDIA_ROOT: "${LOCAL_MEDIA_ROOT:-/app/media}"
-  MAX_ACTIVE_GENERATIONS: "${MAX_ACTIVE_GENERATIONS:-2}"
+  MAX_ACTIVE_GENERATIONS: "${MAX_ACTIVE_GENERATIONS:-50}"
+  GENERATION_USER_ACTIVE_SOFT_LIMIT: "${GENERATION_USER_ACTIVE_SOFT_LIMIT:-10}"
   ORG_DAILY_GENERATION_LIMIT: "${ORG_DAILY_GENERATION_LIMIT:-2000}"
   USER_DAILY_GENERATION_LIMIT: "${USER_DAILY_GENERATION_LIMIT:-100}"
+  PROMPT_WORKER_CONCURRENCY: "${PROMPT_WORKER_CONCURRENCY:-16}"
+  GENERATION_WORKER_CONCURRENCY: "${GENERATION_WORKER_CONCURRENCY:-32}"
 
 services:
   postgres:
@@ -75,7 +78,7 @@ services:
         condition: service_healthy
     volumes:
       - media_data:/app/media
-    command: python manage.py run_generation_worker
+    command: python manage.py run_generation_worker --concurrency ${GENERATION_WORKER_CONCURRENCY:-32}
 
   prompt-worker:
     build:
@@ -86,7 +89,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: python manage.py run_prompt_worker
+    command: python manage.py run_prompt_worker --concurrency ${PROMPT_WORKER_CONCURRENCY:-16}
 
   proxy:
     build:

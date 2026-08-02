@@ -118,7 +118,7 @@ export function PromptEditor({
   const warnings = gate?.warnings ?? [];
   const hasGateSummary = hardBlocks.length + semanticRisks.length + warnings.length > 0;
   const preparation = sku.preparation;
-  const preparing = (preparation?.status ?? sku.preparationStatus) === "preparing";
+  const preparing = ["pending", "preparing"].includes(preparation?.status ?? sku.preparationStatus ?? "");
   const progressTotal = preparation?.total || 7;
   const progressCurrent = Math.min(preparation?.current ?? 0, progressTotal);
   const stage = preparation?.stage ?? "";
@@ -207,7 +207,7 @@ export function PromptEditor({
 }
 
 function ProgressBar({ current, total }: { current: number; total: number }) {
-  const percent = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
+  const percent = total ? Math.max(12, Math.min(100, Math.round((current / total) * 100))) : 12;
   return <div className="progress-track mt-3" aria-label="预备生成进度" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={current}><span className="progress-fill progress-fill-active" style={{ width: `${percent}%` }} /></div>;
 }
 

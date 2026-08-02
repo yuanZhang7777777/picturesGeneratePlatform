@@ -260,7 +260,7 @@ test("hides technical preparation errors from operators", async () => {
   stubFetch({ projectSnapshot: failedProject });
   renderApp();
 
-  expect(await screen.findByText("预备失败 · 系统识别异常，请重试预备生成")).toBeInTheDocument();
+  expect(await screen.findByText("预备失败 · 预备生成异常，请重试")).toBeInTheDocument();
   expect(screen.queryByText(/evidence_refs/)).not.toBeInTheDocument();
 });
 

@@ -35,13 +35,14 @@ function progressText(sku: ProductSku) {
     const stage = preparation?.stage ?? "";
     return `预备生成中${stage ? ` · ${stage} ${stageLabels[stage] ?? "处理中"}` : ""} · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
   }
+  if (status === "pending") return `预备排队中 · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
   if (status === "blocked") return `预备受阻${preparation?.error ? ` · ${friendlyPreparationError(preparation.error)}` : ""}`;
   if (status === "failed") return `预备失败${preparation?.error ? ` · ${friendlyPreparationError(preparation.error)}` : ""}`;
   return `待预备生成 · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
 }
 
 function friendlyPreparationError(error: string) {
-  if (/image_role|visible product identity|schema|JSON|observed_identity|N2 may only|owned product reference|placeholder string|must be|must identify|additionalProperties|evidence_refs|fact_refs|reference_plan/i.test(error)) return "系统识别异常，请重试预备生成";
+  if (/image_role|visible product identity|schema|JSON|observed_identity|N2 may only|owned product reference|placeholder string|must be|must identify|additionalProperties|evidence_refs|fact_refs|reference_plan/i.test(error)) return "预备生成异常，请重试";
   if (/no product|cannot confirm|identity_needs_input|product identity/i.test(error)) return "图片中没有可识别商品，请换图或补充商品信息";
   return error;
 }
@@ -54,7 +55,7 @@ function progressMeta(sku: ProductSku) {
     return { text: progressText(sku), current: generated, total: generationTotal || 9, active: true };
   }
   const preparation = sku.preparation;
-  if ((preparation?.status ?? sku.preparationStatus) === "preparing") {
+  if (["pending", "preparing"].includes(preparation?.status ?? sku.preparationStatus ?? "")) {
     return { text: progressText(sku), current: preparation?.current ?? 0, total: preparation?.total ?? 7, active: true };
   }
   return { text: progressText(sku), current: 0, total: 0, active: false };
@@ -162,7 +163,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
         </details>
         {saveError && <p className="text-xs text-amber-700">{saveError}</p>}
         <div className="mt-auto space-y-2 text-xs">
-          <div className="flex items-start justify-between gap-2"><span className={`leading-5 ${/失败|受阻/.test(progress.text) ? "rounded-lg bg-rose-50 px-2 py-1 text-rose-700" : "text-slate-600"}`} title={progress.text}>{progress.text}</span><button className="shrink-0 font-semibold text-indigo-700" type="button" onClick={onOpen}>查看 {label} 详情</button></div>
+          <div className="flex items-start justify-between gap-2"><span className={`leading-5 ${progress.active ? "rounded-lg bg-indigo-50 px-2 py-1 font-semibold text-indigo-700" : /失败|受阻/.test(progress.text) ? "rounded-lg bg-rose-50 px-2 py-1 text-rose-700" : "text-slate-600"}`} title={progress.text}>{progress.active && <span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-indigo-600" />} {progress.text}</span><button className="shrink-0 font-semibold text-indigo-700" type="button" onClick={onOpen}>查看 {label} 详情</button></div>
           {progress.active && <ProgressBar current={progress.current} total={progress.total} />}
         </div>
       </div>
@@ -195,6 +196,6 @@ function DraggableAsset({ asset, index, active, onPreview, onDelete, disabled }:
 
 function ProgressBar({ current, total }: { current: number; total: number }) {
   const safeTotal = total || 1;
-  const percent = Math.min(100, Math.round((current / safeTotal) * 100));
+  const percent = Math.max(12, Math.min(100, Math.round((current / safeTotal) * 100)));
   return <div className="progress-track" aria-label="预备生成进度" role="progressbar" aria-valuemin={0} aria-valuemax={safeTotal} aria-valuenow={Math.min(current, safeTotal)}><span className="progress-fill progress-fill-active" style={{ width: `${percent}%` }} /></div>;
 }

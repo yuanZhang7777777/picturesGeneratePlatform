@@ -197,14 +197,14 @@ function ProjectToolbar({ project, selectedCount, pending, onSave, onSelectAll, 
       // The mutation error is rendered by the page; keep this draft dirty for retry.
     }
   };
-  return <section className="surface mb-4 p-3" aria-label="项目工具栏">
-    <div className="grid gap-2 xl:grid-cols-[minmax(120px,1fr)_auto_9rem_6rem_6rem_minmax(180px,1fr)_auto] xl:items-end">
-      <h1 className="self-center text-2xl font-bold tracking-tight">{project.name}</h1>
+  return <section className="surface mb-3 p-2" aria-label="项目工具栏">
+    <div className="grid gap-2 xl:grid-cols-[auto_auto_8.5rem_5.5rem_5.5rem_minmax(180px,1fr)_auto] xl:items-end">
+      <h1 className="self-center truncate text-lg font-bold tracking-tight" title={project.name}>{project.name}</h1>
       <fieldset><legend className="mb-1 text-xs font-medium text-slate-500">平台</legend><div className="flex flex-nowrap gap-1">{platforms.map(([code, label]) => <button key={code} aria-pressed={draft.platform === code} className={`toolbar-choice whitespace-nowrap ${draft.platform === code ? "toolbar-choice-active" : ""}`} type="button" disabled={pending} onClick={() => void save({ ...draft, platform: code })}>{label}</button>)}</div></fieldset>
       <label className="text-xs font-medium text-slate-500">国家<select aria-label="项目国家" className="mt-1" value={draft.market} onChange={(event) => void save({ ...draft, market: event.target.value })}>{allMarkets.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
       <label className="text-xs font-medium text-slate-500">比例<select aria-label="图片比例" className="mt-1" value={draft.size} onChange={(event) => void save({ ...draft, size: event.target.value })}><option value="1:1">1:1</option><option value="3:4">3:4</option></select></label>
       <label className="text-xs font-medium text-slate-500">分辨率<select aria-label="图片分辨率" className="mt-1" value={draft.resolution} onChange={(event) => void save({ ...draft, resolution: event.target.value })}><option value="1k">1K</option><option value="2k">2K</option></select></label>
-      <label className="text-xs font-medium text-slate-500">项目风格提示词<textarea aria-label="项目风格提示词" className="mt-1 min-h-10 py-2" value={draft.globalPrompt} placeholder="全项目默认提示词（选填）" onChange={(event) => setDraft({ ...draft, globalPrompt: event.target.value })} onBlur={() => { if (dirty) void save(draft); }} /></label>
+      <label className="text-xs font-medium text-slate-500">项目风格提示词<textarea aria-label="项目风格提示词" className="mt-1 min-h-9 py-1.5" value={draft.globalPrompt} placeholder="全项目默认提示词（选填）" onChange={(event) => setDraft({ ...draft, globalPrompt: event.target.value })} onBlur={() => { if (dirty) void save(draft); }} /></label>
       <div className="flex flex-wrap justify-end gap-2"><button className="toolbar-choice" type="button" onClick={onSelectAll}>全选</button><button className="toolbar-choice" type="button" onClick={onDeselectAll}>取消全选</button><button className="toolbar-choice" type="button" onClick={onInvert}>反选</button><span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">已选 {selectedCount}</span><Link className="secondary-button min-h-8 px-3 text-xs" to={`/projects/${project.id}/results`}>生产结果</Link></div>
     </div>
   </section>;

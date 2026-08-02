@@ -723,6 +723,98 @@ def test_worker_rechecks_published_template_and_default_request_parameters(
     assert generation.status == Generation.Status.FAILED
 
 
+def test_generation_worker_respects_active_provider_limit(tmp_path, settings):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
+    from platform_app.services import (
+        LocalStorage,
+        create_batch,
+        ensure_cluster_generations,
+        process_generation_once,
+        register_uploaded_asset,
+    )
+
+    class PollingOnlyClient:
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            raise AssertionError("must not submit when active limit is full")
+
+        def get_task(self, task_id):
+            return {"status": "processing"}
+
+    def queued_generation(user, name):
+        batch = create_batch(user, name)
+        register_uploaded_asset(batch, f"{name}.png", image_bytes(), "image/png")
+        batch.output_template = template
+        batch.save(update_fields=["output_template"])
+        cluster = batch.clusters.get()
+        approve_prompt(cluster, user, slot)
+        return ensure_cluster_generations(cluster, user)[0]
+
+    settings.MAX_ACTIVE_GENERATIONS = 1
+    settings.MEDIA_ROOT = tmp_path
+    template = OutputTemplate.objects.create(platform="global", site="", name="Active limit template")
+    slot = OutputSlot.objects.create(template=template, name="main", order=1)
+    active = queued_generation(make_user("active-limit-a"), "active-limit-a")
+    active.status = Generation.Status.PROCESSING
+    active.provider_task_id = "task-active"
+    active.save(update_fields=["status", "provider_task_id", "updated_at"])
+    queued = queued_generation(make_user("active-limit-b"), "active-limit-b")
+
+    assert process_generation_once(PollingOnlyClient(), LocalStorage(tmp_path)) == 1
+
+    queued.refresh_from_db()
+    assert queued.status == Generation.Status.QUEUED
+
+
+def test_generation_worker_lets_other_users_use_idle_capacity(tmp_path, settings):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
+    from platform_app.services import (
+        LocalStorage,
+        create_batch,
+        ensure_cluster_generations,
+        process_generation_once,
+        register_uploaded_asset,
+    )
+
+    class CapturingClient:
+        def __init__(self):
+            self.calls = []
+
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            self.calls.append(prompt)
+            return f"task-{len(self.calls)}"
+
+    def queued_generation(user, name):
+        batch = create_batch(user, name)
+        register_uploaded_asset(batch, f"{name}.png", image_bytes(), "image/png")
+        batch.output_template = template
+        batch.save(update_fields=["output_template"])
+        cluster = batch.clusters.get()
+        approve_prompt(cluster, user, slot)
+        return ensure_cluster_generations(cluster, user)[0]
+
+    settings.MAX_ACTIVE_GENERATIONS = 2
+    settings.GENERATION_USER_ACTIVE_SOFT_LIMIT = 1
+    settings.MEDIA_ROOT = tmp_path
+    user_a = make_user("fair-a")
+    user_b = make_user("fair-b")
+    template = OutputTemplate.objects.create(platform="global", site="", name="Fair template")
+    slot = OutputSlot.objects.create(template=template, name="main", order=1)
+    active_a = queued_generation(user_a, "active-a")
+    active_a.status = Generation.Status.PROCESSING
+    active_a.provider_task_id = "task-active-a"
+    active_a.save(update_fields=["status", "provider_task_id", "updated_at"])
+    queued_a = queued_generation(user_a, "queued-a")
+    queued_b = queued_generation(user_b, "queued-b")
+
+    client = CapturingClient()
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+
+    queued_a.refresh_from_db()
+    queued_b.refresh_from_db()
+    assert queued_a.status == Generation.Status.QUEUED
+    assert queued_b.status == Generation.Status.SUBMITTED
+
+
 @pytest.mark.parametrize("mutation", ["status", "instruction", "output_schema"])
 def test_worker_rechecks_exact_prompt_node_template_content(
     tmp_path,

@@ -23,9 +23,9 @@ Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worke
 
 预览默认值必须保持 `APIMART_FAKE_MODE=1`，`APIMART_API_KEY` 可以为空。以下全部满足前，不得设为 `0`：服务器 Secret 已配置、主 Agent 明确的付费授权、供应商契约测试、真实任务限流/重试验收、私有存储验收和发布记录。
 
-`MAX_ACTIVE_GENERATIONS` 表示活跃供应商异步任务的运行配置；供应商 API 上限为 **500**，有效值必须在 `1..500`。当前代码尚未完成跨进程原子认领和该上限的实际执行，因此预览仍固定使用 `2`；任何环境不得仅修改环境变量就直接提升到 500。按 2、5、8、50、100、250、500 分级压测并记录 429/5xx、P95、归档成功率和数据库资源后，才能提高下一档。公平队列的基础配额为每人 2 个活跃任务；容量空闲时可临时借用更多，出现其他待处理用户时停止继续借用。
+`MAX_ACTIVE_GENERATIONS` 表示同时提交给供应商并处于运行中的图片任务数；供应商 API 上限为 **500**，有效值必须在 `1..500`，预览默认 `50`。`GENERATION_USER_ACTIVE_SOFT_LIMIT` 默认 `10`：同一用户达到软限制后，其他有排队任务的用户优先；如果没有其他用户排队，该用户继续借用空闲容量。
 
-`PROMPT_WORKER_CONCURRENCY` 只控制预备生成阶段的 N1–N7 商品并发，默认 `2`。它与 `MAX_ACTIVE_GENERATIONS` 分开：前者调用视觉/文本分析和 Prompt 编译，后者控制 `gpt-image-2` 付费生图活跃任务。提高该值前先观察 APIMart 文本/视觉限流、数据库连接数和单商品失败率。
+`PROMPT_WORKER_CONCURRENCY` 只控制预备生成阶段的 N1–N7 商品并发，默认 `16`。`GENERATION_WORKER_CONCURRENCY` 控制本地提交、轮询和归档线程，默认 `32`。它们与 `MAX_ACTIVE_GENERATIONS` 分开：前者调用视觉/文本分析和 Prompt 编译，后者控制 `gpt-image-2` 付费生图活跃任务。
 
 登录使用 ERP：`ERP_LOGIN_URL` 接收用户输入的用户名和密码，平台只把返回的 Token 保存在服务端 session 中，不保存 ERP 密码。所有 ERP 登录成功用户都可进入平台；`PLATFORM_ADMIN_ERP_USERS` 用逗号分隔管理员 ERP 登录名，默认仅配置刘学城的登录名。
 
