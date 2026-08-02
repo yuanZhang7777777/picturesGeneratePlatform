@@ -52,10 +52,13 @@
 - 当前产品设计：`docs/superpowers/specs/2026-07-30-dual-speed-product-platform-design.md`
 - 当前唯一推进计划：`docs/superpowers/plans/2026-07-31-phased-delivery-roadmap.md`
 - Prompt OS v3 九节点契约：`docs/superpowers/specs/节点prompt设定初稿.md`
+- Prompt OS 3.4 节点与执行设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.4-node-execution-design.md`（当前推荐执行基线，收口多图外观、触发状态、营销文案、目标语言锁和员工错误脱敏）
+- Prompt OS 3.4 GPT-5.5 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-3.4-gpt55-implementation.md`
+- GPT-5.5 当前执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-3.4.md`
 - Prompt OS 3.2 节点与工作流设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.2-node-workflow-design.md`
 - Prompt OS 3.2 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-3.2-node-workflow-implementation.md`
 - GPT-5.5 执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-3.2.md`
-- Prompt OS 3.3 生产节点设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.3-production-node-design.md`（当前推荐执行基线，合并 3.1 营销文案与 3.2 工作台/多图链路）
+- Prompt OS 3.3 生产节点设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.3-production-node-design.md`（历史设计，已由 3.4 收口）
 - Prompt OS 3.3 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-3.3-implementation-plan.md`
 - GPT-5.5 最新执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-3.3.md`
 - Prompt OS 3.1 营销文案设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.1-marketing-copy-design.md`（历史设计，3.2 已补工作台/状态/错误/多图链路）
