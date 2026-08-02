@@ -2128,16 +2128,16 @@ def _copy_lock_checks(prompt, visible_text_lines, localized_copy, fact_ids):
         "fact_refs_valid": all(ref in known_fact_ids for ref in source_fact_refs),
         "generic_phrase_hits": generic_hits,
     }
-    hard_blocks = []
+    warnings = []
     if localized_copy and (
         not copy_checks["lines_match_visible_text"]
         or not copy_checks["each_line_present_once"]
     ):
-        hard_blocks.append("copy.literal_lock")
+        warnings.append("copy.literal_lock")
     if localized_copy and not copy_checks["fact_refs_valid"]:
-        hard_blocks.append("copy.unknown_fact_ref")
-    rewrite_reasons = ["copy.generic_or_repeated"] if generic_hits and not hard_blocks else []
-    return copy_checks, hard_blocks, rewrite_reasons
+        warnings.append("copy.unknown_fact_ref")
+    rewrite_reasons = ["copy.generic_or_repeated"] if generic_hits else []
+    return copy_checks, warnings, rewrite_reasons
 
 
 def evaluate_prompt_rule_gate(
@@ -2166,13 +2166,13 @@ def evaluate_prompt_rule_gate(
         hard_blocks.append("prompt.visible_text_max_three_lines")
     if is_standard_product_hero_slot(slot) and visible_text_lines:
         hard_blocks.append("hero.no_added_text")
-    copy_checks, copy_blocks, rewrite_reasons = _copy_lock_checks(
+    copy_checks, copy_warnings, rewrite_reasons = _copy_lock_checks(
         prompt,
         visible_text_lines,
         localized_copy,
         fact_ids,
     )
-    hard_blocks.extend(copy_blocks)
+    warnings = list(copy_warnings)
     for rule in rules:
         rule_id = str(rule.get("rule_id") or "")
         severity = str(rule.get("severity") or "")
@@ -2186,7 +2186,7 @@ def evaluate_prompt_rule_gate(
         "decision": "block" if hard_blocks else "pass",
         "hard_blocks": list(dict.fromkeys(hard_blocks)),
         "semantic_risks": [],
-        "warnings": [],
+        "warnings": list(dict.fromkeys(warnings)),
         "resolved_rule_refs": [str(rule.get("rule_id")) for rule in rules if rule.get("rule_id")],
         "prompt_checks": {
             "character_count": len(prompt),

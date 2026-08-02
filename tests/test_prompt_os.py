@@ -1759,7 +1759,7 @@ def test_n3_normalizer_repairs_unknown_evidence_refs_to_known_source():
     assert ledger["facts"][0]["evidence_refs"] == ["asset:asset-1"]
 
 
-def test_rule_gate_blocks_when_locked_copy_is_missing_or_changed():
+def test_rule_gate_warns_when_locked_copy_is_missing_or_changed():
     from platform_app.models import Batch, OutputTemplate
     from platform_app.services import evaluate_prompt_rule_gate
 
@@ -1783,8 +1783,9 @@ def test_rule_gate_blocks_when_locked_copy_is_missing_or_changed():
         fact_ids={"fact.name.001"},
     )
 
-    assert gate["decision"] == "block"
-    assert "copy.literal_lock" in gate["hard_blocks"]
+    assert gate["decision"] == "pass"
+    assert gate["hard_blocks"] == []
+    assert "copy.literal_lock" in gate["warnings"]
     assert gate["copy_checks"]["each_line_present_once"] is False
 
 
@@ -1818,7 +1819,7 @@ def test_rule_gate_marks_generic_copy_for_one_rewrite_without_blocking():
     assert gate["copy_checks"]["generic_phrase_hits"] == ["Premium quality"]
 
 
-def test_rule_gate_blocks_unknown_copy_fact_without_rewrite():
+def test_rule_gate_warns_unknown_copy_fact_without_blocking_generation():
     from platform_app.models import Batch, OutputTemplate
     from platform_app.services import evaluate_prompt_rule_gate
 
@@ -1842,8 +1843,9 @@ def test_rule_gate_blocks_unknown_copy_fact_without_rewrite():
         fact_ids={"fact.name.001"},
     )
 
-    assert gate["decision"] == "block"
-    assert "copy.unknown_fact_ref" in gate["hard_blocks"]
+    assert gate["decision"] == "pass"
+    assert gate["hard_blocks"] == []
+    assert "copy.unknown_fact_ref" in gate["warnings"]
     assert gate["rewrite_reasons"] == []
 
 
