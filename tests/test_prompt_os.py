@@ -109,6 +109,7 @@ def n5_plan(slot_order, *, mode="fab_value", fact_refs=("fact.name.001",), appea
         "slot_order": slot_order,
         "role": f"marketing role {slot_order}",
         "decision_task": f"decision task {slot_order}",
+        "conversion_goal": f"conversion goal {slot_order}",
         "fact_refs": list(fact_refs),
         "inference_refs": [],
         "main_scene": f"scene {slot_order}",
@@ -117,6 +118,7 @@ def n5_plan(slot_order, *, mode="fab_value", fact_refs=("fact.name.001",), appea
         "composition": f"composition {slot_order}",
         "copy_intent": f"copy intent {slot_order}",
         "text_mode": "up_to_3_lines",
+        "visible_text_lines": [],
         "localization_notes": [],
         "must_show": [],
         "must_avoid": [],
@@ -1587,6 +1589,379 @@ def test_n3_to_n6_normalizers_reject_unknown_refs_overlong_prompts_and_duplicate
             ledger,
             set(),
         )
+
+
+def test_rule_gate_blocks_when_locked_copy_is_missing_or_changed():
+    from platform_app.models import Batch, OutputTemplate
+    from platform_app.services import evaluate_prompt_rule_gate
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Copy lock")
+    template = OutputTemplate.objects.create(
+        seed_key="copy-lock",
+        platform="global",
+        site="",
+        name="Copy lock",
+        version="2026.08",
+    )
+    slot = template.slots.create(order=2, name="Benefit", purpose="Benefit")
+
+    gate = evaluate_prompt_rule_gate(
+        batch,
+        slot,
+        'Show the product with visible text "Giữ gọn sau bữa".',
+        visible_text_lines=["Giữ gọn sau bữa ăn"],
+        localized_copy={"lines": ["Giữ gọn sau bữa ăn"], "source_fact_refs": ["fact.name.001"]},
+        fact_ids={"fact.name.001"},
+    )
+
+    assert gate["decision"] == "block"
+    assert "copy.literal_lock" in gate["hard_blocks"]
+    assert gate["copy_checks"]["each_line_present_once"] is False
+
+
+def test_rule_gate_marks_generic_copy_for_one_rewrite_without_blocking():
+    from platform_app.models import Batch, OutputTemplate
+    from platform_app.services import evaluate_prompt_rule_gate
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Generic copy")
+    template = OutputTemplate.objects.create(
+        seed_key="generic-copy",
+        platform="global",
+        site="",
+        name="Generic copy",
+        version="2026.08",
+    )
+    slot = template.slots.create(order=3, name="Benefit", purpose="Benefit")
+
+    gate = evaluate_prompt_rule_gate(
+        batch,
+        slot,
+        'Commercial product image with visible text "Premium quality".',
+        visible_text_lines=["Premium quality"],
+        localized_copy={"lines": ["Premium quality"], "source_fact_refs": ["fact.name.001"]},
+        fact_ids={"fact.name.001"},
+    )
+
+    assert gate["decision"] == "pass"
+    assert gate["hard_blocks"] == []
+    assert gate["rewrite_reasons"] == ["copy.generic_or_repeated"]
+    assert gate["copy_checks"]["generic_phrase_hits"] == ["Premium quality"]
+
+
+def test_rule_gate_blocks_unknown_copy_fact_without_rewrite():
+    from platform_app.models import Batch, OutputTemplate
+    from platform_app.services import evaluate_prompt_rule_gate
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Unknown fact")
+    template = OutputTemplate.objects.create(
+        seed_key="unknown-fact",
+        platform="global",
+        site="",
+        name="Unknown fact",
+        version="2026.08",
+    )
+    slot = template.slots.create(order=4, name="Claim", purpose="Claim")
+
+    gate = evaluate_prompt_rule_gate(
+        batch,
+        slot,
+        'Commercial product image with visible text "Certified safe".',
+        visible_text_lines=["Certified safe"],
+        localized_copy={"lines": ["Certified safe"], "source_fact_refs": ["fact.cert.404"]},
+        fact_ids={"fact.name.001"},
+    )
+
+    assert gate["decision"] == "block"
+    assert "copy.unknown_fact_ref" in gate["hard_blocks"]
+    assert gate["rewrite_reasons"] == []
+
+
+def test_final_n7_gate_receives_structured_localized_copy(tmp_path, settings):
+    import json
+
+    from platform_app.management.commands.seed_platform_templates import Command
+    from platform_app.models import Batch, OutputTemplate
+    from platform_app.services import FakeAPIMartClient, _run_final_n7_gate
+
+    settings.MEDIA_ROOT = tmp_path
+    Command().handle()
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="N7 localized copy")
+    cluster = make_cluster(batch)
+    template = OutputTemplate.objects.create(
+        seed_key="n7-copy",
+        platform="global",
+        site="",
+        name="N7 copy",
+        version="2026.08",
+    )
+    slot = template.slots.create(order=5, name="Usage", purpose="Usage")
+
+    class CapturingClient(FakeAPIMartClient):
+        n7_input = None
+
+        def optimize_prompt(self, payload):
+            text = payload.get("text", "")
+            if "NODE N7" in text:
+                self.n7_input = json.loads(
+                    next(line for line in reversed(text.splitlines()) if line.startswith("{"))
+                )
+            return super().optimize_prompt(payload)
+
+    client = CapturingClient()
+    _run_final_n7_gate(
+        client,
+        cluster,
+        batch,
+        slot,
+        'Show product with visible text "Giữ gọn sau bữa ăn".',
+        [],
+        deterministic_gate={
+            "decision": "pass",
+            "hard_blocks": [],
+            "semantic_risks": [],
+            "warnings": [],
+            "resolved_rule_refs": [],
+            "prompt_checks": {},
+            "copy_checks": {},
+            "rewrite_reasons": [],
+        },
+        lineage={"cluster_id": str(cluster.id)},
+        node_template_binding={"node_name": "N6.generic", "version": "3.1.0"},
+        image_request={"model": "gpt-image-2", "n": 1, "size": "1:1", "resolution": "1k"},
+        localized_copy={
+            "language": "vi-VN",
+            "lines": ["Giữ gọn sau bữa ăn"],
+            "source_fact_refs": ["fact.name.001"],
+        },
+    )
+
+    assert client.n7_input["localized_copy"]["language"] == "vi-VN"
+    assert client.n7_input["localized_copy"]["lines"] == ["Giữ gọn sau bữa ăn"]
+
+
+def test_prompt_worker_rewrites_generic_copy_once_before_saving_prompt(tmp_path, settings):
+    import json
+
+    from platform_app.management.commands.seed_platform_templates import Command
+    from platform_app.models import Asset, Batch, OutputTemplate, PromptVersion
+    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    Command().handle()
+    user = make_user()
+    template = OutputTemplate.objects.create(
+        seed_key="one-copy-rewrite",
+        platform="global",
+        site="",
+        name="One copy rewrite",
+        version="2026.08",
+    )
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="benefit")
+    batch = Batch.objects.create(owner=user, name="Rewrite batch", output_template=template)
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="c" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = make_cluster(batch)
+    cluster.cluster_assets.update(asset=asset)
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class RewriteClient:
+        n6_calls = 0
+
+        def observe_images(self, instruction, image_paths):
+            return {
+                "output_text": json.dumps(
+                    strict_n1({
+                        "asset_id": str(asset.id),
+                        "asset_kind": "owned_product",
+                        "image_role": "clean_product",
+                        "contains_target_product": True,
+                        "target_is_physical_product": True,
+                        "target_visibility": 95,
+                        "target_complete": True,
+                        "background_complexity": "low",
+                        "reference_quality": 95,
+                        "observed_identity": {
+                            "category_candidates": ["lunch box"],
+                            "overall_shape": "rectangular lunch box",
+                            "dominant_colors": ["cream"],
+                        },
+                        "candidate_product_name": "Lunch box",
+                        "candidate_product_name_confidence": 90,
+                        "recommended_use": "reuse",
+                    })
+                ),
+                "raw": {},
+            }
+
+        def optimize_prompt(self, payload):
+            text = payload["text"]
+            if "NODE N2" in text:
+                output = strict_n2({
+                    "decision": "continue",
+                    "confidence": 90,
+                    "needs_input_reason": "",
+                    "product_name": "Lunch box",
+                    "conflict_state": "unknown",
+                    "product_profile": {"category": "lunch box", "primary_appearance": "cream"},
+                    "identity_lock": {
+                        "family_invariants": ["rectangular lunch box"],
+                        "primary_variant_attributes": ["cream"],
+                        "must_not_change": ["single box"],
+                    },
+                    "primary_asset_id": str(asset.id),
+                    "supporting_asset_ids": [],
+                    "target_appearances": [{
+                        "appearance_id": "appearance.primary",
+                        "label": "cream lunch box",
+                        "variant_attributes": ["cream"],
+                        "asset_ids": [str(asset.id)],
+                        "primary_asset_id": str(asset.id),
+                    }],
+                    "standardization_mode": "reuse",
+                    "standardization_reason": "",
+                })
+            elif "NODE N3" in text:
+                output = {
+                    "ledger_version": "2.0.0",
+                    "facts": [{
+                        "fact_id": "fact.name.001",
+                        "statement": "Lunch box",
+                        "fact_class": "confirmed",
+                        "confidence": 1,
+                        "evidence_refs": ["product_name"],
+                        "risk_level": "low",
+                        "allowed_uses": ["identity", "visual_prompt", "consumer_copy"],
+                        "review_note": "",
+                    }],
+                    "blocked_claim_topics": [],
+                    "unresolved_questions": [],
+                    "review_summary": {
+                        "confirmed_count": 1,
+                        "observed_count": 0,
+                        "inferred_count": 0,
+                        "high_risk_count": 0,
+                    },
+                }
+            elif "NODE N4" in text:
+                output = {
+                    "slot_id": "1",
+                    "main_scene": "white studio",
+                    "main_action": "none",
+                    "visible_text_lines": [],
+                    "prompt": "Complete lunch box on pure white.",
+                    "character_count": 33,
+                    "reference_plan": {
+                        "primary_asset_id": str(asset.id),
+                        "supporting_asset_ids": [],
+                        "include_completed_white_image": False,
+                    },
+                    "fact_trace": ["fact.name.001"],
+                    "inference_trace": [],
+                    "rule_refs": [],
+                    "generation_parameters": {
+                        "model": "gpt-image-2",
+                        "n": 1,
+                        "size": "1:1",
+                        "resolution": "1k",
+                    },
+                    "review_required": True,
+                }
+            elif "NODE N5" in text:
+                output = {"plans": [n5_plan(2, mode="fab_value", fact_refs=("fact.name.001",), appearance_ids=["appearance.primary"])]}
+            elif "NODE N6" in text:
+                self.n6_calls += 1
+                line = "Premium quality" if self.n6_calls == 1 else "Lunch stays neatly packed"
+                output = {
+                    "slot_id": "2",
+                    "main_scene": "office lunch table",
+                    "main_action": "box opened neatly",
+                    "visible_text_lines": [line],
+                    "localized_copy": {
+                        "language": "en",
+                        "lines": [line],
+                        "back_translation": "Keeps lunch organized",
+                        "strategy_mode": "fab_value",
+                        "source_fact_refs": ["fact.name.001"],
+                        "source_inference_refs": [],
+                        "quality": {
+                            "relevance": 90,
+                            "specificity": 90,
+                            "imagery": 90,
+                            "naturalness": 90,
+                            "truthfulness": 90,
+                            "mobile_readability": 90,
+                            "generic_phrase_hits": [],
+                        },
+                    },
+                    "prompt": f'Office lunch image with visible text "{line}".',
+                    "character_count": 48,
+                    "reference_plan": {
+                        "primary_asset_id": str(asset.id),
+                        "supporting_asset_ids": [],
+                        "completed_white_result_id": None,
+                    },
+                    "fact_trace": ["fact.name.001"],
+                    "inference_trace": [],
+                    "rule_refs": [],
+                    "generation_parameters": {
+                        "model": "gpt-image-2",
+                        "n": 1,
+                        "size": "1:1",
+                        "resolution": "1k",
+                    },
+                    "review_required": True,
+                }
+            elif "NODE N7" in text:
+                output = {
+                    "decision": "pass",
+                    "hard_blocks": [],
+                    "semantic_risks": [],
+                    "warnings": [],
+                    "prompt_checks": {
+                        "character_count": 48,
+                        "text_line_count": 1,
+                        "main_scene_count": 1,
+                        "main_action_count": 1,
+                        "reference_assets_valid": True,
+                    },
+                    "copy_checks": {
+                        "lines_match_visible_text": True,
+                        "each_line_present_once": True,
+                        "language_match": True,
+                        "fact_refs_valid": True,
+                        "generic_phrase_hits": [],
+                    },
+                    "resolved_rule_refs": [],
+                    "review_required": True,
+                }
+            else:
+                raise AssertionError(text)
+            return {"output_text": json.dumps(output), "raw": {}}
+
+    client = RewriteClient()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == cluster.PreparationStatus.READY, cluster.preparation_error
+    prompt = PromptVersion.objects.get(cluster=cluster, output_slot__order=2)
+    assert client.n6_calls == 2
+    assert "Lunch stays neatly packed" in prompt.prompt_text
+    assert "Premium quality" not in prompt.prompt_text
 
 
 def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(

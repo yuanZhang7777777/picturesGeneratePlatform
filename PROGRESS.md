@@ -185,6 +185,14 @@
 - Verification: `pytest tests/test_prompt_templates_v3.py tests/test_prompt_os.py -k "marketing or localized or creative" -q` passed 7.
 - Next: Task 4 implements deterministic N6/N7 copy lock and automatic rewrite behavior in runtime services.
 
+# Prompt OS 3.1 Task 4 N6/N7 copy lock runtime
+
+- Status: completed local runtime slice; unrelated existing N2 fallback work remains unstaged.
+- Red evidence: `test_prompt_worker_rewrites_generic_copy_once_before_saving_prompt` failed after fixture fixes with `assert client.n6_calls == 2`, proving generic copy was saved without one N6 rewrite.
+- Change: final prompt compilation no longer duplicates N6 visible text; N7 deterministic gate now passes structured `localized_copy`, blocks literal-lock and unknown fact refs, and reruns only the current N6 slot once for generic/repeated copy.
+- Verification: `pytest tests/test_prompt_os.py -k "localized_copy or locked_copy or rewrite" -q` passed 5; wider `pytest tests/test_prompt_os.py -k "localized_copy or locked_copy or rewrite or creative_strategy or consumer_context or marketing" -q` passed 8.
+- Next: Task 5 sets node-specific DeepSeek temperatures and records them in snapshots.
+
 # Prompt OS 3.2 node/workflow design handoff
 
 - Status: design-only handoff completed on 2026-08-02; no runtime code, paid call, OSS/ERP smoke or deployment was performed.

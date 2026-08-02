@@ -9,3 +9,5 @@
 - 2026-08-02 Prompt OS 3.1 Task 2：无新增阻塞。同文件存在早前 N2 fallback 未提交改动，Task 2 提交只暂存 N5 consumer_context / creative_strategy 相关块。
 
 - 2026-08-02 Prompt OS 3.1 Task 3：无新增阻塞。仅更新 3.1 system prompt 文本与模板断言。
+
+- 2026-08-02 Prompt OS 3.1 Task 4：无新增阻塞。N6/N7 copy lock 与一次重写已在本地目标测试通过；同文件早前 N2 fallback 未提交改动仍需保持不混入本任务提交。

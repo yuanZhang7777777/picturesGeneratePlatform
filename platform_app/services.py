@@ -2063,12 +2063,55 @@ def _identity_text(value):
     return str(value or "").strip()
 
 
+GENERIC_COPY_PHRASES = {
+    "premium quality",
+    "perfect for every moment",
+    "everyday essential",
+    "ideal choice",
+    "品质生活",
+    "高级感",
+    "理想之选",
+    "轻松便携",
+}
+
+
+def _copy_lock_checks(prompt, visible_text_lines, localized_copy, fact_ids):
+    localized_copy = localized_copy if isinstance(localized_copy, dict) else {}
+    locked_lines = _string_list(localized_copy.get("lines"))
+    source_fact_refs = _string_list(localized_copy.get("source_fact_refs"))
+    known_fact_ids = {str(item) for item in (fact_ids or set())}
+    generic_hits = [
+        line
+        for line in locked_lines
+        if line.strip().lower() in GENERIC_COPY_PHRASES
+    ]
+    copy_checks = {
+        "lines_match_visible_text": locked_lines == visible_text_lines,
+        "each_line_present_once": all(prompt.count(line) == 1 for line in locked_lines),
+        "language_match": True,
+        "fact_refs_valid": all(ref in known_fact_ids for ref in source_fact_refs),
+        "generic_phrase_hits": generic_hits,
+    }
+    hard_blocks = []
+    if localized_copy and (
+        not copy_checks["lines_match_visible_text"]
+        or not copy_checks["each_line_present_once"]
+    ):
+        hard_blocks.append("copy.literal_lock")
+    if localized_copy and not copy_checks["fact_refs_valid"]:
+        hard_blocks.append("copy.unknown_fact_ref")
+    rewrite_reasons = ["copy.generic_or_repeated"] if generic_hits and not hard_blocks else []
+    return copy_checks, hard_blocks, rewrite_reasons
+
+
 def evaluate_prompt_rule_gate(
     batch,
     slot,
     prompt,
     *,
     visible_text_lines=None,
+    localized_copy=None,
+    fact_ids=None,
     references=None,
     effective_config=None,
     rule_profile=None,
@@ -2087,6 +2130,13 @@ def evaluate_prompt_rule_gate(
         hard_blocks.append("prompt.visible_text_max_three_lines")
     if is_standard_product_hero_slot(slot) and visible_text_lines:
         hard_blocks.append("hero.no_added_text")
+    copy_checks, copy_blocks, rewrite_reasons = _copy_lock_checks(
+        prompt,
+        visible_text_lines,
+        localized_copy,
+        fact_ids,
+    )
+    hard_blocks.extend(copy_blocks)
     for rule in rules:
         rule_id = str(rule.get("rule_id") or "")
         severity = str(rule.get("severity") or "")
@@ -2109,6 +2159,8 @@ def evaluate_prompt_rule_gate(
             "main_action_count": 1,
             "reference_assets_valid": all(isinstance(path, str) for path in (references or [])),
         },
+        "copy_checks": copy_checks,
+        "rewrite_reasons": rewrite_reasons,
         "review_required": True,
     }
 
@@ -2376,7 +2428,7 @@ def compile_slot_prompt(
     ]
     if slot_directive:
         prompt_lines.append(f"Creative direction: {str(slot_directive).strip()}")
-    if visible_text_lines:
+    if visible_text_lines and not all(line in "\n".join(prompt_lines) for line in visible_text_lines):
         prompt_lines.append(f"Visible text (exactly these lines): {json.dumps(visible_text_lines, ensure_ascii=False)}")
     input_snapshot = {
         "market": market,
@@ -3391,6 +3443,8 @@ def _normalize_n7_semantic(payload):
         normalized[field] = _required_string_list(payload, field)
     if not isinstance(payload.get("prompt_checks"), dict):
         raise ValueError("N7 prompt_checks must be an object")
+    if not isinstance(payload.get("copy_checks"), dict):
+        raise ValueError("N7 copy_checks must be an object")
     if payload.get("review_required") is not True:
         raise ValueError("N7 review_required must be true")
     normalized["decision"] = decision
@@ -3404,8 +3458,21 @@ def _merge_n7_gate(deterministic_gate, semantic_gate):
     merged["hard_blocks"] = list(
         dict.fromkeys([*merged.get("hard_blocks", []), *semantic_blocks])
     )
-    for field in ("semantic_risks", "warnings", "advice", "prompt_checks", "inference_disclosures"):
-        merged[field] = copy.deepcopy(semantic_gate.get(field, [] if field != "prompt_checks" else {}))
+    for field in ("semantic_risks", "warnings", "advice", "inference_disclosures"):
+        merged[field] = copy.deepcopy(semantic_gate.get(field, []))
+    for field in ("prompt_checks", "copy_checks"):
+        merged[field] = {
+            **copy.deepcopy(semantic_gate.get(field, {})),
+            **copy.deepcopy(merged.get(field, {})),
+        }
+    merged["rewrite_reasons"] = list(
+        dict.fromkeys(
+            [
+                *merged.get("rewrite_reasons", []),
+                *semantic_gate.get("rewrite_reasons", []),
+            ]
+        )
+    )
     merged["resolved_rule_refs"] = list(
         dict.fromkeys(
             [
@@ -3432,6 +3499,7 @@ def _run_final_n7_gate(
     lineage,
     node_template_binding,
     image_request,
+    localized_copy=None,
     marketing_plan=None,
     hero_generation=None,
     parent_prompt_version=None,
@@ -3458,6 +3526,7 @@ def _run_final_n7_gate(
         ),
         "prompt_node_template": node_template_binding,
         "image_request": image_request,
+        "localized_copy": copy.deepcopy(localized_copy) if localized_copy else None,
         "hero_generation_id": str(hero_generation.id) if hero_generation else None,
         "parent_prompt_version_id": (
             str(parent_prompt_version.id) if parent_prompt_version else None
@@ -4225,6 +4294,8 @@ def process_prompt_once(client=None, storage=None):
         generated_slots = [slot for slot in slots if not is_source_product_photo_slot(slot)]
         marketing_slots = [slot for slot in generated_slots if slot.id != hero_slot.id]
         compiled_by_slot = {}
+        n6_inputs_by_slot = {}
+        n6_rule_refs_by_slot = {}
 
         _set_preparation_progress(cluster.id, claimed_revision, "N4", 3)
         hero_rules = _applicable_rules(
@@ -4382,6 +4453,8 @@ def process_prompt_once(client=None, storage=None):
                         "max_main_actions": 1,
                     },
                 }
+                n6_inputs_by_slot[slot.id] = copy.deepcopy(slot_input)
+                n6_rule_refs_by_slot[slot.id] = set(slot_rule_refs)
                 slot_plan = _prompt_node_json(
                     client,
                     n6_node,
@@ -4479,10 +4552,82 @@ def process_prompt_once(client=None, storage=None):
                     slot,
                     prompt_text,
                     visible_text_lines=compiled["node_output"]["visible_text_lines"],
+                    localized_copy=compiled["node_output"].get("localized_copy"),
+                    fact_ids=fact_ids,
                     references=final_references,
                     effective_config=effective_config,
                     rule_profile=effective_rules,
                 )
+                rewritten_copy_once = False
+                if gate.get("rewrite_reasons") and not gate.get("hard_blocks"):
+                    rewrite_input = copy.deepcopy(n6_inputs_by_slot[slot.id])
+                    rewrite_input["rewrite_attempt"] = 1
+                    rewrite_input["rewrite_reasons"] = gate["rewrite_reasons"]
+                    slot_rule_refs = n6_rule_refs_by_slot[slot.id]
+                    slot_plan = _prompt_node_json(
+                        client,
+                        n6_node,
+                        (
+                            f"SLOT_ORDER={slot.order}\n"
+                            "Rewrite this slot once because the rule gate found low-quality, generic, or repeated copy. "
+                            "Keep the same product facts, identity, target language, appearance ids, one scene, one action, "
+                            "and replace only the localized copy plus matching final image prompt."
+                        ),
+                        rewrite_input,
+                        normalize=lambda value, order=slot.order, refs=slot_rule_refs: _normalize_n6_prompt(
+                            value,
+                            order,
+                            identity,
+                            ledger,
+                            refs,
+                        ),
+                    )
+                    node_snapshots.append(
+                        _node_snapshot(
+                            n6_node,
+                            settings.APIMART_PROMPT_MODEL,
+                            rewrite_input,
+                            slot_plan,
+                            slot_id=slot.id,
+                        )
+                    )
+                    compiled_by_slot[slot.id] = compile_slot_prompt(
+                        cluster,
+                        slot,
+                        batch=cluster.batch,
+                        template=template,
+                        slot_directive=slot_plan["prompt"],
+                        visible_text_lines=slot_plan["visible_text_lines"],
+                        main_scene=slot_plan["main_scene"],
+                        main_action=slot_plan["main_action"],
+                        node_name=n6_node,
+                    )
+                    slot_references = _appearance_reference_paths(
+                        cluster_assets,
+                        identity,
+                        plans[slot.order].get("appearance_ids", []),
+                    )
+                    compiled_by_slot[slot.id]["reference_snapshot"] = slot_references
+                    compiled_by_slot[slot.id]["input_snapshot"]["reference_snapshot"] = slot_references
+                    compiled_by_slot[slot.id]["node_output"] = slot_plan
+                    compiled = compiled_by_slot[slot.id]
+                    prompt_text = compiled["prompt"]
+                    final_references = list(compiled["reference_snapshot"])
+                    gate = evaluate_prompt_rule_gate(
+                        cluster.batch,
+                        slot,
+                        prompt_text,
+                        visible_text_lines=compiled["node_output"]["visible_text_lines"],
+                        localized_copy=compiled["node_output"].get("localized_copy"),
+                        fact_ids=fact_ids,
+                        references=final_references,
+                        effective_config=effective_config,
+                        rule_profile=effective_rules,
+                    )
+                    rewritten_copy_once = True
+                if rewritten_copy_once and gate.get("rewrite_reasons") and not gate.get("hard_blocks"):
+                    gate["hard_blocks"].append("copy.generic_or_repeated")
+                    gate["decision"] = "block"
             if (
                 slot in marketing_slots
                 and not _marketing_diversity_valid(marketing_plan)
@@ -4520,6 +4665,7 @@ def process_prompt_once(client=None, storage=None):
                 lineage=lineage,
                 node_template_binding=node_template_binding,
                 image_request=image_request,
+                localized_copy=compiled.get("node_output", {}).get("localized_copy"),
                 marketing_plan=marketing_plan if slot in marketing_slots else None,
                 structural_asset_id=identity["primary_asset_id"],
             )
