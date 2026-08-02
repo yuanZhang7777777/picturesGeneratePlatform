@@ -5,18 +5,30 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "../App";
 
 const slotNames = [
-  "白底标准图",
-  "第二角度/结构图",
+  "标准白底产品图",
   "核心卖点图",
-  "材质或细节图",
+  "商品细节图",
+  "功能说明图",
   "使用场景图",
-  "模特或比例展示图",
+  "模特/比例图",
   "尺寸/包装/包含物图",
   "平台转化营销图",
   "补充转化图",
 ];
 
-const outputs = slotNames.flatMap((slot, index) => {
+const backendOutputSlotNames = [
+  "Standard white-background product hero",
+  "Key benefit",
+  "Product detail",
+  "Function",
+  "Usage",
+  "Model or scale",
+  "Size, packaging, or contents",
+  "Marketplace conversion",
+  "Supplemental conversion",
+];
+
+const outputs = backendOutputSlotNames.flatMap((slot, index) => {
   const order = index + 1;
   const base = {
     id: `generation-${order}`,
@@ -27,7 +39,7 @@ const outputs = slotNames.flatMap((slot, index) => {
     attempt: 1,
     version: 1,
     status: "completed",
-    reviewStatus: "pending",
+    reviewStatus: "accepted",
     imageUrl: `/api/results/result-${order}/media/`,
     prompt: `${slot} prompt`,
   };
@@ -354,10 +366,10 @@ test("renders product cards with inline identity and prompt editing", async () =
 
   expect(await screen.findByRole("img", { name: "桌面护眼灯 商品参考图" })).toBeInTheDocument();
   expect(screen.getByLabelText("商品名称 桌面护眼灯")).toHaveValue("桌面护眼灯");
-  fireEvent.click(screen.getByRole("button", { name: "查看 桌面护眼灯 详情" }));
+  fireEvent.click(screen.getByRole("button", { name: "桌面护眼灯 详情" }));
   expect(screen.queryByLabelText("多图关系")).not.toBeInTheDocument();
   expect(screen.getByLabelText("商品身份")).toHaveValue("深蓝色灯头");
-  expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("白底标准图 prompt");
+  expect(screen.getByLabelText("01 标准白底产品图提示词")).toHaveValue("标准白底产品图 prompt");
 });
 
 test("saves the editable product brief through the cluster endpoint", async () => {
@@ -398,7 +410,7 @@ test("keeps product details collapsed until requested", async () => {
 
   await screen.findByRole("checkbox", { name: "选择 桌面护眼灯" });
   expect(screen.queryByLabelText("商品身份")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "查看 桌面护眼灯 详情" }));
+  fireEvent.click(screen.getByRole("button", { name: "桌面护眼灯 详情" }));
   expect(screen.getByLabelText("商品身份")).toHaveValue("深蓝色灯头");
 });
 
@@ -421,8 +433,8 @@ test("keeps an unidentified product name empty instead of inserting status text"
 test("offers draggable thumbnails alongside the fixed product detail panel", async () => {
   renderApp("/projects/project-demo");
 
-  fireEvent.click(await screen.findByRole("button", { name: "查看 桌面护眼灯 详情" }));
-  expect(screen.getByRole("button", { name: "拖拽商品参考图 1" })).toHaveAttribute("aria-roledescription", "draggable");
+  fireEvent.click(await screen.findByRole("button", { name: "桌面护眼灯 详情" }));
+  expect(screen.getByRole("button", { name: "查看并拖拽商品参考图 1" })).toHaveAttribute("aria-roledescription", "draggable");
   expect(screen.getByRole("dialog", { name: "桌面护眼灯 商品详情" })).toBeInTheDocument();
 });
 
@@ -455,15 +467,15 @@ test("shows a nine-slot result grid for the project", async () => {
 test("selects the latest successful version by default for export", async () => {
   renderApp("/projects/project-demo/results");
 
-  const latest = await screen.findByRole("checkbox", { name: "导出 第二角度/结构图 v2" });
+  const latest = await screen.findByRole("checkbox", { name: "导出 核心卖点图 v2" });
   expect(latest).toBeChecked();
-  expect(screen.getByRole("button", { name: "历史版本 第二角度/结构图 v1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "历史版本 核心卖点图 v1" })).toBeInTheDocument();
 });
 
 test("lets operators cancel one result from the ZIP selection", async () => {
   renderApp("/projects/project-demo/results");
 
-  const first = await screen.findByRole("checkbox", { name: "导出 白底标准图 v1" });
+  const first = await screen.findByRole("checkbox", { name: "导出 标准白底产品图 v1" });
   fireEvent.click(first);
 
   expect(first).not.toBeChecked();
@@ -480,7 +492,7 @@ test("posts only selected generation IDs when downloading the ZIP", async () => 
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
   renderApp("/projects/project-demo/results");
 
-  fireEvent.click(await screen.findByRole("checkbox", { name: "导出 白底标准图 v1" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "导出 标准白底产品图 v1" }));
   fireEvent.click(screen.getByRole("button", { name: "下载选中 ZIP（8 张）" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/export/"))).toBe(true));
@@ -488,11 +500,30 @@ test("posts only selected generation IDs when downloading the ZIP", async () => 
   expect(JSON.parse(String(call?.[1]?.body)).generation_ids).not.toContain("generation-1");
 });
 
+test("allows accepting a result before export from the result page", async () => {
+  const pendingProject = {
+    ...project,
+    skus: [{ ...project.skus[0], outputs: outputs.map((output) => ({ ...output, reviewStatus: "pending" })) }],
+  };
+  const fetchMock = stubFetch((url) => {
+    if (url.includes("/csrf/")) return Promise.resolve(response(200, { csrf_token: "csrf-for-test" }));
+    return Promise.resolve(response(200, url.includes("/workspace/") ? { projects: [pendingProject] } : pendingProject));
+  });
+  renderApp("/projects/project-demo/results");
+
+  fireEvent.click(await screen.findByRole("button", { name: "通过此图，允许导出" }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    "/api/generations/generation-1/review/",
+    expect.objectContaining({ method: "POST" }),
+  ));
+});
+
 test("requests a new version for a successful result", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo/results");
 
-  fireEvent.click(await screen.findByRole("button", { name: "再生成 白底标准图" }));
+  fireEvent.click(await screen.findByRole("button", { name: "再生成 标准白底产品图" }));
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
     "/api/generations/generation-1/regenerate/",
@@ -515,7 +546,7 @@ test("submits a normalized annotation to the revision endpoint", async () => {
   });
   renderApp("/projects/project-demo/results");
 
-  const image = await screen.findByAltText("当前白底标准图 结果图");
+  const image = await screen.findByAltText("当前标准白底产品图结果图");
   Object.defineProperty(image, "naturalWidth", { configurable: true, value: 800 });
   Object.defineProperty(image, "naturalHeight", { configurable: true, value: 400 });
   fireEvent.click(screen.getByRole("checkbox", { name: "商品身份" }));
@@ -541,7 +572,7 @@ test("shows an actionable error rather than mock content when workspace access i
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(403, { error: "forbidden" })));
   renderApp("/");
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("访问被拒绝");
+  expect(await screen.findByRole("alert")).toHaveTextContent("没有权限访问");
 });
 
 test("offers a login link when Django redirects an expired session to HTML", async () => {
@@ -555,5 +586,5 @@ test("offers a login link when Django redirects an expired session to HTML", asy
   renderApp("/");
 
   expect(await screen.findByRole("alert")).toHaveTextContent("登录已失效或需修改密码");
-  expect(screen.getByRole("link", { name: "前往登录" })).toHaveAttribute("href", "/login/");
+  expect(screen.getByRole("link", { name: "重新登录" })).toHaveAttribute("href", "/login/");
 });

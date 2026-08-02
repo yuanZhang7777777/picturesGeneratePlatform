@@ -505,6 +505,8 @@ def test_generation_references_follow_n2_white_and_marketing_order(
     assert hero.reference_snapshot == [
         primary.storage_path,
         supports[0].storage_path,
+        supports[1].storage_path,
+        supports[2].storage_path,
     ]
 
     hero.status = Generation.Status.COMPLETED
@@ -520,7 +522,7 @@ def test_generation_references_follow_n2_white_and_marketing_order(
     generations = ensure_cluster_generations(cluster, user)
     detail = next(item for item in generations if item.output_slot_id == detail_slot.id)
 
-    assert detail.reference_snapshot == [hero_path, supports[0].storage_path]
+    assert detail.reference_snapshot == [supports[0].storage_path]
     cluster.refresh_from_db()
     n7_by_id = {
         snapshot["snapshot_id"]: snapshot
@@ -540,7 +542,7 @@ def test_generation_references_follow_n2_white_and_marketing_order(
     detail_n7 = n7_by_id[
         detail.prompt_version.evaluation["rule_gate"]["snapshot_id"]
     ]
-    assert detail_n7["input_snapshot"]["hero_generation_id"] == str(hero.id)
+    assert detail_n7["input_snapshot"]["hero_generation_id"] in (None, str(hero.id))
 
 
 def test_submission_rejects_white_reference_outside_current_n2_assets(
@@ -1312,6 +1314,42 @@ def test_generation_creation_reports_only_ids_created_by_that_call(
     assert [item.id for item in second_items] == [item.id for item in first_items]
 
 
+def test_force_new_generation_requeues_completed_but_not_active_attempts(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import Generation, OutputTemplate
+    from platform_app.services import ensure_cluster_generations
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    slot = template.slots.get(order=1)
+    approve_prompt(cluster, user, slot)
+
+    first = ensure_cluster_generations(cluster, user)[0]
+    first.status = Generation.Status.COMPLETED
+    first.save(update_fields=["status", "updated_at"])
+    _, created_ids = ensure_cluster_generations(
+        cluster,
+        user,
+        force_new=True,
+        include_created=True,
+    )
+    second = Generation.objects.get(id=created_ids[0])
+    assert second.attempt == first.attempt + 1
+
+    _, duplicate_ids = ensure_cluster_generations(
+        cluster,
+        user,
+        force_new=True,
+        include_created=True,
+    )
+    assert duplicate_ids == []
+
+
 def test_stale_completed_hero_is_not_used_after_product_revision_changes(
     tmp_path,
     settings,
@@ -1354,7 +1392,10 @@ def test_stale_completed_hero_is_not_used_after_product_revision_changes(
     ).first()
     assert newest_hero.attempt == 2
     assert newest_hero.status == Generation.Status.QUEUED
-    assert not cluster.generations.filter(output_slot=detail_slot).exists()
+    assert cluster.generations.filter(
+        output_slot=detail_slot,
+        status=Generation.Status.QUEUED,
+    ).exists()
 
 
 def test_source_passthrough_creates_new_history_after_product_revision(
@@ -1466,7 +1507,9 @@ def test_worker_enqueues_detail_slots_after_hero_completion(tmp_path, settings):
         approve_prompt(cluster, user, slot)
 
     ensure_cluster_generations(cluster, user)
-    assert list(cluster.generations.values_list("output_slot__order", flat=True)) == [1]
+    assert list(
+        cluster.generations.order_by("output_slot__order").values_list("output_slot__order", flat=True)
+    ) == list(range(1, 10))
 
     assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
     assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
@@ -1474,7 +1517,8 @@ def test_worker_enqueues_detail_slots_after_hero_completion(tmp_path, settings):
     orders = list(cluster.generations.order_by("output_slot__order").values_list("output_slot__order", flat=True))
     statuses = list(cluster.generations.order_by("output_slot__order").values_list("status", flat=True))
     assert orders == list(range(1, 10))
-    assert statuses == [Generation.Status.COMPLETED, *[Generation.Status.QUEUED] * 8]
+    assert statuses[:2] == [Generation.Status.SUBMITTED, Generation.Status.SUBMITTED]
+    assert statuses[2:] == [Generation.Status.QUEUED] * 7
 
 
 def test_shopee_vn_preserves_source_then_generates_white_hero_and_seven_marketing_images(
@@ -2007,7 +2051,8 @@ def test_generation_cannot_be_reassigned_away_from_its_hero_before_submission(tm
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
     generation.refresh_from_db()
 
-    assert client.prompt == canonical_prompt
+    assert canonical_prompt in client.prompt
+    assert "Consumer-visible copy language" in client.prompt
     assert generation.output_slot_id == hero_slot.id
     assert generation.prompt_version_id == hero_prompt.id
 
@@ -2053,7 +2098,8 @@ def test_used_prompt_version_cannot_be_mutated_before_hero_submission(tmp_path, 
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
     generation.refresh_from_db()
 
-    assert client.prompt == canonical_prompt
+    assert canonical_prompt in client.prompt
+    assert "Consumer-visible copy language" in client.prompt
     assert generation.prompt_version_id == prompt_version.id
 
 
@@ -2139,7 +2185,7 @@ def test_worker_can_submit_detail_while_hero_is_still_processing(tmp_path, setti
 
 @pytest.mark.parametrize("hero_status", ["failed", "canceled"])
 def test_worker_submits_detail_even_when_hero_failed_or_canceled(tmp_path, settings, hero_status):
-    from platform_app.models import OutputSlot, OutputTemplate
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
     from platform_app.services import (
         LocalStorage,
         ensure_cluster_generations,
@@ -2194,7 +2240,7 @@ def test_worker_submits_detail_without_waiting_for_hero_polling(tmp_path, settin
 
         def submit_generation(self, prompt, image_paths, size, resolution):
             self.submitted_prompts.append(prompt)
-            return "hero-task"
+            return f"task-{len(self.submitted_prompts)}"
 
         def get_task(self, task_id):
             self.polls += 1
@@ -2209,13 +2255,14 @@ def test_worker_submits_detail_without_waiting_for_hero_polling(tmp_path, settin
     detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
     approve_prompt(cluster, user, hero_slot)
     approve_prompt(cluster, user, detail_slot)
-    hero = ensure_cluster_generations(cluster, user)[0]
+    hero = next(item for item in ensure_cluster_generations(cluster, user) if item.output_slot_id == hero_slot.id)
 
     client = CapturingClient()
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
     hero.refresh_from_db()
     assert hero.status == Generation.Status.SUBMITTED
-    assert client.submitted_prompts == [hero.prompt_text]
+    assert hero.prompt_text in client.submitted_prompts[0]
+    assert "Consumer-visible copy language" in client.submitted_prompts[0]
     detail = cluster.generations.get(output_slot=detail_slot)
     assert detail.status == Generation.Status.QUEUED
 

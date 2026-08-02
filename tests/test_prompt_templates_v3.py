@@ -254,7 +254,7 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
         },
         "N5.generic": {"plans"},
         "N6.generic": {
-            "slot_id", "main_scene", "main_action", "visible_text_lines", "localized_copy",
+            "slot_id", "main_scene", "main_action", "display_prompt", "visible_text_lines", "localized_copy",
             "prompt", "character_count", "reference_plan", "fact_trace", "inference_trace",
             "rule_refs", "generation_parameters", "review_required",
         },

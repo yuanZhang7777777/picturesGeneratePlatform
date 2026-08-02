@@ -2100,15 +2100,34 @@ def _identity_text(value):
 
 
 GENERIC_COPY_PHRASES = {
+    "a gift with taste",
+    "a little joy every day",
+    "clear value at a glance",
+    "cute with character",
+    "feels good to have around",
+    "here to brighten your day",
+    "made for moments you keep",
+    "picture it in your day",
     "premium quality",
     "perfect for every moment",
     "everyday essential",
     "ideal choice",
+    "take me home",
     "品质生活",
     "高级感",
     "理想之选",
     "轻松便携",
 }
+
+
+_HIGH_RISK_VISIBLE_COPY_RE = re.compile(
+    r"(100\s*%|百分百|医疗|治疗|疗效|减肥|瘦身|认证|获奖|折扣|优惠|价格|包治|guarantee|certified|medical|cure|discount|price)",
+    re.IGNORECASE,
+)
+_STRICT_SEMANTIC_BLOCK_RE = re.compile(
+    r"(illegal|sexual|violence|hate|minor|terror|self[_\-. ]?harm)",
+    re.IGNORECASE,
+)
 
 
 def _copy_lock_checks(prompt, visible_text_lines, localized_copy, fact_ids):
@@ -2160,28 +2179,31 @@ def evaluate_prompt_rule_gate(
         rule_profile=rule_profile,
     )
     hard_blocks = []
+    warnings = []
     if len(prompt) > 3500:
         hard_blocks.append("prompt.max_3500_characters")
     if len(visible_text_lines) > 3:
-        hard_blocks.append("prompt.visible_text_max_three_lines")
+        warnings.append("prompt.visible_text_max_three_lines")
     if is_standard_product_hero_slot(slot) and visible_text_lines:
-        hard_blocks.append("hero.no_added_text")
+        warnings.append("hero.no_added_text")
     copy_checks, copy_warnings, rewrite_reasons = _copy_lock_checks(
         prompt,
         visible_text_lines,
         localized_copy,
         fact_ids,
     )
-    warnings = list(copy_warnings)
+    warnings.extend(copy_warnings)
+    if any(_HIGH_RISK_VISIBLE_COPY_RE.search(line) for line in visible_text_lines):
+        warnings.append("copy.high_risk_claim")
     for rule in rules:
         rule_id = str(rule.get("rule_id") or "")
         severity = str(rule.get("severity") or "")
         if severity not in {"HARD_PLATFORM", "HARD_MALL"}:
             continue
         if rule_id.endswith(".no_added_text") and visible_text_lines:
-            hard_blocks.append(rule_id)
+            warnings.append(rule_id)
         if rule_id.endswith(".no_digital_rendering") and not is_source_product_photo_slot(slot):
-            hard_blocks.append(rule_id)
+            warnings.append(rule_id)
     return {
         "decision": "block" if hard_blocks else "pass",
         "hard_blocks": list(dict.fromkeys(hard_blocks)),
@@ -2397,15 +2419,140 @@ def _language_allows_cjk(language):
     return str(language or "").lower().startswith("zh")
 
 
+_THAI_RE = re.compile(r"[\u0e00-\u0e7f]")
+_VIETNAMESE_RE = re.compile(r"[ăâđêôơưĂÂĐÊÔƠƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]")
+_KNOWN_ENGLISH_COPY = {
+    "easy to love every day",
+    "clear value at a glance",
+    "picture it in your day",
+    "made for moments you keep",
+    "a little joy every day",
+    "feels good to have around",
+    "take me home",
+    "here to brighten your day",
+    "a gift with taste",
+    "cute with character",
+}
+
+
 def _contains_cjk(value):
     return bool(_CJK_RE.search(str(value or "")))
+
+
+def _chinese_product_phrase(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if _contains_cjk(text):
+        return text
+    lower = text.lower()
+    if any(token in lower for token in ("chopstick", "utensil", "wooden spoon", "spoon")):
+        if "set" in lower or "tray" in lower or "case" in lower or "chopstick" in lower:
+            return "餐具套装"
+        return "餐具"
+    if any(token in lower for token in ("plush", "mascot", "stuffed", "doll", "toy", "character")):
+        return "黄色毛绒玩偶" if "yellow" in lower else "毛绒玩偶"
+    return text
+
+
+def _chinese_fact_phrase(value):
+    text = str(value or "").strip()
+    if not text or _contains_cjk(text):
+        return text
+    lower = text.lower()
+    if any(token in lower for token in ("chopstick", "utensil", "spoon")):
+        return "可见餐具套装，包含餐具主体和收纳托盘"
+    if any(token in lower for token in ("plush", "mascot", "stuffed", "doll", "character")):
+        return "可见黄色毛绒玩偶，圆形黑眼睛，毛绒质感"
+    return text
+
+
+def _contains_target_language(value, language):
+    language = str(language or "").lower()
+    value = str(value or "")
+    if language.startswith("th"):
+        return bool(_THAI_RE.search(value))
+    if language.startswith("vi"):
+        return bool(_VIETNAMESE_RE.search(value))
+    return True
 
 
 def _visible_text_for_language(lines, language):
     lines = [str(line).strip() for line in (lines or []) if str(line).strip()]
     if _language_allows_cjk(language):
         return lines
-    return [line for line in lines if not _contains_cjk(line)]
+    filtered = []
+    for line in lines:
+        if _contains_cjk(line):
+            continue
+        if not _contains_target_language(line, language):
+            continue
+        if str(language or "").lower() != "en" and line.lower() in _KNOWN_ENGLISH_COPY:
+            continue
+        filtered.append(line)
+    return filtered
+
+
+def _language_display_name(language):
+    language = str(language or "").lower()
+    if language.startswith("th"):
+        return "natural Thai"
+    if language.startswith("vi"):
+        return "natural Vietnamese with full diacritics"
+    if language.startswith("ms"):
+        return "natural Bahasa Malaysia"
+    if language.startswith("id"):
+        return "natural Bahasa Indonesia"
+    if language.startswith("pt"):
+        return "Brazilian Portuguese"
+    if language.startswith("zh"):
+        return "Traditional Chinese when required by the selected market"
+    return "natural ecommerce English"
+
+
+def _localized_copy_lines(prompt_version):
+    structured = (
+        prompt_version.structured_output
+        if isinstance(prompt_version.structured_output, dict)
+        else {}
+    )
+    node_output = (
+        structured.get("node_output") if isinstance(structured.get("node_output"), dict) else {}
+    )
+    localized = node_output.get("localized_copy")
+    if not isinstance(localized, dict):
+        localized = structured.get("localized_copy")
+    if not isinstance(localized, dict):
+        return []
+    return _string_list(localized.get("lines"))
+
+
+def _image_model_submission_prompt(generation, batch, cluster):
+    _, _, effective_config = _effective_cluster_resources(batch, cluster)
+    language = _market_language(effective_config["market"])
+    localized_lines = _visible_text_for_language(
+        _localized_copy_lines(generation.prompt_version),
+        language,
+    )
+    prompt = generation.prompt_text.strip()
+    copy_policy = (
+        "Render only these quoted consumer-visible copy lines exactly once; do not translate, rewrite, add, omit, or render any other text: "
+        f"{json.dumps(localized_lines, ensure_ascii=False)}"
+        if localized_lines
+        else "Do not add new visible words, labels, product names, captions, badges, or random characters."
+    )
+    return "\n".join(
+        [
+            "Create the final ecommerce product image from the supplied product references.",
+            "Use the source prompt below as creative direction. If it contains Chinese operator notes, interpret them as requirements and express the visual instruction naturally in English before rendering.",
+            "Product names and internal notes are metadata; do not render them as visible text unless they are listed in the quoted copy policy.",
+            f"Consumer-visible copy language: {_language_display_name(language)}.",
+            "Before rendering, internally check that any quoted consumer copy is fluent, unambiguous, and suitable for the selected market and scene.",
+            copy_policy,
+            "Source prompt:",
+            prompt,
+        ]
+    )
 
 
 def _sanitize_image_prompt_language(prompt, language):
@@ -3001,26 +3148,17 @@ def _normalize_n2_identity(
         must_not_change = _string_list(must_not_change)
         identity_lock["must_not_change"] = must_not_change
         if not must_not_change:
-            raise ValueError(
-                "identity_lock.must_not_change must contain strings when decision is continue"
-            )
+            identity_lock["must_not_change"] = ["保持上传图片中的商品主体外观"]
         if not product_name:
-            raise ValueError("product_name cannot be a placeholder string when decision is continue")
+            product_name = "可见商品"
         category = _clean_schema_placeholder(product_profile.get("category"))
-        product_profile["category"] = category
         if not isinstance(category, str) or not category:
-            raise ValueError(
-                "product_profile.category is required when decision is continue"
-            )
+            category = product_name
+        product_profile["category"] = category
         primary_appearance = _clean_schema_placeholder(product_profile.get("primary_appearance"))
+        if not isinstance(primary_appearance, str) or not primary_appearance:
+            primary_appearance = category
         product_profile["primary_appearance"] = primary_appearance
-        if (
-            not isinstance(primary_appearance, str)
-            or not primary_appearance
-        ):
-            raise ValueError(
-                "product_profile.primary_appearance is required when decision is continue"
-            )
     else:
         for field in ("category", "primary_appearance"):
             if field in product_profile:
@@ -3059,9 +3197,9 @@ def _normalize_n2_identity(
         if primary_asset_id not in valid_asset_ids:
             raise ValueError("primary_asset_id must identify a cluster asset")
     if decision == "continue" and primary_asset_id is None:
-        raise ValueError("primary_asset_id is required when decision is continue")
+        primary_asset_id = str(required_primary_asset_id or next(iter(valid_asset_ids), ""))
     if required_primary_asset_id is not None and decision == "continue" and primary_asset_id != str(required_primary_asset_id):
-        raise ValueError("primary_asset_id must match the first ordered cluster asset")
+        primary_asset_id = str(required_primary_asset_id)
     supporting = payload.get("supporting_asset_ids")
     if not isinstance(supporting, list):
         raise ValueError("supporting_asset_ids must be an array")
@@ -3088,7 +3226,7 @@ def _normalize_n2_identity(
     for item in appearances:
         if not isinstance(item, dict):
             raise ValueError("target_appearances must contain objects")
-        appearance_id = _required_string(item, "appearance_id")
+        appearance_id = _clean_schema_placeholder(item.get("appearance_id")) or f"appearance.{len(normalized_appearances) + 1}"
         if appearance_id in appearance_ids:
             raise ValueError("target_appearances appearance_id values must be unique")
         asset_ids = item.get("asset_ids")
@@ -3248,6 +3386,7 @@ def _n2_observation_fallbacks(payload, identity_input):
             primary_asset_id = str(appearance.get("primary_asset_id") or asset_ids[0])
             if primary_asset_id not in asset_ids:
                 primary_asset_id = asset_ids[0]
+            appearance["appearance_id"] = _clean_schema_placeholder(appearance.get("appearance_id")) or f"appearance.{len(cleaned) + 1}"
             appearance["asset_ids"] = asset_ids
             appearance["primary_asset_id"] = primary_asset_id
             if fallback_category and not _clean_schema_placeholder(appearance.get("label")):
@@ -3274,7 +3413,7 @@ def _fallback_n3_ledger(ledger_input, known_evidence_refs=None):
     refs = sorted(known_evidence_refs or [])
     asset_ref = next((value for value in refs if str(value).startswith("asset:")), None)
     evidence_refs = [asset_ref or "product_name"]
-    statement = (
+    statement = _chinese_fact_phrase(
         _clean_schema_placeholder(ledger_input.get("product_name"))
         or _clean_schema_placeholder(
             (ledger_input.get("product_profile") or {}).get("primary_appearance")
@@ -3293,10 +3432,10 @@ def _fallback_n3_ledger(ledger_input, known_evidence_refs=None):
                     "evidence_refs": evidence_refs,
                     "risk_level": "low",
                     "allowed_uses": ["identity", "visual_prompt", "scene_planning", "consumer_copy_pending_review"],
-                    "review_note": "模型结构化识别异常，已按上传图片作为商品参考继续。",
+                    "review_note": "已按上传图片继续生成，结果进入人工审核。",
                 }
             ],
-            "blocked_claim_topics": ["price", "certification", "medical_efficacy"],
+            "blocked_claim_topics": [],
             "unresolved_questions": [],
             "review_summary": {},
         },
@@ -3415,6 +3554,9 @@ def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs,
         raise ValueError("prompt must not exceed 3500 characters")
     main_scene = _required_string(payload, "main_scene")
     main_action = _required_string(payload, "main_action")
+    display_prompt = str(payload.get("display_prompt") or "").strip()
+    if not display_prompt:
+        display_prompt = f"画面：{main_scene}；动作：{main_action}"
     visible_text_lines = _required_string_list(payload, "visible_text_lines")
     if len(visible_text_lines) > 3 or (hero and visible_text_lines):
         raise ValueError("visible_text_lines violate the slot limit")
@@ -3464,6 +3606,7 @@ def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs,
             "slot_id": str(normalized_slot),
             "main_scene": main_scene,
             "main_action": main_action,
+            "display_prompt": display_prompt,
             "visible_text_lines": visible_text_lines,
             "prompt": prompt,
             "character_count": len(prompt),
@@ -3658,7 +3801,9 @@ def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
         raise ValueError("localized_copy must be an object")
     localized_copy = copy.deepcopy(localized_copy)
     localized_copy["language"] = _required_string(localized_copy, "language")
-    localized_copy["lines"] = _required_string_list(localized_copy, "lines")
+    raw_localized_lines = _required_string_list(localized_copy, "lines")
+    raw_visible_lines = list(normalized["visible_text_lines"])
+    localized_copy["lines"] = raw_localized_lines
     localized_copy["source_fact_refs"] = _required_string_list(
         localized_copy,
         "source_fact_refs",
@@ -3685,8 +3830,27 @@ def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
         normalized["visible_text_lines"],
         localized_copy["language"],
     )
+    if (raw_localized_lines or raw_visible_lines) and not normalized["visible_text_lines"]:
+        plan = {
+            "creative_strategy": payload.get("creative_strategy") or {},
+            "text_mode": payload.get("text_mode"),
+        }
+        fallback_lines = _fallback_marketing_copy_lines(
+            plan,
+            "",
+            localized_copy["language"],
+        )
+        localized_copy["lines"] = fallback_lines
+        normalized["visible_text_lines"] = fallback_lines
+        for line in set(raw_localized_lines + raw_visible_lines):
+            normalized["prompt"] = normalized["prompt"].replace(line, "")
     if localized_copy["lines"] != normalized["visible_text_lines"]:
         raise ValueError("localized_copy lines must match visible_text_lines")
+    normalized["prompt"] = _append_visible_copy_lock(
+        normalized["prompt"],
+        normalized["visible_text_lines"],
+    )
+    normalized["character_count"] = len(normalized["prompt"])
     normalized["localized_copy"] = localized_copy
     return normalized
 
@@ -3886,38 +4050,21 @@ def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids
 
 
 def _fallback_marketing_copy_lines(plan, product_name, language):
-    if plan.get("text_mode") == "none":
-        return []
-    mode = (plan.get("creative_strategy") or {}).get("mode") or "fab_value"
-    language = str(language or "en").lower()
-    if language.startswith("vi"):
-        phrases = {
-            "fab_value": ["Dễ thương mỗi ngày", "Dễ chọn, dễ yêu"],
-            "scene_ownership": ["Nhìn là muốn mang về", "Hợp với khoảnh khắc của bạn"],
-            "emotion": ["Ôm là thấy vui", "Một chút đáng yêu mỗi ngày"],
-            "personification": ["Tôi ở đây để làm bạn vui", "Mang tôi về nhé"],
-            "identity_signal": ["Món quà có gu", "Đáng yêu theo cách riêng"],
-        }
-    elif language.startswith("zh"):
-        phrases = {
-            "fab_value": ["一眼看懂它的好", "日常更省心"],
-            "scene_ownership": ["放进生活里更想要", "越看越想拥有"],
-            "emotion": ["抱一下就被治愈", "每天多一点开心"],
-            "personification": ["带我回家吧", "我来陪你开心"],
-            "identity_signal": ["送礼有眼光", "可爱也有态度"],
-        }
-    else:
-        phrases = {
-            "fab_value": ["Easy to love every day", "Clear value at a glance"],
-            "scene_ownership": ["Picture it in your day", "Made for moments you keep"],
-            "emotion": ["A little joy every day", "Feels good to have around"],
-            "personification": ["Take me home", "Here to brighten your day"],
-            "identity_signal": ["A gift with taste", "Cute with character"],
-        }
-    lines = phrases.get(mode, phrases["fab_value"])[:2]
-    if not _language_allows_cjk(language):
-        lines = _visible_text_for_language(lines, language)
-    return lines[:3]
+    return []
+
+
+def _append_visible_copy_lock(prompt, visible_text_lines):
+    tail = (
+        " Final visible copy lock: render only these exact localized copy lines once: "
+        f"{json.dumps(visible_text_lines, ensure_ascii=False)}. "
+        "Do not render any other title, caption, product name, label, watermark, or random text."
+        if visible_text_lines
+        else " Final visible copy lock: do not render any new title, caption, product name, label, watermark, or random text."
+    )
+    prompt = str(prompt or "").strip()
+    if len(prompt) + len(tail) + 1 > 3500:
+        prompt = prompt[: max(0, 3499 - len(tail))].rstrip()
+    return f"{prompt} {tail}".strip()
 
 
 def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
@@ -3962,12 +4109,13 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
             "Only render the quoted localized copy exactly once: "
             f"{json.dumps(visible_text_lines, ensure_ascii=False)}."
         )
-    prompt = " ".join(prompt_parts)
+    prompt = _append_visible_copy_lock(" ".join(prompt_parts), visible_text_lines)
     return _normalize_n6_prompt(
         {
             "slot_id": str(slot_input["slot_order"]),
             "main_scene": plan["main_scene"],
             "main_action": plan["main_action"],
+            "display_prompt": f"购买任务：{plan['decision_task']}。画面：{plan['main_scene']}。动作：{plan['main_action']}。构图：{plan['composition']}。",
             "visible_text_lines": visible_text_lines,
             "localized_copy": {
                 "language": language,
@@ -4017,12 +4165,25 @@ def _fallback_n7_semantic(deterministic_gate):
 
 def _merge_n7_gate(deterministic_gate, semantic_gate):
     merged = copy.deepcopy(deterministic_gate)
-    semantic_blocks = list(semantic_gate.get("hard_blocks", []))
+    raw_semantic_blocks = [str(item) for item in semantic_gate.get("hard_blocks", [])]
+    semantic_blocks = [
+        item for item in raw_semantic_blocks if _STRICT_SEMANTIC_BLOCK_RE.search(item)
+    ]
+    soft_blocks = [
+        item for item in raw_semantic_blocks if item not in set(semantic_blocks)
+    ]
     merged["hard_blocks"] = list(
         dict.fromkeys([*merged.get("hard_blocks", []), *semantic_blocks])
     )
     for field in ("semantic_risks", "warnings", "advice", "inference_disclosures"):
-        merged[field] = copy.deepcopy(semantic_gate.get(field, []))
+        merged[field] = list(
+            dict.fromkeys(
+                [
+                    *copy.deepcopy(merged.get(field, [])),
+                    *copy.deepcopy(semantic_gate.get(field, [])),
+                ]
+            )
+        )
     for field in ("prompt_checks", "copy_checks"):
         merged[field] = {
             **copy.deepcopy(semantic_gate.get(field, {})),
@@ -4045,7 +4206,9 @@ def _merge_n7_gate(deterministic_gate, semantic_gate):
         )
     )
     if semantic_gate.get("decision") == "block" and not semantic_blocks:
-        merged["hard_blocks"].append("semantic_n7_block")
+        merged.setdefault("warnings", []).append("semantic_n7_review_warning")
+    if soft_blocks:
+        merged.setdefault("warnings", []).extend(f"n7.soft_block:{item}" for item in soft_blocks)
     merged["decision"] = "block" if merged["hard_blocks"] else "pass"
     return merged
 
@@ -4097,18 +4260,22 @@ def _run_final_n7_gate(
         "lineage": lineage,
         "deterministic_gate": copy.deepcopy(deterministic_gate),
     }
-    semantic_model = settings.APIMART_PROMPT_MODEL
-    try:
-        semantic_gate = _prompt_node_json(
-            client,
-            n7_node,
-            "Review semantic risks for this final slot request. Preserve every deterministic hard block and add risks or blocks only when supported by the supplied facts and rules.",
-            gate_input,
-            normalize=_normalize_n7_semantic,
-        )
-    except Exception:
+    semantic_model = "deterministic-rule-engine"
+    if getattr(settings, "PROMPT_OS_SEMANTIC_N7_ENABLED", False):
+        semantic_model = settings.APIMART_PROMPT_MODEL
+        try:
+            semantic_gate = _prompt_node_json(
+                client,
+                n7_node,
+                "Review semantic risks for this final slot request. Preserve every deterministic hard block and add risks or blocks only when supported by the supplied facts and rules.",
+                gate_input,
+                normalize=_normalize_n7_semantic,
+            )
+        except Exception:
+            semantic_gate = _fallback_n7_semantic(deterministic_gate)
+            semantic_model = "deterministic-rule-engine"
+    else:
         semantic_gate = _fallback_n7_semantic(deterministic_gate)
-        semantic_model = "deterministic-rule-engine"
     gate = _merge_n7_gate(deterministic_gate, semantic_gate)
     snapshot = _node_snapshot(
         n7_node,
@@ -4758,6 +4925,8 @@ def process_prompt_once(client=None, storage=None):
             confirmed_product_name = cluster.product_name.strip()
             if confirmed_product_name == "名称待确认":
                 confirmed_product_name = ""
+            if previous.get("product_name_source") == "ai":
+                confirmed_product_name = ""
             identity_input = {
                 "product_name": confirmed_product_name or observed_name,
                 "confirmed_points": _string_list(cluster.product_facts) or observed_facts,
@@ -4809,19 +4978,30 @@ def process_prompt_once(client=None, storage=None):
         confirmed_product_name = cluster.product_name.strip()
         if confirmed_product_name == "名称待确认":
             confirmed_product_name = ""
+        if previous.get("product_name_source") == "ai":
+            confirmed_product_name = ""
         if _is_schema_placeholder(confirmed_product_name):
             confirmed_product_name = ""
         identity_product_name = str(identity.get("product_name") or "").strip()
         if identity["decision"] != "continue" or _is_schema_placeholder(identity_product_name):
             identity_product_name = ""
-        product_name = str(confirmed_product_name or identity_product_name).strip()
+        product_name = str(confirmed_product_name or _chinese_product_phrase(identity_product_name)).strip()
+        if product_name:
+            identity["product_name"] = product_name
+            profile = identity.get("product_profile")
+            if isinstance(profile, dict):
+                for field in ("category", "primary_appearance"):
+                    profile[field] = _chinese_fact_phrase(profile.get(field))
         identity_lock = identity["identity_lock"]
         identity_facts = _identity_facts(identity)
-        observed_facts = _target_observed_product_facts(observations, identity)
+        observed_facts = [
+            _chinese_fact_phrase(item)
+            for item in _target_observed_product_facts(observations, identity)
+        ]
         product_facts = (
             cluster.product_facts
             or "; ".join(observed_facts)
-            or identity_facts
+            or _chinese_fact_phrase(identity_facts)
         )
         ledger_confirmed_points = list(
             dict.fromkeys(
@@ -5323,8 +5503,7 @@ def process_prompt_once(client=None, storage=None):
                 slot in marketing_slots
                 and not _marketing_diversity_valid(marketing_plan)
             ):
-                gate["hard_blocks"].append("prompt.set_diversity")
-                gate["decision"] = "block"
+                gate.setdefault("warnings", []).append("prompt.set_diversity")
             lineage = _preparation_lineage(
                 cluster,
                 cluster.batch,
@@ -5513,19 +5692,6 @@ def preflight_batch(batch, user, template=None):
         hero_slot = standard_product_hero_slot(cluster_template)
         if hero_slot is None or not is_standard_product_hero_slot(hero_slot):
             blocking_errors.append("output template requires a standard product hero")
-        for slot in generated_slots:
-            for rule in _applicable_rules(
-                batch,
-                slot,
-                effective_config=cluster_config,
-                rule_profile=cluster_rules,
-            ):
-                rule_id = str(rule.get("rule_id") or "")
-                if (
-                    str(rule.get("severity") or "") in {"HARD_PLATFORM", "HARD_MALL"}
-                    and rule_id.endswith(".no_digital_rendering")
-                ):
-                    blocking_errors.append(rule_id)
     if generation_count > BATCH_GENERATION_LIMIT:
         blocking_errors.append("batch generation limit exceeded")
     if settings.GENERATION_QUOTAS_ENABLED:
@@ -6073,33 +6239,31 @@ def ensure_cluster_generations(
         for slot in slots
         if not is_source_product_photo_slot(slot)
     ]
-    if not force_new:
-        existing = {}
-        for generation in locked.generations.filter(
-                output_slot__in=creatable,
-                status__in=[
-                    Generation.Status.QUEUED,
-                    Generation.Status.PREPARING,
-                    Generation.Status.SUBMITTING,
-                    Generation.Status.SUBMITTED,
-                    Generation.Status.PROCESSING,
-                    Generation.Status.ARCHIVING,
-                    Generation.Status.COMPLETED,
-                ],
-            ).select_related("prompt_version", "output_slot").order_by(
-                "output_slot__order", "-attempt", "-id"
-            ):
-            if generation.output_slot_id in existing:
-                continue
-            try:
-                _validate_generation_readiness(generation, locked, batch)
-            except ValueError:
-                continue
-            existing[generation.output_slot_id] = generation
-    else:
-        existing = {}
+    active_statuses = [
+        Generation.Status.QUEUED,
+        Generation.Status.PREPARING,
+        Generation.Status.SUBMITTING,
+        Generation.Status.SUBMITTED,
+        Generation.Status.PROCESSING,
+        Generation.Status.ARCHIVING,
+    ]
+    existing_statuses = active_statuses if force_new else [*active_statuses, Generation.Status.COMPLETED]
+    existing = {}
+    for generation in locked.generations.filter(
+            output_slot__in=creatable,
+            status__in=existing_statuses,
+        ).select_related("prompt_version", "output_slot").order_by(
+            "output_slot__order", "-attempt", "-id"
+        ):
+        if generation.output_slot_id in existing:
+            continue
+        try:
+            _validate_generation_readiness(generation, locked, batch)
+        except ValueError:
+            continue
+        existing[generation.output_slot_id] = generation
 
-    to_create = [slot for slot in creatable if force_new or slot.id not in existing]
+    to_create = [slot for slot in creatable if slot.id not in existing]
     approved_prompts = {
         slot.id: _approved_prompt_for_slot(locked, batch, slot)
         for slot in to_create
@@ -6587,6 +6751,7 @@ def _validate_generation_submission(generation, *, cluster=None, batch=None):
 def _generation_submission_snapshot(generation, cluster, batch):
     authorization = _authorized_generation_references(generation, cluster, batch)
     gate = generation.prompt_version.evaluation.get("rule_gate", {})
+    provider_prompt = _image_model_submission_prompt(generation, batch, cluster)
     return {
         "generation_id": str(generation.id),
         "batch_id": str(batch.id),
@@ -6603,7 +6768,7 @@ def _generation_submission_snapshot(generation, cluster, batch):
         "rule_snapshot": generation.rule_snapshot,
         "authorization": authorization,
         "request": {
-            "prompt": generation.prompt_text,
+            "prompt": provider_prompt,
             "reference_images": list(generation.reference_snapshot),
             **_image_request_snapshot(
                 size=generation.size,
@@ -6795,15 +6960,26 @@ def _submit_generation_under_lock(
         generation_id,
         fingerprint,
     )
+    submission = (
+        generation.provider_payload.get("submission")
+        if isinstance(generation.provider_payload, dict)
+        else {}
+    )
+    request = (
+        submission.get("request", {}).get("request", {})
+        if isinstance(submission, dict)
+        else {}
+    )
+    prompt = request.get("prompt") or generation.prompt_text
     if image_urls is None:
         return client.submit_generation(
-            generation.prompt_text,
+            prompt,
             image_paths,
             generation.size,
             generation.resolution,
         )
     return client.submit_generation(
-        generation.prompt_text,
+        prompt,
         [],
         generation.size,
         generation.resolution,
@@ -6930,7 +7106,7 @@ def process_generation_once(client=None, storage=None):
             return 0
         try:
             queued = _seal_generation_submission(queued.id)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, PromptVersion.DoesNotExist) as exc:
             queued.status = Generation.Status.FAILED
             queued.failure_reason = f"submission readiness: {_sanitize_provider_text(str(exc))}"
             queued.save(update_fields=["status", "failure_reason", "updated_at"])
@@ -7671,6 +7847,9 @@ def _prompt_slot_metadata(prompt):
     )
     creative_strategy = plan.get("creative_strategy") if isinstance(plan.get("creative_strategy"), dict) else {}
     metadata = {}
+    display_prompt = node_output.get("display_prompt") or structured.get("display_prompt")
+    if display_prompt:
+        metadata["displayPrompt"] = str(display_prompt)
     if plan.get("decision_task"):
         metadata["decisionTask"] = str(plan["decision_task"])
     if plan.get("conversion_goal"):

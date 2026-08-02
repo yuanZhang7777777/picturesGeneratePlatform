@@ -291,6 +291,7 @@ N6_SCHEMA = _object(
         "slot_id": STRING,
         "main_scene": STRING,
         "main_action": STRING,
+        "display_prompt": STRING,
         "visible_text_lines": STRING_ARRAY,
         "localized_copy": _object(
             {
@@ -435,7 +436,7 @@ N2_INSTRUCTION = """
 存在至少一张有效实物图时优先 continue，单张观察失败、品类不确定、名称与视觉不完全一致都不能阻断其他有效图。仅在实物全部不可辨、空白或没有任何商品参考时 needs_input。continue 时 category、identity_lock.must_not_change、primary_asset_id 和非空 target_appearances 必填；needs_input 时 target_appearances 为空并说明具体缺口。
 
 # 严格输出
-只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、代码围栏或额外字段。必须返回最终 product_name 与 conflict_state（match/unknown/conflict）；confidence 为 0–100 整数。verified_use_relationships、exact_component_constraints 等字段必须存在，即使为空数组。不得创建新商品事实。格式失败只允许同输入修复一次。
+只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、代码围栏或额外字段。必须返回最终 product_name 与 conflict_state（match/unknown/conflict）；product_name 面向中国运营界面，优先输出简洁中文名称，品牌/型号可保留原文。confidence 为 0–100 整数。verified_use_relationships、exact_component_constraints 等字段必须存在，即使为空数组。不得创建新商品事实。格式失败只允许同输入修复一次。
 """.strip()
 
 
@@ -506,6 +507,7 @@ N5_CORE = """
 
 # 八个互不重复的购买决策任务
 八个营销槽位按输入职责覆盖并保持独立：第二视角与结构确认、核心收益、事实证明、使用理解、细节信任、尺度或适配、规格包装或包含物、场景体验与购买收尾。缺少规格、包装或包含物证据时，相应槽位改为尚未覆盖的低风险购买疑问，例如“怎么用、为什么更顺手、放在哪里、谁会喜欢、什么场合想带走”，不得重复既有卖点或发明事实。
+所有运营可见字段用中文输出，包括 decision_task、conversion_goal、copy_intent、main_scene、main_action、subject_relationship、composition、localization_notes、must_show、must_avoid 和 creative_strategy 内的文案字段。不要输出英文口号或英文图片 Prompt；英文生图指令由 N6 编译。
 
 # 五种转化文案策略
 每槽必须从 creative_strategy.mode 的五种候选中选一个主策略：fab_value、scene_ownership、emotion、personification、identity_signal。先做 Feature→Advantage→Benefit：把商品可验证 feature 翻译成 advantage，再翻译成 consumer_benefit；再用 scene_ownership 的 mental simulation 做“买家脑中正在使用它”的画面，用 emotion 写使用前后的情绪变化，用 personification 让商品以轻口吻说一个价值点，用 identity_signal 让商品代表审美、品位、送礼眼光或自我表达。八图至少覆盖四种 mode，至少一张 fab_value，personification 默认最多一张。执行 cross-slot diversity：不同槽位不能只换形容词复用同一购买问题、同一场景、同一动作、同一光线或同一构图。
@@ -551,7 +553,8 @@ N5_PLATFORM = {
 
 N6_CORE = """
 # 角色与任务
-你是本地化单槽图片 Prompt 编译器。一次只编译一个营销槽位，将 N5 计划、商品身份、事实台账、市场上下文、规则指令与参考图计划压缩为严格 JSON，其中 prompt 是一条可直接交给 gpt-image-2 的英文图片生成指令。你不重新策划八图、不创建事实、不改变槽位职责。
+你是本地化单槽图片 Prompt 编译器。一次只编译一个营销槽位，将 N5 的中文营销策划、商品身份、事实台账、市场上下文、规则指令与参考图计划压缩为严格 JSON。display_prompt 是给中国运营看的中文画面策划稿，可直接在前端编辑；prompt 是在 display_prompt 确认后编译出的英文 gpt-image-2 生图指令。你不重新策划八图、不创建事实、不改变槽位职责。
+display_prompt 必须用中文写清楚：这张图解决什么购买疑虑、画面怎么拍、主体和功能部件如何出现、是否有当地语言图片文案、构图/光线/道具如何服务购买理由。不要在 display_prompt 里写英文字段名或模型内部说明。
 
 # 输入优先级与冲突修正
 优先级依次为：系统安全与硬规则；identity_lock；confirmed 事实与已验证真实使用关系；当前 slot_plan 的购买决策；允许用途匹配的 observed/inferred；抽象风格。当前计划若与更高优先级冲突，静默纠正并在 trace 中保留使用的真实 ID，不得保留错误摆法、错误数量或虚构卖点。
@@ -615,7 +618,7 @@ N6_PLATFORM = {
 """.strip(),
     "shopee": """
 # Shopee 本地化
-严格按 market_context 映射：SG 与 PH 使用自然当地电商英语；MY 使用 Bahasa Malaysia，不混入印尼地区词；TH 使用自然现代泰语；VN 使用带完整声调的自然越南语；ID 使用标准 Bahasa Indonesia；TW 使用台湾繁体中文与当地商品表达；BR 使用巴西葡萄牙语 pt-BR。market_context 不得强制房间、街景、色彩、人种或国家场景，只控制语言与硬规则。不得显示 Shopee 徽标、站点代码、语言名、页面序号或内部页面职责。站点语言无法可靠生成时阻断，不回退英语。
+严格按 market_context 映射：SG 与 PH 使用自然当地电商英语；MY 使用 Bahasa Malaysia，不混入印尼地区词；TH 使用自然现代泰语；VN 使用带完整声调的自然越南语；ID 使用标准 Bahasa Indonesia；TW 使用台湾繁体中文与当地商品表达；BR 使用巴西葡萄牙语 pt-BR。market_context 不得强制房间、街景、色彩、人种或国家场景，只控制语言与硬规则。不得显示 Shopee 徽标、站点代码、语言名、页面序号或内部页面职责。站点语言无法可靠生成时先自动改成无文字图或写入 warnings，不回退英语，也不阻断生图。
 """.strip(),
     "tiktok": """
 # TikTok Shop 本地化
@@ -640,14 +643,14 @@ N7_CORE = """
 
 # Prompt、文字与语义检查
 1. 最终 Prompt 按 Unicode 字符计数超过 3500、visible_text_lines 超过三行、存在两个以上主场景/动作、白底图新增文字、规则禁字仍有文字，均为 hard block。
-2. copy_checks 必须复核 localized_copy.lines 与 visible_text_lines 逐字一致，且每行在最终 prompt 中恰好出现一次。可见文字必须匹配目标语言，只允许列出的本地化文案和商品真实品牌/型号。检查本地化文字是否流畅、无歧义、符合当前场景和商品事实；不流畅、歧义明显、语境不合或像机器直译时列入 semantic_risks，可能误导消费者时 block。字段名、站点代码、乱码、额外促销文案或站外联系信息必须阻断。
-3. 对空泛、重复或低具体性的文案只标记为可自动重写一次，不直接当成平台硬规则；自动重写仍必须保留事实引用、目标语言和文字锁。若重写后仍空泛或重复，则 block 当前槽位。
-4. 价格、虚假促销、未验证认证、疗效、减重、美容前后对比、绝对效果、站外导流、未授权 IP、危险或歧视内容不得通过。高风险 inferred 进入消费者文案必须 block。
+2. copy_checks 必须复核 localized_copy.lines 与 visible_text_lines 逐字一致，且每行在最终 prompt 中恰好出现一次。可见文字必须匹配目标语言，只允许列出的本地化文案和商品真实品牌/型号。检查本地化文字是否流畅、无歧义、符合当前场景和商品事实；不流畅、歧义明显、语境不合、像机器直译、字段名、站点代码、乱码、额外促销文案或站外联系信息默认写入 semantic_risks/warnings，交给人工审核，不阻断生图。
+3. 对空泛、重复或低具体性的文案只标记为可自动重写一次，不直接当成平台硬规则；自动重写仍必须保留事实引用、目标语言和文字锁。若重写后仍空泛或重复，只写 warnings，不阻断当前槽位。
+4. 价格/折扣、虚假促销、未验证认证/奖项、医疗疗效、减重、美容前后对比、100%/绝对效果、站外导流、未授权 IP 只写 warnings/semantic_risks，交给人工审核，不阻断普通生图。只有违法、色情、暴力、仇恨、未成年人安全、自伤等安全红线可以形成新增 hard block。其他平台差异、商品身份不确定、文案质量和构图风险只做 warnings/semantic_risks，优先让图片生成并进入人工审核。
 5. 只判断具体语义问题，结论必须引用输入 rule_id、fact_id 或 inference fact_id。不得因文案营销性强就自动违规，也不得虚构平台官方规则。
 6. ADVICE 未满足只能进入 warnings；UNVERIFIED 只提示人工复核。仅明确 HARD_PLATFORM、HARD_MALL、系统安全或 APIMart 契约可形成相应硬阻断。
 
 # 决策和严格输出
-保留确定性引擎已有结论；发现新增硬问题时 decision=block 并追加 hard_blocks。无法确认且涉及未解析语义硬规则时 block；其他不确定内容写 semantic_risks 并要求人工复核。pass 只表示可提交本次请求，不表示生成结果审核通过或可导出。
+保留确定性引擎已有真正硬结论；只有上述极高风险内容才 decision=block 并追加 hard_blocks。无法确认、图片识别弱、身份不完整、文案普通或平台差异不清楚时，不要 block，写 semantic_risks/warnings 并要求人工复核。pass 只表示可提交本次请求，不表示生成结果审核通过或可导出。
 
 只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、代码围栏或额外字段。prompt_checks 必须填写实际字符数、文字行数、场景/动作数和参考有效性；resolved_rule_refs 不得省略。语义模型失败时调用方保留确定性结论，不得用空结果覆盖。
 """.strip()

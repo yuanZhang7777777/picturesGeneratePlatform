@@ -14,18 +14,6 @@ const defaultPrompts = [
   "补充转化图",
 ].map((slot, index) => ({ slotOrder: index + 1, slot, text: "" }));
 
-const riskLabels: Record<string, string> = { low: "低风险", medium: "中风险", high: "高风险" };
-const claimTopicLabels: Record<string, string> = {
-  price: "价格/折扣",
-  promotion: "促销活动",
-  certification: "认证/奖项",
-  medical_efficacy: "医疗/疗效",
-  weight_management: "减重效果",
-  beauty_before_after: "美妆前后对比",
-  off_platform_redirect: "站外联系方式",
-  warranty: "质保承诺",
-  country_of_origin: "产地",
-};
 const strategyLabels: Record<string, string> = {
   fab_value: "FAB价值",
   scene_ownership: "场景代入",
@@ -35,9 +23,48 @@ const strategyLabels: Record<string, string> = {
 };
 
 type PromptDraft = {
-  identityLock: string;
   prompts: ProductPrompt[];
 };
+
+function visiblePromptText(prompt: ProductPrompt) {
+  const displayPrompt = prompt.displayPrompt?.trim() ?? "";
+  if (displayPrompt && !isInternalImagePrompt(displayPrompt) && !isEnglishHeavy(displayPrompt)) return displayPrompt;
+  const parts = [
+    prompt.decisionTask ? `购买任务：${prompt.decisionTask}` : "",
+    prompt.conversionGoal && prompt.conversionGoal !== prompt.decisionTask ? `转化目标：${prompt.conversionGoal}` : "",
+    prompt.creativeStrategy?.consumerBenefit ? `用户价值：${prompt.creativeStrategy.consumerBenefit}` : "",
+    prompt.creativeStrategy?.mentalSimulation ? `场景代入：${prompt.creativeStrategy.mentalSimulation}` : "",
+    prompt.creativeStrategy?.emotionalShift ? `情绪触发：${prompt.creativeStrategy.emotionalShift}` : "",
+    prompt.localizedCopy?.lines?.length ? `图片文案：${prompt.localizedCopy.lines.join(" / ")}` : "",
+  ].filter((part) => /[\u3400-\u9fff]/.test(part) || /[^\x00-\x7F]/.test(part));
+  if (parts.length) return parts.join("\n");
+  if (/[\u3400-\u9fff]/.test(prompt.text) && !isInternalImagePrompt(prompt.text) && !isEnglishHeavy(prompt.text)) return prompt.text;
+  return fallbackChinesePrompt(prompt.slotOrder);
+}
+
+function isInternalImagePrompt(value: string) {
+  return /Create a|Only render|Scene:|Composition:|Reference|Product facts|buyer motivation|product category|visible text|frame|prompt instructions/i.test(value);
+}
+
+function isEnglishHeavy(value: string) {
+  const english = (value.match(/[A-Za-z]/g) ?? []).length;
+  const chinese = (value.match(/[\u3400-\u9fff]/g) ?? []).length;
+  return english > Math.max(18, chinese * 2);
+}
+
+function fallbackChinesePrompt(order: number) {
+  return [
+    "突出完整商品，干净白底，方便上架。",
+    "把最容易打动买家的核心好处讲清楚。",
+    "展示商品细节、质感或结构，让买家相信品质。",
+    "用真实动作说明商品怎么用、解决什么问题。",
+    "设计一个能让买家代入的使用场景。",
+    "展示商品大小、使用对象或空间比例。",
+    "说明尺寸、包装或包含物；没有包装资料时只展示商品本身。",
+    "做一张适合平台列表转化的营销图。",
+    "补充最后一个购买理由，让买家愿意下单。",
+  ][order - 1] ?? `第 ${order} 张图的中文画面策划。`;
+}
 
 function promptsFromSku(sku: ProductSku) {
   const promptsByOrder = new Map((sku.prompts ?? []).map((prompt) => [prompt.slotOrder, prompt]));
@@ -46,14 +73,36 @@ function promptsFromSku(sku: ProductSku) {
 
 function draftFromSku(sku: ProductSku): PromptDraft {
   return {
-    identityLock: sku.identityLock,
-    prompts: promptsFromSku(sku),
+    prompts: promptsFromSku(sku).map((prompt) => ({ ...prompt, text: visiblePromptText(prompt) })),
   };
 }
 
 function ruleMessage(value: RuleGateMessage) {
-  if (typeof value === "string") return value;
+  const raw = typeof value === "string" ? value : value.message ?? value.reason ?? value.statement ?? value.rule_id ?? "需人工复核";
+  const labels: Record<string, string> = {
+    "copy.high_risk_claim": "图片文案包含医疗、认证、价格折扣或 100% 承诺，生成后请人工确认",
+    "semantic_n7_review_warning": "系统建议人工复核，但不会阻止出图",
+    "copy.literal_lock": "图片文案可能没有逐字匹配，生成后请重点审核文字",
+    "copy.unknown_fact_ref": "图片文案引用了未确认信息，生成后请重点审核",
+    "prompt.visible_text_max_three_lines": "图片文案超过 3 行，生成后请重点审核",
+    "hero.no_added_text": "白底图建议不加文字，生成后请重点审核",
+  };
+  if (raw.startsWith("n7.soft_block:")) return `系统建议人工复核：${labels[raw.slice("n7.soft_block:".length)] ?? raw.slice("n7.soft_block:".length)}`;
+  if (/no_added_text|no_digital_rendering/i.test(raw)) return "平台规则提示：生成后请人工确认是否适合上架";
+  if (/image_role|visible product identity|observed_identity|N2|evidence_refs|fact_refs|reference_plan|schema|JSON|must be/i.test(raw)) return "系统结构化识别提示：已继续出图，结果需人工复核";
+  if (/price|discount/i.test(raw)) return "价格/折扣";
+  if (/certification|certified/i.test(raw)) return "认证/奖项";
+  if (/medical|efficacy|cure/i.test(raw)) return "医疗/疗效";
+  if (/100/.test(raw)) return "100% 或绝对承诺";
+  if (labels[raw]) return labels[raw];
+  if (typeof value === "string") return raw;
   return value.message ?? value.reason ?? value.statement ?? value.rule_id ?? "需人工复核";
+}
+
+function quietGateMessage(value: RuleGateMessage) {
+  const raw = typeof value === "string" ? value : value.message ?? value.reason ?? value.statement ?? value.rule_id ?? "";
+  const combined = `${raw} ${ruleMessage(value)}`;
+  return /copy\.high_risk_claim|copy\.literal_lock|semantic_n7_review_warning|price|certification|medical|discount|high.?risk|结构化识别|人工复核|复核|高风险|未确认|缺少确认|推断|消费者文案|发布前|价格|折扣|认证|奖项|医疗|疗效|材质/i.test(combined);
 }
 
 function evidenceLabel(value: string) {
@@ -63,18 +112,15 @@ function evidenceLabel(value: string) {
   return value;
 }
 
-function claimTopicLabel(value: string) {
-  return claimTopicLabels[value] ?? value;
-}
-
 function promptMeta(prompt: ProductPrompt) {
   const mode = prompt.creativeStrategy?.mode ?? prompt.localizedCopy?.strategyMode;
   const label = mode ? strategyLabels[mode] ?? mode : "";
   const copyLines = prompt.localizedCopy?.lines?.filter(Boolean) ?? [];
+  const task = prompt.decisionTask ?? prompt.conversionGoal ?? "";
   return {
     label,
     copyLines,
-    task: prompt.decisionTask ?? prompt.conversionGoal ?? "",
+    task: /[\u3400-\u9fff]/.test(task) ? task : "",
     backTranslation: prompt.localizedCopy?.backTranslation ?? "",
   };
 }
@@ -112,7 +158,7 @@ export function PromptEditor({
       setDraft(next);
       setSavedDraft(next);
     }
-  }, [sku.id, sku.version, sku.identityLock, sku.prompts, dirty]);
+  }, [sku.id, sku.version, sku.prompts, dirty]);
 
   const updatePrompt = (slotOrder: number, text: string) => {
     setDraft((current) => ({ ...current, prompts: current.prompts.map((prompt) => prompt.slotOrder === slotOrder ? { ...prompt, text } : prompt) }));
@@ -121,9 +167,8 @@ export function PromptEditor({
     const next = draft;
     try {
       const result = await onSave({
-        identity_lock: next.identityLock,
         prompts: next.prompts
-          .filter((prompt) => !prompt.readOnly && prompt.text.trim())
+          .filter((prompt) => !prompt.readOnly && prompt.text.trim() && prompt.text !== savedDraft.prompts.find((item) => item.slotOrder === prompt.slotOrder)?.text)
           .map((prompt) => ({ slot_order: prompt.slotOrder, prompt: prompt.text })),
       });
       pendingVersion.current = result?.version ?? null;
@@ -135,9 +180,9 @@ export function PromptEditor({
   const ledger = sku.analysisSnapshot?.fact_ledger;
   const gate = sku.analysisSnapshot?.rule_gate;
   const facts = ledger?.facts ?? [];
-  const hardBlocks = gate?.hard_blocks ?? [];
-  const semanticRisks = gate?.semantic_risks ?? [];
-  const warnings = gate?.warnings ?? [];
+  const hardBlocks = (gate?.hard_blocks ?? []).filter((item) => !quietGateMessage(item));
+  const semanticRisks = (gate?.semantic_risks ?? []).filter((item) => !quietGateMessage(item));
+  const warnings = (gate?.warnings ?? []).filter((item) => !quietGateMessage(item));
   const hasGateSummary = hardBlocks.length + semanticRisks.length + warnings.length > 0;
   const preparation = sku.preparation;
   const preparing = ["pending", "preparing"].includes(preparation?.status ?? sku.preparationStatus ?? "");
@@ -145,18 +190,18 @@ export function PromptEditor({
   const progressCurrent = Math.min(preparation?.current ?? 0, progressTotal);
   const stage = preparation?.stage ?? "";
   const promptStage = ["N4", "N5", "N6", "N7"].includes(stage);
-  const progressLabel = promptStage ? "Prompt / 规则生成中" : "商品识别分析中";
-  const promptPlaceholder = preparing && !promptStage ? "商品识别和事实分析完成后，会自动生成并加载到这里" : preparing ? "正在生成这个槽位的 Prompt，生成后会自动加载到这里" : "预备生成后显示，可人工微调";
+  const progressLabel = promptStage ? "正在生成 1+8 提示词" : "正在读取并理解商品图片";
+  const promptPlaceholder = preparing && !promptStage ? "商品图片读取完成后，会自动生成中文提示词" : preparing ? "正在生成这个槽位的中文提示词" : "预备生成后显示，可人工微调";
 
   return (
     <section className="mt-4 space-y-4">
       {ledger && (
         <section className="rounded-lg border border-slate-200 bg-slate-50 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-slate-800">推断台账</h3>
+            <h3 className="text-sm font-semibold text-slate-800">商品识别信息</h3>
             {ledger.review_summary && (
               <p className="text-xs text-slate-500">
-                确认 {ledger.review_summary.confirmed_count} · 观察 {ledger.review_summary.observed_count} · 推断 {ledger.review_summary.inferred_count} · 高风险 {ledger.review_summary.high_risk_count}
+                确认 {ledger.review_summary.confirmed_count} · 图片观察 {ledger.review_summary.observed_count} · 辅助判断 {ledger.review_summary.inferred_count}
               </p>
             )}
           </div>
@@ -165,22 +210,19 @@ export function PromptEditor({
               <article className="rounded-md bg-white px-3 py-2" key={fact.fact_id}>
                 <p className="text-sm text-slate-800">{fact.statement}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {{ confirmed: "已确认", observed: "已观察", inferred: "合理推断" }[fact.fact_class]} · {Math.round(fact.confidence * 100)}% · {riskLabels[fact.risk_level] ?? "待复核"}
+                  {{ confirmed: "已确认", observed: "图片观察", inferred: "辅助判断" }[fact.fact_class]} · {Math.round(fact.confidence * 100)}%
                 </p>
                 {fact.evidence_refs.length > 0 && <p className="mt-1 text-xs text-slate-400">来源：{Array.from(new Set(fact.evidence_refs.map(evidenceLabel))).join("、")}</p>}
-                {fact.review_note && <p className="mt-1 text-xs text-amber-700">{fact.review_note}</p>}
+                {fact.review_note && !/结构化|异常|price|certification|medical/i.test(fact.review_note) && <p className="mt-1 text-xs text-amber-700">{fact.review_note}</p>}
               </article>
             ))}
           </div>
-          {ledger.blocked_claim_topics && ledger.blocked_claim_topics.length > 0 && (
-            <p className="mt-3 text-xs text-rose-700">这些内容不能靠 AI 猜出来写进图片：{ledger.blocked_claim_topics.map(claimTopicLabel).join("、")}</p>
-          )}
         </section>
       )}
       {hasGateSummary && (
         <section className="rounded-lg border border-rose-200 bg-rose-50 p-3">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-rose-800">规则 / 合规阻断</h3>
+            <h3 className="text-sm font-semibold text-rose-800">{hardBlocks.length ? "规则 / 合规阻断" : "人工复核提示"}</h3>
             {gate?.decision === "block" && <span className="text-xs font-semibold text-rose-700">已阻断</span>}
           </div>
           {hardBlocks.map((item, index) => <p className="mt-2 text-sm text-rose-800" key={`hard-${index}`}>硬阻断：{ruleMessage(item)}</p>)}
@@ -188,19 +230,15 @@ export function PromptEditor({
           {warnings.map((item, index) => <p className="mt-2 text-sm text-slate-600" key={`warning-${index}`}>提示：{ruleMessage(item)}</p>)}
         </section>
       )}
-      <label className="block text-sm font-medium text-slate-700">
-        <span className="mb-2 block">商品身份</span>
-        <textarea aria-label="商品身份" value={draft.identityLock} onChange={(event) => setDraft((current) => ({ ...current, identityLock: event.target.value }))} />
-      </label>
       <section className="rounded-lg bg-slate-50 p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-slate-700">1+8 输出 Prompt</h3>
+          <h3 className="text-sm font-semibold text-slate-700">1+8 输出提示词</h3>
           {preparing && <span className="text-xs font-semibold text-indigo-700">{progressLabel} {progressCurrent}/{progressTotal}</span>}
         </div>
         {preparing && <ProgressBar current={progressCurrent} total={progressTotal} />}
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {draft.prompts.map((prompt) => {
-            const label = `${String(prompt.slotOrder).padStart(2, "0")} ${slotLabel(prompt.slot, prompt.slotOrder)} Prompt`;
+            const label = `${String(prompt.slotOrder).padStart(2, "0")} ${slotLabel(prompt.slot, prompt.slotOrder)}提示词`;
             return (
             <label className="block text-sm font-medium text-slate-700" key={prompt.slotOrder}>
               <span className="mb-2 block">{label}</span>
@@ -222,7 +260,7 @@ export function PromptEditor({
         disabled={disabled}
         onClick={() => void save()}
       >
-        保存 Prompt
+        保存提示词
       </button>
     </section>
   );

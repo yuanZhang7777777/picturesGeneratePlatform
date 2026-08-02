@@ -94,11 +94,24 @@ class OssObjectStorage:
     def save(self, storage_path, data):
         self.bucket.put_object(self._key(storage_path), bytes(data))
 
+    def _raise_file_not_found(self, storage_path, exc):
+        status = getattr(exc, "status", None)
+        name = exc.__class__.__name__
+        if isinstance(exc, KeyError) or status == 404 or name in {"NoSuchKey", "NoSuchObject", "NotFound"}:
+            raise FileNotFoundError(storage_path) from exc
+        raise exc
+
     def read(self, storage_path):
-        return self.bucket.get_object(self._key(storage_path)).read()
+        try:
+            return self.bucket.get_object(self._key(storage_path)).read()
+        except Exception as exc:
+            self._raise_file_not_found(storage_path, exc)
 
     def size(self, storage_path):
-        return int(self.bucket.get_object_meta(self._key(storage_path)).content_length)
+        try:
+            return int(self.bucket.get_object_meta(self._key(storage_path)).content_length)
+        except Exception as exc:
+            self._raise_file_not_found(storage_path, exc)
 
     def delete(self, storage_path):
         self.bucket.delete_object(self._key(storage_path))

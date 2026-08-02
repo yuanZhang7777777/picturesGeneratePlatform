@@ -364,9 +364,10 @@ def test_formal_gated_prompt_runs_platform_n7_and_preserves_all_blocks(monkeypat
     assert cluster.analysis_snapshot["prompt_os"][-1]["node_id"] == "N7.generic"
     assert "NODE N7.generic" in passing.calls[0]["text"]
 
-    with pytest.raises(ValueError, match="semantic.block"):
-        create(GateClient("semantic.block"))
-    assert PromptVersion.objects.filter(cluster=cluster).count() == 1
+    semantic_version = create(GateClient("semantic.block"))
+    assert semantic_version.evaluation["rule_gate"]["decision"] == "pass"
+    assert "n7.soft_block:semantic.block" in semantic_version.evaluation["rule_gate"]["warnings"]
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 2
 
     monkeypatch.setattr(
         "platform_app.services.evaluate_prompt_rule_gate",
@@ -722,6 +723,50 @@ def test_n7_semantic_pass_cannot_remove_deterministic_hard_block():
     assert merged["hard_blocks"] == ["platform.no_text"]
 
 
+def test_n7_semantic_block_without_hard_rule_is_review_warning():
+    from platform_app.services import _merge_n7_gate
+
+    merged = _merge_n7_gate(
+        {"decision": "pass", "hard_blocks": [], "resolved_rule_refs": []},
+        {
+            "decision": "block",
+            "hard_blocks": [],
+            "semantic_risks": ["文案较弱"],
+            "warnings": [],
+            "advice": [],
+            "prompt_checks": {},
+            "resolved_rule_refs": [],
+            "inference_disclosures": [],
+        },
+    )
+
+    assert merged["decision"] == "pass"
+    assert merged["hard_blocks"] == []
+    assert "semantic_n7_review_warning" in merged["warnings"]
+
+
+def test_n7_semantic_non_strict_hard_block_is_softened():
+    from platform_app.services import _merge_n7_gate
+
+    merged = _merge_n7_gate(
+        {"decision": "pass", "hard_blocks": [], "resolved_rule_refs": []},
+        {
+            "decision": "block",
+            "hard_blocks": ["copy.literal_lock"],
+            "semantic_risks": [],
+            "warnings": [],
+            "advice": [],
+            "prompt_checks": {},
+            "resolved_rule_refs": [],
+            "inference_disclosures": [],
+        },
+    )
+
+    assert merged["decision"] == "pass"
+    assert merged["hard_blocks"] == []
+    assert "n7.soft_block:copy.literal_lock" in merged["warnings"]
+
+
 def test_n6_reference_plan_allows_multiple_n2_approved_supporting_assets():
     from platform_app.services import _normalize_n6_prompt
 
@@ -809,8 +854,9 @@ def test_n1_requires_every_authoritative_top_level_field(field):
     }
     payload.pop(field)
 
-    with pytest.raises(ValueError, match=field):
-        _normalize_n1_observation(payload, asset_id)
+    normalized = _normalize_n1_observation(payload, asset_id)
+
+    assert field in normalized
 
 
 @pytest.mark.parametrize(

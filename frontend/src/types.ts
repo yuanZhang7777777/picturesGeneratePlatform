@@ -30,6 +30,7 @@ export interface ProductPrompt {
   slotOrder: number;
   slot: string;
   text: string;
+  displayPrompt?: string;
   readOnly?: boolean;
   decisionTask?: string;
   conversionGoal?: string;

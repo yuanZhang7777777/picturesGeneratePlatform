@@ -1,5 +1,5 @@
 {% extends "platform_app/base.html" %}
-{% block title %}ERP 登录 - 批量出图平台{% endblock %}
+{% block title %}员工登录 - 商品图生产中心{% endblock %}
 {% block head %}
 <style>
   main { max-width: none; padding: 0; }
@@ -11,6 +11,14 @@
       radial-gradient(circle at 18% 20%, rgba(79, 70, 229, .20), transparent 28%),
       radial-gradient(circle at 82% 10%, rgba(14, 165, 233, .16), transparent 26%),
       linear-gradient(135deg, #f8fafc 0%, #eef2ff 52%, #f8fafc 100%);
+  }
+  .login-page::before {
+    content: "";
+    position: fixed;
+    inset: 22px;
+    pointer-events: none;
+    border: 1px solid rgba(255, 255, 255, .72);
+    border-radius: 36px;
   }
   .login-hero {
     padding: 72px clamp(32px, 6vw, 96px);
@@ -56,7 +64,9 @@
     border-radius: 20px;
     background: rgba(255, 255, 255, .68);
     box-shadow: 0 20px 45px rgba(15, 23, 42, .06);
+    transition: transform .18s ease, box-shadow .18s ease;
   }
+  .login-point:hover { transform: translateY(-2px); box-shadow: 0 24px 55px rgba(79, 70, 229, .12); }
   .login-point strong { display: block; color: #0f172a; font-size: 15px; }
   .login-point span { display: block; margin-top: 6px; color: #64748b; font-size: 13px; line-height: 1.5; }
   .login-side {
@@ -100,9 +110,12 @@
     border: 0;
     border-radius: 14px;
     background: linear-gradient(135deg, #111827, #4338ca);
+    box-shadow: 0 18px 34px rgba(67, 56, 202, .22);
     font-size: 16px;
     font-weight: 800;
+    transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
   }
+  .login-submit:hover { transform: translateY(-1px); filter: brightness(1.04); box-shadow: 0 22px 42px rgba(67, 56, 202, .28); }
   .login-note {
     margin: 18px 0 0;
     color: #64748b;
@@ -134,19 +147,19 @@
 <section class="login-page">
   <div class="login-hero">
     <div class="login-eyebrow">内部 AI 商品图生产系统</div>
-    <h1>批量出图，从 ERP 账号开始。</h1>
-    <p>使用员工自己的 ERP 账号登录。首次 ERP 登录成功会自动创建平台账号，后续 SKU 查询也会沿用当前登录人的 ERP 权限。</p>
+    <h1>商品图生产中心</h1>
+    <p>使用公司员工账号登录。首次登录成功会自动开通平台账号，后续 SKU 查询沿用当前员工权限。</p>
     <div class="login-points" aria-label="平台能力">
       <div class="login-point">
-        <strong>ERP 直登</strong>
-        <span>不单独分发平台密码</span>
+        <strong>员工账号</strong>
+        <span>不用单独分发平台密码</span>
       </div>
       <div class="login-point">
         <strong>自动建号</strong>
-        <span>首次通过后建立本地权限归属</span>
+        <span>首次通过后建立本地项目归属</span>
       </div>
       <div class="login-point">
-        <strong>1+8 出图</strong>
+        <strong>1+8 套图</strong>
         <span>白底图先行，审核通过后导出</span>
       </div>
     </div>
@@ -154,8 +167,8 @@
 
   <div class="login-side">
     <section class="login-card" aria-labelledby="login-title">
-      <h2 id="login-title">ERP 账号登录</h2>
-      <p class="muted">输入 ERP 用户名和密码。平台不保存 ERP 密码，只保存本次服务端会话。</p>
+      <h2 id="login-title">员工账号登录</h2>
+      <p class="muted">输入公司用户名和密码。平台不保存密码，只保存本次服务端会话。</p>
       <form method="post">
         {% csrf_token %}
         {% if form.non_field_errors %}
@@ -171,9 +184,9 @@
           {{ form.password }}
           {{ form.password.errors }}
         </div>
-        <button class="login-submit" type="submit">登录 ERP 并进入平台</button>
+        <button class="login-submit" type="submit">登录并进入平台</button>
       </form>
-      <p class="login-note">首次 ERP 登录成功会自动创建平台账号；管理员权限由服务器白名单控制。</p>
+      <p class="login-note">首次登录成功会自动创建平台账号；管理员权限由服务器白名单控制。</p>
     </section>
   </div>
 </section>

@@ -63,21 +63,21 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("shows the Prompt OS fact ledger and compliance block summary", () => {
+test("shows Chinese product recognition details without exposing soft compliance noise", () => {
   render(<PromptEditor sku={sku} onSave={() => undefined} />);
 
-  expect(screen.getByText("推断台账")).toBeInTheDocument();
+  expect(screen.getByText("商品识别信息")).toBeInTheDocument();
   expect(screen.getByText("杯盖为绿色")).toBeInTheDocument();
   expect(screen.getByText("杯身可能为食品级塑料")).toBeInTheDocument();
-  expect(screen.getByText("已确认 · 100% · 低风险")).toBeInTheDocument();
-  expect(screen.getByText("合理推断 · 68% · 高风险")).toBeInTheDocument();
-  expect(screen.getByText("确认 1 · 观察 0 · 推断 1 · 高风险 1")).toBeInTheDocument();
-  expect(screen.getByText(/这些内容不能靠 AI 猜出来写进图片：认证\/奖项、医疗\/疗效、价格\/折扣/)).toBeInTheDocument();
+  expect(screen.getByText("已确认 · 100%")).toBeInTheDocument();
+  expect(screen.getByText("辅助判断 · 68%")).toBeInTheDocument();
+  expect(screen.getByText("确认 1 · 图片观察 0 · 辅助判断 1")).toBeInTheDocument();
+  expect(screen.queryByText(/这些内容不能靠 AI 猜出来写进图片/)).not.toBeInTheDocument();
   expect(screen.queryByText(/certification|medical_efficacy|price/)).not.toBeInTheDocument();
-  expect(screen.getByText("规则 / 合规阻断")).toBeInTheDocument();
-  expect(screen.getByText(/高风险材质推断不得进入消费者文案/)).toBeInTheDocument();
-  expect(screen.getByText(/“食品级”缺少确认来源/)).toBeInTheDocument();
-  expect(screen.getByText(/发布前需人工复核材质/)).toBeInTheDocument();
+  expect(screen.queryByText("规则 / 合规阻断")).not.toBeInTheDocument();
+  expect(screen.queryByText(/高风险材质推断不得进入消费者文案/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/“食品级”缺少确认来源/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/发布前需人工复核材质/)).not.toBeInTheDocument();
 });
 
 test("shows marketing strategy, localized copy and final prompt without JSON field names", () => {
@@ -88,6 +88,7 @@ test("shows marketing strategy, localized copy and final prompt without JSON fie
         slotOrder: 2,
         slot: "核心卖点图",
         text: "Create a bright kitchen scene. Show quoted visible text exactly: \"Xay mịn mỗi sáng\" and \"Mang đi là xay\".",
+        displayPrompt: "通勤前把水果倒入杯中，按下就能带走；画面用明亮厨房和手部动作表现随手现榨。",
         decisionTask: "让用户想象早上随手现榨",
         creativeStrategy: { mode: "scene_ownership", mentalSimulation: "通勤前把水果倒入杯中，按下就能带走" },
         localizedCopy: {
@@ -103,8 +104,27 @@ test("shows marketing strategy, localized copy and final prompt without JSON fie
   expect(screen.getByText(/让用户想象早上随手现榨/)).toBeInTheDocument();
   expect(screen.getByText(/每天早上顺滑搅拌/)).toBeInTheDocument();
   expect(screen.getAllByText(/Xay mịn mỗi sáng/).length).toBeGreaterThan(0);
-  expect((screen.getByLabelText("02 核心卖点图 Prompt") as HTMLTextAreaElement).value).toContain("Create a bright kitchen scene");
+  expect((screen.getByLabelText("02 核心卖点图提示词") as HTMLTextAreaElement).value).toContain("通勤前");
+  expect(screen.queryByText("高级：最终生图指令")).not.toBeInTheDocument();
   expect(screen.queryByText(/localized_copy|creative_strategy|back_translation/)).not.toBeInTheDocument();
+});
+
+test("hides internal English image prompts from operator textareas", () => {
+  render(<PromptEditor sku={{
+    ...sku,
+    prompts: [{
+      slotOrder: 3,
+      slot: "Product detail",
+      text: "Create a polished ecommerce listing image. Scene: a detail fills most of the frame. Only render these exact visible text lines.",
+      decisionTask: "让买家相信产品细节经得起近看",
+      localizedCopy: { language: "th", lines: ["พร้อมใช้ทุกวัน"], backTranslation: "每天都适合使用" },
+    }],
+  }} onSave={() => undefined} />);
+
+  const field = screen.getByLabelText("03 商品细节图提示词") as HTMLTextAreaElement;
+  expect(field.value).toContain("让买家相信产品细节经得起近看");
+  expect(field.value).not.toContain("Create a polished ecommerce");
+  expect(screen.getAllByText(/พร้อมใช้ทุกวัน/).length).toBeGreaterThan(0);
 });
 
 test("posts edited prompts as a structured snake-case array", async () => {
@@ -121,10 +141,10 @@ test("posts edited prompts as a structured snake-case array", async () => {
     />,
   );
 
-  fireEvent.change(screen.getByLabelText("01 白底标准图 Prompt"), {
+  fireEvent.change(screen.getByLabelText("01 白底标准图提示词"), {
     target: { value: "纯白背景，保留绿色杯盖" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存提示词" }));
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toMatchObject({
@@ -136,8 +156,7 @@ test("posts edited prompts as a structured snake-case array", async () => {
 test("keeps dirty identity and prompt drafts across a polling snapshot", () => {
   const view = render(<PromptEditor sku={sku} onSave={() => undefined} />);
 
-  fireEvent.change(screen.getByLabelText("商品身份"), { target: { value: "保留本地身份锁" } });
-  fireEvent.change(screen.getByLabelText("01 白底标准图 Prompt"), { target: { value: "保留本地白底 Prompt" } });
+  fireEvent.change(screen.getByLabelText("01 白底标准图提示词"), { target: { value: "保留本地白底 Prompt" } });
 
   view.rerender(<PromptEditor sku={{
     ...sku,
@@ -147,33 +166,32 @@ test("keeps dirty identity and prompt drafts across a polling snapshot", () => {
     prompts: [{ slotOrder: 1, slot: "白底标准图", text: "服务器 Prompt" }],
   }} onSave={() => undefined} />);
 
-  expect(screen.getByLabelText("商品身份")).toHaveValue("保留本地身份锁");
-  expect(screen.getByLabelText("01 白底标准图 Prompt")).toHaveValue("保留本地白底 Prompt");
+  expect(screen.getByLabelText("01 白底标准图提示词")).toHaveValue("保留本地白底 Prompt");
 });
 
 test("keeps a successful prompt save while the parent still renders the old SKU snapshot", async () => {
   const onSave = vi.fn().mockResolvedValue({ id: "cluster-1", version: 4 });
   const view = render(<PromptEditor sku={sku} onSave={onSave} />);
 
-  fireEvent.change(screen.getByLabelText("商品身份"), { target: { value: "已保存身份锁" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
+  fireEvent.change(screen.getByLabelText("01 白底标准图提示词"), { target: { value: "已保存白底提示词" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存提示词" }));
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
   view.rerender(<PromptEditor sku={sku} onSave={onSave} />);
 
-  expect(screen.getByLabelText("商品身份")).toHaveValue("已保存身份锁");
+  expect(screen.getByLabelText("01 白底标准图提示词")).toHaveValue("已保存白底提示词");
 });
 
 test("adopts the acknowledged SKU snapshot as the new prompt baseline", async () => {
   const onSave = vi.fn().mockResolvedValue({ id: "cluster-1", version: 4 });
   const view = render(<PromptEditor sku={sku} onSave={onSave} />);
 
-  fireEvent.change(screen.getByLabelText("商品身份"), { target: { value: "已保存身份锁" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存 Prompt" }));
+  fireEvent.change(screen.getByLabelText("01 白底标准图提示词"), { target: { value: "已保存白底提示词" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存提示词" }));
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
 
-  view.rerender(<PromptEditor sku={{ ...sku, version: 4, identityLock: "服务器确认身份锁" }} onSave={onSave} />);
-  expect(screen.getByLabelText("商品身份")).toHaveValue("服务器确认身份锁");
+  view.rerender(<PromptEditor sku={{ ...sku, version: 4, prompts: [{ slotOrder: 1, slot: "白底标准图", text: "服务器确认提示词" }] }} onSave={onSave} />);
+  expect(screen.getByLabelText("01 白底标准图提示词")).toHaveValue("服务器确认提示词");
 
-  view.rerender(<PromptEditor sku={{ ...sku, version: 5, identityLock: "后续远端身份锁" }} onSave={onSave} />);
-  expect(screen.getByLabelText("商品身份")).toHaveValue("后续远端身份锁");
+  view.rerender(<PromptEditor sku={{ ...sku, version: 5, prompts: [{ slotOrder: 1, slot: "白底标准图", text: "后续远端提示词" }] }} onSave={onSave} />);
+  expect(screen.getByLabelText("01 白底标准图提示词")).toHaveValue("后续远端提示词");
 });

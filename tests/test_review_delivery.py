@@ -430,7 +430,7 @@ def test_snapshot_replaces_internal_provider_failure_with_controlled_message(
         "outputs"
     ][0]
 
-    assert output["failureReason"] == "Generation failed. Retry this item or contact an administrator."
+    assert output["failureReason"] == "本张出图未成功，可直接重试。"
     assert "provider" not in json.dumps(output).lower()
     assert "task-secret" not in json.dumps(output)
     assert "https://" not in json.dumps(output)
@@ -549,6 +549,23 @@ def test_only_accepted_result_exports_without_persisting_zip(client, tmp_path, s
 
     client.force_login(other)
     assert post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []}).status_code == 404
+
+
+def test_export_missing_result_file_returns_clear_error_not_500(client, tmp_path, settings):
+    from platform_app.models import Generation
+
+    settings.MEDIA_ROOT = tmp_path
+    owner = make_user("missing-export-owner")
+    batch, _, _, generation, result = make_generation(owner, tmp_path)
+    generation.review_status = Generation.ReviewStatus.ACCEPTED
+    generation.save(update_fields=["review_status"])
+    (tmp_path / result.storage_path).unlink()
+    client.force_login(owner)
+
+    response = post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []})
+
+    assert response.status_code == 400
+    assert "approved" in response.json()["error"].lower()
 
 
 def test_export_defaults_to_latest_success_and_explicit_ids_can_select_old_success(

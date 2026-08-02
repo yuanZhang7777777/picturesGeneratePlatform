@@ -4,11 +4,13 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import App from "../App";
+import type { ProductSku, Project } from "../types";
 
 const slots = ["hero", "angle", "selling_point", "detail", "scene", "scale", "package", "conversion", "extra"];
-const product = (id: string, name: string) => ({
+const product = (id: string, name: string): ProductSku => ({
   id,
   name,
+  productNameSource: "manual" as const,
   sku: id,
   version: 1,
   assetIds: [`asset-${id}`],
@@ -33,7 +35,7 @@ const product = (id: string, name: string) => ({
   outputs: [],
 });
 
-const project = {
+const project: Project = {
   id: "project-1",
   name: "夏日上新",
   platform: "",
@@ -188,7 +190,7 @@ test("shows editable compact card fields and exact preparation progress without 
   expect(screen.getByLabelText("商品国家 桌面灯")).toHaveDisplayValue("东南亚通用");
   expect(screen.getByLabelText("创意 Brief 桌面灯")).toHaveValue("适合明亮桌面场景");
   expect(screen.getByLabelText("单品风格 桌面灯")).toHaveValue("柔和自然光");
-  expect(screen.getAllByText("预备生成中 · N3 事实台账 · 3/7")).toHaveLength(2);
+  expect(screen.getAllByText("正在整理商品信息 · 3/7")).toHaveLength(2);
   expect(screen.getAllByRole("progressbar", { name: "预备生成进度" })).not.toHaveLength(0);
   expect(screen.getByLabelText("商品名称 桌面灯")).toHaveAttribute("placeholder", "可不填，预备生成时识别");
   expect(screen.getByRole("button", { name: "全选" })).toBeInTheDocument();
@@ -209,10 +211,10 @@ test("shows product name source only for AI recognition and ERP", async () => {
   const sourceProject = {
     ...project,
     skus: [
-      { ...product("ai", "AI 商品"), productNameSource: "ai" },
-      { ...product("erp", "ERP 商品"), productNameSource: "erp" },
-      { ...product("manual", "手工商品"), productNameSource: "manual" },
-      { ...product("blank", "空来源商品"), productNameSource: "blank" },
+      { ...product("ai", "AI 商品"), productNameSource: "ai" as const },
+      { ...product("erp", "ERP 商品"), productNameSource: "erp" as const },
+      { ...product("manual", "手工商品"), productNameSource: "manual" as const },
+      { ...product("blank", "空来源商品"), productNameSource: "blank" as const },
     ],
   };
   stubFetch({ projectSnapshot: sourceProject });
@@ -260,28 +262,47 @@ test("hides technical preparation errors from operators", async () => {
   stubFetch({ projectSnapshot: failedProject });
   renderApp();
 
-  expect(await screen.findByText("预备失败 · 预备生成异常，请重试")).toBeInTheDocument();
+  expect(await screen.findByText(/预备未完成 · 系统已自动降级处理/)).toBeInTheDocument();
   expect(screen.queryByText(/evidence_refs/)).not.toBeInTheDocument();
+});
+
+test("shows AI-recognized English product info as Chinese operator text", async () => {
+  stubFetch({
+    projectSnapshot: {
+      ...project,
+      skus: [{
+        ...product("english", "Copper-bowl wooden-handled cutlery"),
+        productNameSource: "ai",
+        facts: "visible wooden-handled spoons with tray; tray material resembles pressed pulp/cardboard",
+        productFacts: "visible wooden-handled spoons with tray; tray material resembles pressed pulp/cardboard",
+        identityLock: "wooden handled cutlery; tray set",
+      }],
+    },
+  });
+  renderApp();
+
+  const card = await screen.findByRole("group", { name: /木柄餐具套装 商品卡片/ });
+  expect(within(card).getByLabelText("商品名称 木柄餐具套装")).toHaveValue("木柄餐具套装");
+  expect(within(card).getByLabelText("创意 Brief 木柄餐具套装")).toHaveValue("木柄餐具套装");
+  expect(within(card).queryByDisplayValue(/Copper-bowl|visible wooden/i)).not.toBeInTheDocument();
 });
 
 test("opens one product in a fixed side panel and consumes the first outside click", async () => {
   renderApp();
 
-  fireEvent.click(await screen.findByRole("button", { name: "查看 桌面灯 详情" }));
+  fireEvent.click(await screen.findByRole("button", { name: "桌面灯 详情" }));
   expect(screen.getByRole("dialog", { name: "桌面灯 商品详情" })).toBeInTheDocument();
   expect(screen.getByLabelText("商品身份")).toHaveValue("保留蓝色外壳");
-  expect(screen.getByRole("region", { name: "商品身份卡" })).toHaveTextContent("桌面用品");
-  expect(screen.getByRole("region", { name: "商品身份卡" })).toHaveTextContent("蓝色折叠结构");
-  expect(screen.getByRole("region", { name: "商品身份卡" })).toHaveTextContent("蓝色外壳");
-  expect(screen.getByText("01 标准白底产品图 Prompt")).toBeInTheDocument();
-  expect(screen.getByText("02 核心卖点图 Prompt")).toBeInTheDocument();
-  expect(screen.queryByText(/第 1 张输出图 Prompt/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText("主要外观")).toHaveValue("蓝色折叠结构");
+  expect(screen.getByText("01 标准白底产品图提示词")).toBeInTheDocument();
+  expect(screen.getByText("02 核心卖点图提示词")).toBeInTheDocument();
+  expect(screen.queryByText(/第 1 张输出图提示词/)).not.toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "查看 折叠椅 详情" }));
+  fireEvent.click(screen.getByRole("button", { name: "折叠椅 详情" }));
   expect(screen.queryByRole("dialog", { name: "桌面灯 商品详情" })).not.toBeInTheDocument();
   expect(screen.queryByRole("dialog", { name: "折叠椅 商品详情" })).not.toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "查看 折叠椅 详情" }));
+  fireEvent.click(screen.getByRole("button", { name: "折叠椅 详情" }));
   expect(screen.getByRole("dialog", { name: "折叠椅 商品详情" })).toBeInTheDocument();
 });
 

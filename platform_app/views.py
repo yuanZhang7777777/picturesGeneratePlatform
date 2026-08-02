@@ -701,6 +701,7 @@ def api_project_generate(request, batch_id):
                     cluster,
                     request.user,
                     slot_orders=slot_orders,
+                    force_new=True,
                     include_created=True,
                 )
                 generation_count += len(created_ids)
@@ -933,7 +934,11 @@ def api_project_export(request, batch_id):
                 )
             except (ValueError, FileNotFoundError):
                 continue
-            result_size = storage.size(storage_path)
+            try:
+                data = storage.read(storage_path)
+            except FileNotFoundError:
+                continue
+            result_size = len(data)
             if result_size > MAX_EXPORT_RESULT_BYTES:
                 return JsonResponse({"error": "An accepted result is too large to export"}, status=400)
             total_size += result_size
@@ -953,7 +958,7 @@ def api_project_export(request, batch_id):
                 archive_name = f"{stem}_{seen_names[archive_name]}{suffix}"
             else:
                 seen_names[archive_name] = 1
-            entries.append((storage.read(storage_path), archive_name))
+            entries.append((data, archive_name))
             manifest.append(
                 [
                     str(generation.id),

@@ -7,7 +7,7 @@ import { ApiError, deleteAsset, deleteCluster, generateProject, importSkus, merg
 import { ImportPanel } from "../components/ImportPanel";
 import { ProductCard } from "../components/ProductCard";
 import { commonMarkets, extraMarkets, platforms } from "../labels";
-import { EmptyState, ErrorPanel, Shell } from "../layout";
+import { EmptyState, ErrorPanel, Shell, userErrorMessage } from "../layout";
 import { useProjectSnapshot } from "../queries";
 import type { ClusterUpdateInput, ImportMode, ProductAsset, ProductConfiguration, Project } from "../types";
 
@@ -44,8 +44,21 @@ export default function ProjectGrouping() {
       } : sku),
     } : current);
   };
+  const markSelectedGenerating = () => {
+    const ids = new Set(selectedClusters.map((sku) => sku.id));
+    queryClient.setQueryData<Project>(["project", projectId], (current) => current ? {
+      ...current,
+      status: "queued",
+      skus: current.skus.map((sku) => ids.has(sku.id) ? {
+        ...sku,
+        preparationStatus: sku.preparationStatus === "ready" ? sku.preparationStatus : "preparing",
+        preparation: sku.preparationStatus === "ready" ? sku.preparation : { status: "preparing", stage: "N1", current: 0, total: 7, error: "" },
+        generationProgress: { status: "queued", current: 0, completed: 0, active: 1, failed: 0, total: sku.generationProgress?.total ?? 9 },
+      } : sku),
+    } : current);
+  };
   const prepare = useMutation({ mutationFn: () => prepareProject(projectId!, selectedClusters.map((sku) => sku.id)), onMutate: markSelectedPreparing, onSuccess: invalidate });
-  const generate = useMutation({ mutationFn: () => generateProject(projectId!, { clusterIds: selectedClusters.map((sku) => sku.id), slotOrders }), onMutate: markSelectedPreparing, onSuccess: invalidate });
+  const generate = useMutation({ mutationFn: () => generateProject(projectId!, { clusterIds: selectedClusters.map((sku) => sku.id), slotOrders }), onMutate: markSelectedGenerating, onSuccess: invalidate });
   const save = useMutation({ mutationFn: ({ skuId, expectedVersion, payload }: { skuId: string; expectedVersion: number; payload: ClusterUpdateInput }) => updateCluster(skuId, expectedVersion, payload), onSuccess: invalidate });
   const removeAsset = useMutation({ mutationFn: deleteAsset, onSuccess: invalidate });
   const removeCluster = useMutation({ mutationFn: deleteCluster, onSuccess: invalidate });
@@ -150,7 +163,7 @@ export default function ProjectGrouping() {
     <ProjectToolbar project={project} selectedCount={selectedClusters.length} pending={saveSettings.isPending} onSave={(input) => saveSettings.mutateAsync(input)} onSelectAll={() => setDeselectedIds(new Set())} onDeselectAll={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))} onInvert={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))} />
     <div className="mb-5"><ImportPanel disabled={busy} onUpload={(files, mode) => upload.mutateAsync({ files, mode })} onSkuImport={(skus, mode) => skuImport.mutateAsync({ skus, mode })} onImported={() => undefined} /></div>
     {uploadResult && <div className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">成功导入 {uploadResult.asset_count} 个素材{uploadResult.rejected.length ? `，${uploadResult.rejected.length} 个未导入` : ""}。</div>}
-    {localError instanceof ApiError && <p className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{localError.message}</p>}
+    {localError instanceof ApiError && <p className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{userErrorMessage(localError)}</p>}
     {globalError && <div className="mb-5"><ErrorPanel error={globalError} /></div>}
     <DndContext sensors={sensors} onDragEnd={onDragEnd}><ProductGrid>{project.skus.map((sku) => {
       const assets = sku.assets ?? project.assets.filter((asset) => sku.assetIds.includes(asset.id));
@@ -197,11 +210,12 @@ function ProjectToolbar({ project, selectedCount, pending, onSave, onSelectAll, 
       // The mutation error is rendered by the page; keep this draft dirty for retry.
     }
   };
+  const genericMarket = draft.market === "SEA";
   return <section className="surface mb-3 p-2" aria-label="项目工具栏">
     <div className="grid gap-2 xl:grid-cols-[auto_auto_8.5rem_5.5rem_5.5rem_minmax(180px,1fr)_auto] xl:items-end">
       <h1 className="self-center truncate text-lg font-bold tracking-tight" title={project.name}>{project.name}</h1>
       <fieldset><legend className="mb-1 text-xs font-medium text-slate-500">平台</legend><div className="flex flex-nowrap gap-1">{platforms.map(([code, label]) => <button key={code} aria-pressed={draft.platform === code} className={`toolbar-choice whitespace-nowrap ${draft.platform === code ? "toolbar-choice-active" : ""}`} type="button" disabled={pending} onClick={() => void save({ ...draft, platform: code })}>{label}</button>)}</div></fieldset>
-      <label className="text-xs font-medium text-slate-500">国家<select aria-label="项目国家" className="mt-1" value={draft.market} onChange={(event) => void save({ ...draft, market: event.target.value })}>{allMarkets.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
+      <label className={`text-xs font-medium ${genericMarket ? "text-amber-700" : "text-slate-500"}`}>国家<select aria-label="项目国家" className={`mt-1 ${genericMarket ? "border-amber-300 bg-amber-50" : ""}`} value={draft.market} onChange={(event) => void save({ ...draft, market: event.target.value })}>{allMarkets.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select>{genericMarket && <span className="mt-1 block text-[11px]">当前为通用语言，建议按店铺国家选择</span>}</label>
       <label className="text-xs font-medium text-slate-500">比例<select aria-label="图片比例" className="mt-1" value={draft.size} onChange={(event) => void save({ ...draft, size: event.target.value })}><option value="1:1">1:1</option><option value="3:4">3:4</option></select></label>
       <label className="text-xs font-medium text-slate-500">分辨率<select aria-label="图片分辨率" className="mt-1" value={draft.resolution} onChange={(event) => void save({ ...draft, resolution: event.target.value })}><option value="1k">1K</option><option value="2k">2K</option></select></label>
       <label className="text-xs font-medium text-slate-500">项目风格提示词<textarea aria-label="项目风格提示词" className="mt-1 min-h-9 py-1.5" value={draft.globalPrompt} placeholder="全项目默认提示词（选填）" onChange={(event) => setDraft({ ...draft, globalPrompt: event.target.value })} onBlur={() => { if (dirty) void save(draft); }} /></label>

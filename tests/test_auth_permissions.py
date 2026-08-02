@@ -36,9 +36,10 @@ def test_login_page_explains_erp_shadow_account(client):
 
     content = response.content.decode()
     assert response.status_code == 200
-    assert "ERP 账号登录" in content
-    assert "首次 ERP 登录成功会自动创建平台账号" in content
-    assert "登录 ERP 并进入平台" in content
+    assert "员工账号登录" in content
+    assert "首次登录成功会自动创建平台账号" in content
+    assert "登录并进入平台" in content
+    assert "ERP 账号登录" not in content
 
 
 def test_logout_clears_django_and_erp_session_state(client):

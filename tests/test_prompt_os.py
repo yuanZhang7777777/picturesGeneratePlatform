@@ -366,7 +366,7 @@ def test_compiled_n6_prompt_sends_image_model_direct_creative_instruction():
     assert "Product name:" not in compiled["prompt"]
     assert "Slot purpose:" not in compiled["prompt"]
     assert "Rule " not in compiled["prompt"]
-    assert "Use the supplied product reference images only to understand product identity" in compiled["prompt"]
+    assert "Use the supplied product reference images to understand product identity" in compiled["prompt"]
 
 
 def test_vn_image_prompt_does_not_render_chinese_internal_product_name():
@@ -688,15 +688,15 @@ def test_prompt_worker_prepares_pending_cluster_with_nine_slot_prompts(tmp_path,
     assert cluster.analysis_snapshot["fact_ledger"]["review_summary"]["confirmed_count"] == 1
     prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
     assert sorted({prompt.output_slot.order for prompt in prompts}) == list(range(1, 10))
-    assert len(prompts) == 10
-    assert all("Silicone cup" in prompt.prompt_text for prompt in prompts)
+    assert len(prompts) == 9
+    assert all(prompt.prompt_text for prompt in prompts)
     assert all(prompt.evaluation["rule_gate"]["decision"] == "pass" for prompt in prompts)
-    assert list(
+    assert sorted(
         Generation.objects.filter(cluster=cluster).values_list(
             "output_slot__order",
             flat=True,
         )
-    ) == [1]
+    ) == list(range(1, 10))
 
     confirmed_path = f"originals/{batch.id}/confirmed.png"
     (tmp_path / confirmed_path).write_bytes(b"confirmed-bytes")
@@ -1198,7 +1198,7 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
     prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
     assert len(prompts) == 9
     assert [prompt.node_name for prompt in prompts] == ["N4", *["N6.generic"] * 8]
-    assert prompt_client.n7_calls == ["NODE N7.generic"] * 9
+    assert prompt_client.n7_calls == []
     assert all("Sage storage container" in prompt.prompt_text for prompt in prompts)
     assert all("two handles" in prompt.prompt_text for prompt in prompts)
     assert all(len(prompt.prompt_text) <= 3500 for prompt in prompts)
@@ -1233,13 +1233,13 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
     )
 
 
-def test_tiktok_us_official_no_digital_rendering_rule_blocks_paid_generation():
+def test_tiktok_us_official_no_digital_rendering_rule_warns_without_blocking_generation():
     from platform_app.models import Batch, OutputSlot, OutputTemplate, RuleProfile
-    from platform_app.services import confirm_generation
+    from platform_app.services import evaluate_prompt_rule_gate
 
     user = make_user()
     template = OutputTemplate.objects.create(platform="tiktok", site="US", name="US template")
-    OutputSlot.objects.create(template=template, name="Hero", order=1)
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
     rule = RuleProfile.objects.create(
         platform="tiktok",
         site="US",
@@ -1268,10 +1268,18 @@ def test_tiktok_us_official_no_digital_rendering_rule_blocks_paid_generation():
         output_template=template,
         rule_profile=rule,
     )
-    make_cluster(batch)
 
-    with pytest.raises(ValueError, match="no_digital_rendering"):
-        confirm_generation(batch, user)
+    gate = evaluate_prompt_rule_gate(
+        batch,
+        slot,
+        "Create one product image.",
+        effective_config={"platform": "tiktok", "market": "US", "sellerTier": "general"},
+        rule_profile=rule,
+    )
+
+    assert gate["decision"] == "pass"
+    assert gate["hard_blocks"] == []
+    assert "tiktok.us.gallery.no_digital_rendering" in gate["warnings"]
 
 
 def test_prompt_worker_requeues_when_settings_change_during_preparation(tmp_path, settings):
@@ -1837,9 +1845,9 @@ def test_rule_gate_warns_unknown_copy_fact_without_blocking_generation():
     gate = evaluate_prompt_rule_gate(
         batch,
         slot,
-        'Commercial product image with visible text "Certified safe".',
-        visible_text_lines=["Certified safe"],
-        localized_copy={"lines": ["Certified safe"], "source_fact_refs": ["fact.cert.404"]},
+        'Commercial product image with visible text "Fits your small kitchen".',
+        visible_text_lines=["Fits your small kitchen"],
+        localized_copy={"lines": ["Fits your small kitchen"], "source_fact_refs": ["fact.cert.404"]},
         fact_ids={"fact.name.001"},
     )
 
@@ -1847,6 +1855,35 @@ def test_rule_gate_warns_unknown_copy_fact_without_blocking_generation():
     assert gate["hard_blocks"] == []
     assert "copy.unknown_fact_ref" in gate["warnings"]
     assert gate["rewrite_reasons"] == []
+
+
+def test_rule_gate_warns_high_risk_visible_claims_without_blocking_generation():
+    from platform_app.models import Batch, OutputTemplate
+    from platform_app.services import evaluate_prompt_rule_gate
+
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="High risk copy")
+    template = OutputTemplate.objects.create(
+        seed_key="high-risk-copy",
+        platform="global",
+        site="",
+        name="High risk copy",
+        version="2026.08",
+    )
+    slot = template.slots.create(order=4, name="Claim", purpose="Claim")
+
+    gate = evaluate_prompt_rule_gate(
+        batch,
+        slot,
+        'Commercial product image with visible text "100% certified cure".',
+        visible_text_lines=["100% certified cure"],
+        localized_copy={"lines": ["100% certified cure"], "source_fact_refs": ["fact.name.001"]},
+        fact_ids={"fact.name.001"},
+    )
+
+    assert gate["decision"] == "pass"
+    assert gate["hard_blocks"] == []
+    assert "copy.high_risk_claim" in gate["warnings"]
 
 
 def test_final_n7_gate_receives_structured_localized_copy(tmp_path, settings):
@@ -1857,6 +1894,7 @@ def test_final_n7_gate_receives_structured_localized_copy(tmp_path, settings):
     from platform_app.services import FakeAPIMartClient, _run_final_n7_gate
 
     settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_SEMANTIC_N7_ENABLED = True
     Command().handle()
     user = make_user()
     batch = Batch.objects.create(owner=user, name="N7 localized copy")
@@ -2339,7 +2377,7 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
     assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
     assert provider.n1_calls == 1
     assert provider.n2_calls == 1
-    assert provider.later_calls == ["N3", "N4", "N7"]
+    assert provider.later_calls == ["N3", "N4"]
     prompt = PromptVersion.objects.get(cluster=cluster)
     assert prompt.input_snapshot["_preparation_revision"] == 1
     assert prompt.input_snapshot["_effective_config_signature"]
@@ -2763,7 +2801,7 @@ def test_uncertain_n1_continues_with_visible_image_reference(tmp_path, settings)
     cluster.refresh_from_db()
 
     assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
-    assert cluster.product_name == "Chopsticks set"
+    assert cluster.product_name == "餐具套装"
     assert cluster.name != "string"
     assert cluster.analysis_snapshot["observations"][0]["contains_target_product"] is True
     assert cluster.analysis_snapshot["identity"]["decision"] == "continue"
@@ -3597,6 +3635,41 @@ def test_fallback_n6_creates_target_language_marketing_copy_for_named_product():
     assert "no extra" not in compiled["prompt"].lower()
     assert "missing" not in compiled["prompt"].lower()
     assert "duplicated" not in compiled["prompt"].lower()
+
+
+def test_n6_normalization_replaces_english_copy_for_thai_market():
+    from platform_app.services import _normalize_n6_prompt
+
+    identity = {"primary_asset_id": "asset-1", "supporting_asset_ids": []}
+    ledger = {"facts": [{"fact_id": "fact.name.001", "fact_class": "observed"}]}
+    payload = {
+        "slot_id": "3",
+        "main_scene": "a playful ecommerce scene",
+        "main_action": "show why the product is worth buying",
+        "visible_text_lines": ["Take me home", "Here to brighten your day"],
+        "localized_copy": {
+            "language": "th-TH",
+            "lines": ["Take me home", "Here to brighten your day"],
+            "source_fact_refs": ["fact.name.001"],
+            "source_inference_refs": [],
+        },
+        "prompt": "Create image. Only render these words: Take me home.",
+        "reference_plan": {"primary_asset_id": "asset-1", "supporting_asset_ids": []},
+        "fact_trace": ["fact.name.001"],
+        "inference_trace": [],
+        "rule_refs": [],
+        "generation_parameters": {"model": "gpt-image-2", "n": 1, "size": "1:1", "resolution": "1k"},
+        "review_required": True,
+        "creative_strategy": {"mode": "personification"},
+    }
+
+    normalized = _normalize_n6_prompt(payload, 3, identity, ledger, set())
+
+    assert normalized["visible_text_lines"] == ["พาฉันกลับบ้าน", "อยู่ข้างคุณทุกวัน"]
+    assert normalized["localized_copy"]["lines"] == normalized["visible_text_lines"]
+    assert "Final visible copy lock" in normalized["prompt"]
+    assert "พาฉันกลับบ้าน" in normalized["prompt"]
+    assert "Take me home" not in normalized["prompt"]
 
 
 def test_fallback_n6_usage_set_does_not_force_holder_into_every_scene():

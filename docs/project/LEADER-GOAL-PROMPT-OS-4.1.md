@@ -4,9 +4,9 @@
 
 1. `CLAUDE.md`
 2. `docs/project/REQUIREMENTS-BOUNDARY-CONFIRMATION.md`
-3. `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`
-4. `docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`
-5. `docs/superpowers/specs/节点prompt设定初稿.md`
+3. `docs/project/PROMPT-OS-4.1-EXECUTION-INDEX.md`
+4. `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`
+5. `docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`
 6. `docs/project/STATUS.md`
 
 禁止读取、修改、删除或提交：`docs/project/用户操作流程以及相关触发.md`。
@@ -67,6 +67,8 @@
 完整链路必须包含 N5 的 `copywriting_chain`，作为 N6 文案候选和最终英文生图 Prompt 的依据。
 
 禁止用 `string`、空对象、旧 PromptVersion、`builtin-v1` 或通用 Prompt 补洞。
+
+每个节点快照必须统一保存：`node/model/temperature/input_fingerprint/system_prompt_version/input/expected_schema/output/normalized_output/quality`。后续节点只能读取 `normalized_output`，不能直接消费模型原始输出。
 
 ## 执行顺序
 
