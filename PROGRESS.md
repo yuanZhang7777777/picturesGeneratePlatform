@@ -137,3 +137,11 @@
 - Verification: frontend 85 passed; Vite build passed; Django check passed; `git diff --check` passed with only Windows CRLF warnings; Prompt OS targeted backend regression 4 passed. Local `makemigrations --check --dry-run` timed out again; no model/migration files changed.
 - Deployment: remote Compose build/up, migration check, template seed, Django check, five services, local `/health/ready`, public `/health/ready`, and deployed marker readback passed. Backup: `/opt/independent-image-platform-backups/20260802_143241-478d17a`; `global.lock` released.
 - Remaining: 50-product browser scenario, real employee ERP SKU/OSS browser E2E and a new operator-reviewed paid 1+8.
+
+# Expired-session logout hotfix
+
+- Status: deployed 2026-08-02 as Git `29ef250` to `hermes-remote:/opt/independent-image-platform` under `global.lock`.
+- Root cause: `logoutUser()` requested `/api/csrf/` before POSTing `/logout/`; when the session/CSRF state had already expired, the CSRF bootstrap or logout POST returned an authentication/CSRF response and the layout showed “退出登录失败” instead of taking the user to login.
+- Change: logout is now idempotent for expired sessions. Login redirects, 401 and 403 during logout are treated as logout-complete and the UI redirects to `/login/`; 500-level real service failures remain visible.
+- Verification: added API and page regression tests for expired-session logout. `npm --prefix frontend test` passed 88 tests; `npm --prefix frontend run build` passed; `git diff --check` passed with CRLF warnings only. Remote Compose build/up, migrate, template seed, Django check, local/public `/health/ready`, deployed marker and public static bundle readback passed.
+- Deployment: backup `/opt/independent-image-platform-backups/20260802_144804-29ef250`; `global.lock` released.
