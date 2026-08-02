@@ -153,3 +153,11 @@
 - Deliverables: `docs/superpowers/specs/2026-08-02-prompt-os-3.1-marketing-copy-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-3.1-marketing-copy-implementation.md`, and `docs/project/LEADER-GOAL-PROMPT-OS-3.1.md`.
 - Baseline: backend 353 collected and full pytest passed; frontend 89 passed; current published N5/N6/N7 templates remain 3.0.0 with no database/template drift.
 - Next: GPT-5.5 executes Task 0–7; publish 3.1.0 only after six-category 48-slot checks and an operator-reviewed paid 1+8 score at least 4/5 in all five dimensions.
+
+# Prompt OS 3.1 execution start
+
+- Status: Task 0 resumed on `lxc/workbench-v4` at `8091a72`; existing unrelated/unowned diffs left intact, forbidden untracked operation-flow doc untouched.
+- Goal: implement 3.1.0 by strengthening N5/N6/N7 only, without new tables/models/dependencies or historical overwrites.
+- Order: Task 1 contract/schema/version, then N5 strategy validation, N5/N6/N7 prompts, N7 copy lock, node temperature, minimal PromptEditor display, final benchmark.
+- Baseline: `pytest -q` exit 0, frontend 89 passed, Django check passed, Vite build passed.
+- Max risk: current working tree already has prior edits in shared files; every change must stay inside the explicit whitelist and be committed in small slices.
