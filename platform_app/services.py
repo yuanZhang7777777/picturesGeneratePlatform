@@ -6,6 +6,7 @@ import re
 import uuid
 from collections import Counter
 from contextlib import contextmanager
+from datetime import timedelta
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from urllib.parse import urljoin, urlparse
@@ -4419,9 +4420,24 @@ def _claim_prompt_cluster(candidate):
     ).get(id=candidate.id)
 
 
+def _restore_stale_preparations():
+    stale_before = timezone.now() - timedelta(seconds=600)
+    Cluster.objects.filter(
+        preparation_status=Cluster.PreparationStatus.PREPARING,
+        updated_at__lt=stale_before,
+        archived_at__isnull=True,
+    ).update(
+        preparation_status=Cluster.PreparationStatus.PENDING,
+        preparation_stage="queued",
+        preparation_error="",
+        updated_at=timezone.now(),
+    )
+
+
 def process_prompt_once(client=None, storage=None):
     client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
+    _restore_stale_preparations()
     cluster = (
         Cluster.objects.select_related("batch", "batch__owner", "batch__output_template")
         .filter(preparation_status=Cluster.PreparationStatus.PENDING, archived_at__isnull=True)
