@@ -336,6 +336,39 @@ def test_target_consumer_override_wins_over_infant_keyword():
     assert "provider_model" not in compiled["prompt"]
 
 
+def test_compiled_n6_prompt_sends_image_model_direct_creative_instruction():
+    from platform_app.models import Batch, OutputSlot, OutputTemplate
+    from platform_app.services import compile_slot_prompt
+
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="shopee", name="template")
+    slot = OutputSlot.objects.create(template=template, name="usage", order=5, purpose="Show realistic product use")
+    batch = Batch.objects.create(
+        owner=user,
+        name="direct",
+        platform="shopee",
+        site="VN",
+        market="VN",
+        output_template=template,
+    )
+    cluster = make_cluster(batch, product_name="餐具套装")
+
+    compiled = compile_slot_prompt(
+        cluster,
+        slot,
+        slot_directive="Create a realistic breakfast table scene with the cutlery set as the main subject.",
+        main_scene="breakfast table",
+        main_action="adult hand uses the cutlery naturally",
+        node_name="N6.generic",
+    )
+
+    assert compiled["prompt"].startswith("Create a realistic breakfast table scene")
+    assert "Product name:" not in compiled["prompt"]
+    assert "Slot purpose:" not in compiled["prompt"]
+    assert "Rule " not in compiled["prompt"]
+    assert "Use the supplied product reference images only as product identity evidence." in compiled["prompt"]
+
+
 def test_confirm_generation_keeps_prompt_override_as_extra_creative_requirements():
     """A creative override must not replace grounded product or identity constraints."""
     from platform_app.models import Batch, OutputSlot, OutputTemplate
@@ -2701,7 +2734,13 @@ def test_empty_prompt_node_responses_fall_back_to_usable_prompts(tmp_path, setti
     assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
     assert cluster.preparation_error == ""
     assert cluster.analysis_snapshot["identity"]["decision"] == "continue"
-    assert PromptVersion.objects.filter(cluster=cluster).count() == 9
+    prompts = list(PromptVersion.objects.filter(cluster=cluster).order_by("output_slot__order"))
+    assert len(prompts) == 9
+    marketing_text = "\n".join(prompt.prompt_text for prompt in prompts[2:])
+    assert "show product value through action" not in marketing_text
+    assert "one clear creative ecommerce scene" not in marketing_text
+    assert "Product facts:" not in marketing_text
+    assert "realistic everyday use scene" in marketing_text
 
 
 def test_n2_continue_requires_nonempty_identity_lock_and_product_profile():

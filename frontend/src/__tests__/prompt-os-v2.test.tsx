@@ -47,7 +47,7 @@ const sku: ProductSku = {
         inferred_count: 1,
         high_risk_count: 1,
       },
-      blocked_claim_topics: ["certification", "medical_efficacy"],
+      blocked_claim_topics: ["certification", "medical_efficacy", "price"],
     },
     rule_gate: {
       decision: "block",
@@ -72,6 +72,8 @@ test("shows the Prompt OS fact ledger and compliance block summary", () => {
   expect(screen.getByText("已确认 · 100% · 低风险")).toBeInTheDocument();
   expect(screen.getByText("合理推断 · 68% · 高风险")).toBeInTheDocument();
   expect(screen.getByText("确认 1 · 观察 0 · 推断 1 · 高风险 1")).toBeInTheDocument();
+  expect(screen.getByText(/这些内容不能靠 AI 猜出来写进图片：认证\/奖项、医疗\/疗效、价格\/折扣/)).toBeInTheDocument();
+  expect(screen.queryByText(/certification|medical_efficacy|price/)).not.toBeInTheDocument();
   expect(screen.getByText("规则 / 合规阻断")).toBeInTheDocument();
   expect(screen.getByText(/高风险材质推断不得进入消费者文案/)).toBeInTheDocument();
   expect(screen.getByText(/“食品级”缺少确认来源/)).toBeInTheDocument();

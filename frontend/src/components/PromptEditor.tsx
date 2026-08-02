@@ -15,6 +15,17 @@ const defaultPrompts = [
 ].map((slot, index) => ({ slotOrder: index + 1, slot, text: "" }));
 
 const riskLabels: Record<string, string> = { low: "低风险", medium: "中风险", high: "高风险" };
+const claimTopicLabels: Record<string, string> = {
+  price: "价格/折扣",
+  promotion: "促销活动",
+  certification: "认证/奖项",
+  medical_efficacy: "医疗/疗效",
+  weight_management: "减重效果",
+  beauty_before_after: "美妆前后对比",
+  off_platform_redirect: "站外联系方式",
+  warranty: "质保承诺",
+  country_of_origin: "产地",
+};
 const strategyLabels: Record<string, string> = {
   fab_value: "FAB价值",
   scene_ownership: "场景代入",
@@ -43,6 +54,17 @@ function draftFromSku(sku: ProductSku): PromptDraft {
 function ruleMessage(value: RuleGateMessage) {
   if (typeof value === "string") return value;
   return value.message ?? value.reason ?? value.statement ?? value.rule_id ?? "需人工复核";
+}
+
+function evidenceLabel(value: string) {
+  if (value.startsWith("asset:")) return "上传图片";
+  if (value.startsWith("observation:")) return "图片识别";
+  if (value.startsWith("erp:")) return "ERP资料";
+  return value;
+}
+
+function claimTopicLabel(value: string) {
+  return claimTopicLabels[value] ?? value;
 }
 
 function promptMeta(prompt: ProductPrompt) {
@@ -145,13 +167,13 @@ export function PromptEditor({
                 <p className="mt-1 text-xs text-slate-500">
                   {{ confirmed: "已确认", observed: "已观察", inferred: "合理推断" }[fact.fact_class]} · {Math.round(fact.confidence * 100)}% · {riskLabels[fact.risk_level] ?? "待复核"}
                 </p>
-                {fact.evidence_refs.length > 0 && <p className="mt-1 text-xs text-slate-400">来源：{fact.evidence_refs.join("、")}</p>}
+                {fact.evidence_refs.length > 0 && <p className="mt-1 text-xs text-slate-400">来源：{Array.from(new Set(fact.evidence_refs.map(evidenceLabel))).join("、")}</p>}
                 {fact.review_note && <p className="mt-1 text-xs text-amber-700">{fact.review_note}</p>}
               </article>
             ))}
           </div>
           {ledger.blocked_claim_topics && ledger.blocked_claim_topics.length > 0 && (
-            <p className="mt-3 text-xs text-rose-700">禁止推断进入文案：{ledger.blocked_claim_topics.join("、")}</p>
+            <p className="mt-3 text-xs text-rose-700">这些内容不能靠 AI 猜出来写进图片：{ledger.blocked_claim_topics.map(claimTopicLabel).join("、")}</p>
           )}
         </section>
       )}

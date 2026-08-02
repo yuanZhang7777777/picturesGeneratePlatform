@@ -2463,7 +2463,13 @@ def compile_slot_prompt(
         f"Resolution: {resolution}",
     ]
     if slot_directive:
-        prompt_lines.append(f"Creative direction: {str(slot_directive).strip()}")
+        prompt_lines = [
+            str(slot_directive).strip(),
+            "Use the supplied product reference images only as product identity evidence.",
+            "Keep the real visible product shape, proportions, colors, quantities, and included parts consistent.",
+            "Do not copy the original background unless the prompt explicitly asks for it.",
+            "Do not add unprovided claims, third-party logos, contact information, watermarks, or random text.",
+        ]
     if visible_text_lines and not all(line in "\n".join(prompt_lines) for line in visible_text_lines):
         prompt_lines.append(f"Visible text (exactly these lines): {json.dumps(visible_text_lines, ensure_ascii=False)}")
     input_snapshot = {
@@ -3699,29 +3705,85 @@ def _fallback_n4_prompt(hero_input, identity, ledger, rule_refs):
 def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids, target_appearance_ids):
     fact_ref = next(iter(fact_ids), "")
     appearances = sorted(target_appearance_ids or [])
-    modes = [
-        "fab_value",
-        "scene_ownership",
-        "emotion",
-        "personification",
-        "identity_signal",
-        "fab_value",
-        "scene_ownership",
-        "emotion",
-    ]
-    scene_families = [
-        "benefit",
-        "detail",
-        "usage",
-        "scale",
-        "contents",
-        "lifestyle",
-        "comparison",
-        "conversion",
+    seed_style = str(marketing_input.get("seed_style") or "").strip()
+    recipes = [
+        {
+            "mode": "fab_value",
+            "family": "core-benefit",
+            "task": "让买家一眼看懂这件商品最值得买的核心价值",
+            "scene": "a clean premium ecommerce hero scene with the product arranged as the clear main subject, surrounded by only minimal relevant props",
+            "action": "highlight the product's most useful everyday value without adding text or fake claims",
+            "camera": "slightly elevated three-quarter product angle",
+            "composition": "large centered product, generous negative space, mobile-first square crop",
+        },
+        {
+            "mode": "scene_ownership",
+            "family": "detail-trust",
+            "task": "让买家看清结构、做工和细节，降低下单疑虑",
+            "scene": "a close-up detail scene focused on visible edges, joints, texture, compartments, and contact points from the uploaded product",
+            "action": "show the product detail that proves quality and practical design",
+            "camera": "macro close-up with shallow depth of field",
+            "composition": "detail fills most of the frame while the full product remains recognizable",
+        },
+        {
+            "mode": "emotion",
+            "family": "real-use",
+            "task": "让买家代入真实使用瞬间",
+            "scene": "a realistic everyday use scene with an adult naturally using or reaching for the product in a believable home or lifestyle setting",
+            "action": "show the product solving a small daily task in a natural moment",
+            "camera": "human-eye lifestyle angle",
+            "composition": "hands or user action support the product, product remains unobstructed and dominant",
+        },
+        {
+            "mode": "personification",
+            "family": "function-explain",
+            "task": "把功能讲清楚，让买家不用读说明也能懂",
+            "scene": "an organized explanatory product scene that visually separates each visible part and how it is used together",
+            "action": "demonstrate the visible functional relationship between parts without arrows or random labels",
+            "camera": "top-down organized layout",
+            "composition": "clear spacing between parts, structured but not like a technical diagram",
+        },
+        {
+            "mode": "identity_signal",
+            "family": "scale-context",
+            "task": "让买家理解大小、比例和适合谁用",
+            "scene": "a natural scale scene with the product beside ordinary everyday objects or an adult hand for proportion",
+            "action": "make size and handling feel obvious through context",
+            "camera": "medium close product angle",
+            "composition": "product in foreground, scale cue secondary and not distracting",
+        },
+        {
+            "mode": "fab_value",
+            "family": "contents-overview",
+            "task": "展示包装、包含物或多色多款组合，避免买家误解收到什么",
+            "scene": "a neat contents overview showing the product set, variants, packaging, or included items that are visible in the references",
+            "action": "show exactly what is included or represented by the uploaded references",
+            "camera": "flat lay catalog angle",
+            "composition": "all included or target appearances arranged neatly with consistent spacing",
+        },
+        {
+            "mode": "scene_ownership",
+            "family": "lifestyle-desire",
+            "task": "制造想拥有的生活方式画面",
+            "scene": "an aspirational but realistic lifestyle scene where the product makes the surrounding moment feel cleaner, easier, or more tasteful",
+            "action": "make the buyer imagine owning and using the product",
+            "camera": "soft editorial ecommerce angle",
+            "composition": "product sharp in the foreground with a soft contextual background",
+        },
+        {
+            "mode": "emotion",
+            "family": "conversion-final",
+            "task": "补上最后一个转化理由，让买家觉得现在就可以下单",
+            "scene": "a polished final listing scene that combines product clarity, practical context, and a tidy marketplace-ready look",
+            "action": "summarize why the product is useful without prices, discounts, or exaggerated claims",
+            "camera": "balanced commercial product angle",
+            "composition": "clean square listing layout with strong product focus and no clutter",
+        },
     ]
     plans = []
     covered = set()
     for index, slot in enumerate(marketing_slots):
+        recipe = recipes[index % len(recipes)]
         selected = []
         if appearances:
             selected = [appearances[index % len(appearances)]]
@@ -3731,38 +3793,38 @@ def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids
                 covered.update(selected)
         purpose = slot.purpose or slot.name or f"第 {slot.order} 张营销图"
         fact_refs = [fact_ref] if fact_ref else []
-        family = scene_families[index % len(scene_families)]
         plan = {
             "slot_order": slot.order,
             "role": purpose,
             "appearance_ids": selected,
-            "scene_family": f"{family}-{slot.order}",
-            "environment": f"creative ecommerce scene {slot.order}",
-            "camera": f"distinct camera angle {slot.order}",
-            "decision_task": purpose,
-            "conversion_goal": purpose,
+            "scene_family": f"{recipe['family']}-{slot.order}",
+            "environment": recipe["scene"],
+            "camera": recipe["camera"],
+            "decision_task": recipe["task"],
+            "conversion_goal": recipe["task"],
             "fact_refs": fact_refs,
             "inference_refs": [],
-            "main_scene": f"one clear creative ecommerce scene for {purpose}",
-            "main_action": f"show product value through action {slot.order}",
-            "subject_relationship": "the uploaded product remains the main subject",
-            "composition": f"mobile-first square listing composition {slot.order}",
-            "copy_intent": purpose,
+            "main_scene": recipe["scene"],
+            "main_action": recipe["action"],
+            "subject_relationship": "上传商品始终是画面主体，多款/多色只按本槽位 appearance_ids 展示",
+            "composition": recipe["composition"],
+            "copy_intent": recipe["task"],
             "text_mode": "up_to_3_lines",
             "visible_text_lines": [],
             "localization_notes": [],
-            "must_show": [],
-            "must_avoid": ["random text", "wrong product", "extra logo", "price", "discount badge"],
+            "must_show": ["product clearly visible"],
+            "must_avoid": ["random text", "wrong product", "extra logo", "unprovided claim", "discount badge"],
+            "seed_style": seed_style,
             "creative_strategy": _fallback_creative_strategy(
                 {
                     "fact_refs": fact_refs,
-                    "decision_task": purpose,
-                    "copy_intent": purpose,
+                    "decision_task": recipe["task"],
+                    "copy_intent": recipe["task"],
                     "subject_relationship": "the uploaded product remains the main subject",
-                    "main_scene": f"one clear creative ecommerce scene for {purpose}",
-                    "must_show": [],
+                    "main_scene": recipe["scene"],
+                    "must_show": ["product clearly visible"],
                 },
-                modes[index % len(modes)],
+                recipe["mode"],
             ),
         }
         plans.append(plan)
@@ -3789,15 +3851,22 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
         for asset_id in appearance_assets
         if asset_id != str(identity["primary_asset_id"])
     ][:3]
-    prompt = (
-        "Create one polished ecommerce listing image in English prompt instructions. "
-        f"Product: {slot_input.get('product_name') or 'uploaded product'}. "
-        f"Scene goal: {plan['decision_task']}. "
-        f"Scene: {plan['main_scene']}. Action: {plan['main_action']}. "
-        "Use only the uploaded product references as product identity evidence. "
-        "Keep the real shape, colors, quantities, proportions, and included items. "
-        "Do not add fake specifications, certifications, prices, discounts, watermarks, or random text."
-    )
+    style = str(plan.get("seed_style") or "").strip()
+    language = slot_input.get("market_context", {}).get("language") or "en"
+    prompt_parts = [
+        f"Create a polished 1:1 ecommerce listing image for {slot_input.get('product_name') or 'the uploaded product'}.",
+        f"Scene: {plan['main_scene']}.",
+        f"Main action: {plan['main_action']}.",
+        f"Composition: {plan['composition']}. Camera: {plan['camera']}.",
+        "Lighting: bright natural commercial lighting, clean shadows, realistic materials, high detail.",
+        "The uploaded product reference images define the product identity. Preserve the visible shape, proportions, color relationships, quantity, and included parts.",
+        "If multiple variants or colors are assigned to this slot, arrange them naturally as a set; otherwise feature one representative product clearly.",
+        "Do not add text unless exact quoted visible text lines are provided. If text is provided, render it only in the target language and do not translate or invent extra wording.",
+        "No unprovided claims, fake specs, third-party logos, contact info, watermarks, clutter, or random decorative words.",
+    ]
+    if style:
+        prompt_parts.insert(4, f"Creative style to blend in: {style}.")
+    prompt = " ".join(prompt_parts)
     return _normalize_n6_prompt(
         {
             "slot_id": str(slot_input["slot_order"]),
@@ -3805,7 +3874,7 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
             "main_action": plan["main_action"],
             "visible_text_lines": [],
             "localized_copy": {
-                "language": slot_input.get("market_context", {}).get("language") or "en",
+                "language": language,
                 "lines": [],
                 "source_fact_refs": [],
                 "source_inference_refs": [],
