@@ -6513,15 +6513,19 @@ def _seal_generation_submission(generation_id):
     )
     generation = (
         Generation.objects.select_for_update()
-        .select_related(
-            "prompt_version",
-            "output_slot__template",
-        )
         .get(
             id=generation_id,
             batch_id=batch.id,
             cluster_id=cluster.id,
         )
+    )
+    generation.prompt_version = PromptVersion.objects.select_for_update().get(
+        id=generation.prompt_version_id
+    )
+    generation.output_slot = (
+        OutputSlot.objects.select_for_update()
+        .select_related("template")
+        .get(id=generation.output_slot_id)
     )
     _validate_generation_submission(
         generation,
@@ -6625,12 +6629,19 @@ def _locked_submission_fingerprint_current(generation_id, fingerprint):
     )
     generation = (
         Generation.objects.select_for_update()
-        .select_related("prompt_version", "output_slot__template")
         .get(
             id=generation_id,
             batch_id=batch.id,
             cluster_id=cluster.id,
         )
+    )
+    generation.prompt_version = PromptVersion.objects.select_for_update().get(
+        id=generation.prompt_version_id
+    )
+    generation.output_slot = (
+        OutputSlot.objects.select_for_update()
+        .select_related("template")
+        .get(id=generation.output_slot_id)
     )
     _lock_submission_dependencies(generation, cluster, batch)
     _validate_generation_submission(
