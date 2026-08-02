@@ -280,7 +280,6 @@ N6_REFERENCE_PLAN_SCHEMA = _object(
         "primary_asset_id": {"type": ["integer", "string"]},
         "supporting_asset_ids": {
             "type": "array",
-            "maxItems": 1,
             "items": {"type": ["integer", "string"]},
         },
         "completed_white_result_id": {"type": ["integer", "string", "null"]},
@@ -420,7 +419,7 @@ N2_INSTRUCTION = """
 4. 不得把不同 SKU 的颜色、纹理、标记、装饰或外形拼成现实中不存在的混合主外观。
 
 # 主外观与参考资产
-1. confirmed_points 或人工名称明确指定型号、颜色或款式时选择匹配证据；若核心结构与名称冲突，decision=needs_input，不能用名称强行覆盖图像冲突。
+1. confirmed_points 或人工名称明确指定型号、颜色或款式时选择匹配证据；若核心结构与名称不完全一致，conflict_state=conflict 但仍优先 decision=continue，保留人工/ERP 名称为确认事实，视觉差异写入 known_conflicts 供审核，不因名称冲突阻断生成。
 2. 输入顺序第一张有效实物图固定为全局 primary_asset_id。相同颜色/款式的不同角度归入同一 target appearance；颜色、花纹、普通尺寸或款式差异归为不同 appearance，全部保留。
 3. supporting_asset_ids 最多三张，只能补充同一主外观或高置信度共有结构的正面、背面、侧面、顶部、底部和关键细节；排除包装、说明书、竞品、模糊图、重复角度和其他 SKU 可变属性。
 4. standardization_mode：干净完整实物用 reuse；可移除人物/包装/背景且主体完整用 cutout；只能在身份约束下重建干净参考用 semantic_extract；无法确认用 needs_input。
@@ -433,7 +432,7 @@ N2_INSTRUCTION = """
 5. 看不见的内部结构、接口、配件、背面、功能、承重能力和包含物不得补全。图片观察不能自动升级为营销声明。
 
 # 决策
-存在至少一张有效实物图且可确认目标家族时优先 continue，单张观察失败不能阻断其他有效图。仅在实物全部不可辨或核心结构存在不可消解冲突时 needs_input。continue 时 category、identity_lock.must_not_change、primary_asset_id 和非空 target_appearances 必填；needs_input 时 target_appearances 为空并说明具体缺口。
+存在至少一张有效实物图时优先 continue，单张观察失败、品类不确定、名称与视觉不完全一致都不能阻断其他有效图。仅在实物全部不可辨、空白或没有任何商品参考时 needs_input。continue 时 category、identity_lock.must_not_change、primary_asset_id 和非空 target_appearances 必填；needs_input 时 target_appearances 为空并说明具体缺口。
 
 # 严格输出
 只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、代码围栏或额外字段。必须返回最终 product_name 与 conflict_state（match/unknown/conflict）；confidence 为 0–100 整数。verified_use_relationships、exact_component_constraints 等字段必须存在，即使为空数组。不得创建新商品事实。格式失败只允许同输入修复一次。
@@ -557,7 +556,7 @@ N6_CORE = """
 优先级依次为：系统安全与硬规则；identity_lock；confirmed 事实与已验证真实使用关系；当前 slot_plan 的购买决策；允许用途匹配的 observed/inferred；抽象风格。当前计划若与更高优先级冲突，静默纠正并在 trace 中保留使用的真实 ID，不得保留错误摆法、错误数量或虚构卖点。
 
 # 商品身份、精确数量与一对一连接拓扑
-1. 最终英文 Prompt 第一段先声明参考图优先级和商品身份，不能先写场景。营销图实际生成参考必须是本商品已完成白底图（且已归档），加零或最多一张 N2 批准的互补结构图；原 primary_asset_id 只保留为身份来源追踪，不在白底完成后与全部 supporting 图片一起提交。不能强制复刻源图背景、机位或摆姿。
+1. 最终英文 Prompt 第一段先声明参考图优先级和商品身份，不能先写场景。营销图有已完成白底图时优先使用白底图，再按当前 slot_plan.appearance_ids 选择必要的 N2 批准参考图；没有白底图时直接使用当前槽位需要的商品参考图生成，不等待白底完成。不能强制复刻源图背景、机位或摆姿。
 2. identity_lock 中的轮廓、主颜色、纹理、真实 Logo/型号、接口、控制件、结构、排列、比例与主外观属性必须准确保留；不得混入其他 SKU 的可变属性。
 3. 对每个明确部件数量，写成 exactly + 数量 + 明确英文部件名称，紧接 no extra, missing, merged or duplicated components；不得提及候选数量或模糊成 several/multiple。
 4. 对围绕主体重复排列或容易被复制的数量关键部件，描述一对一连接拓扑：Each component must originate from exactly one visible attachment point on the main body, with one component per attachment point and no hidden extra attachment points. 主体连接位数量、对应部件数量和连接关系一致，不得从背后、遮挡区或不存在的连接位额外伸出部件。
@@ -600,7 +599,7 @@ N6_CORE = """
 
 # 长度、参考图与输出
 1. 仅最终 prompt 字段按 Unicode 字符计数不得超过 3500；本系统提示词不受 3500 限制。超长时按装饰、次要道具、冗余镜头数字、重复否定句的顺序压缩，不删除身份锁、硬规则、真实使用关系或允许显示文字。
-2. 编译发生在白底完成前时 completed_white_result_id 可以为 null，但调度必须等待白底归档后再把该结果作为第一张生成参考。reference_plan.supporting_asset_ids 只选择确有结构补充必要的零或最多一张 N2 批准我方图，不要求、也禁止回传全部 supporting_asset_ids。竞品图绝不进入 reference_plan。
+2. 编译发生在白底完成前时 completed_white_result_id 可以为 null，营销图仍可直接用本商品参考图生成。reference_plan.supporting_asset_ids 只选择当前槽位确有帮助的 N2 批准我方图：单款使用场景可只选一个代表外观，多款/多色总览才覆盖全部相关外观；不要求每张营销图都展示全部款式。竞品图绝不进入 reference_plan。
 3. generation_parameters 固定 model=gpt-image-2、n=1，并沿用输入 size/resolution。character_count 必须等于 prompt 实际 Unicode 字符数，review_required=true。
 4. 只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、翻译过程、代码围栏或额外字段。main_scene 与 main_action 各恰好一个，visible_text_lines 与 localized_copy.lines 完全一致。语言、Schema 或长度失败只允许修复一次。
 """.strip()
@@ -628,7 +627,7 @@ N7_CORE = """
 
 # 必须复核的运行输入
 1. 输入键为 slot_order、prompt、rule_snapshot、marketing_plan、reference_snapshot、structural_asset_id、prompt_node_template、image_request、lineage。核对 lineage 中商品版本、配置、模板与规则内容哈希仍为当前值；引用不存在或过期时 block。
-2. prompt_node_template 必须绑定当前合格 N4/N6 版本；reference_snapshot 仅含批准的我方引用，营销图在实际提交前必须换成已归档白底图加最多一张互补结构图。竞品资产不得进入生成引用、Prompt 或消费者事实。
+2. prompt_node_template 必须绑定当前合格 N4/N6 版本；reference_snapshot 仅含批准的我方引用。营销图有已归档白底图时可优先引用白底图；没有白底图时可直接引用 N2 批准的当前槽位商品图，不因此阻断。竞品资产不得进入生成引用、Prompt 或消费者事实。
 3. image_request 必须使用已验证模型、n=1、允许比例/分辨率；实际 gpt-image-2 提交使用 URL 字符串数组，不得使用 base64 或 {url: ...} 对象数组。
 
 # 身份、数量与真实使用关系

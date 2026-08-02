@@ -2249,7 +2249,7 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
     assert provider.n2_calls == 2
 
 
-def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
+def test_prompt_worker_keeps_generating_when_n2_reports_visual_identity_conflict(
     tmp_path,
     settings,
 ):
@@ -2258,7 +2258,7 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
     from django.core.management import call_command
 
     from platform_app.models import Asset, Batch, Cluster, OutputSlot, OutputTemplate, PromptVersion
-    from platform_app.services import LocalStorage, process_prompt_once, request_cluster_preparation
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
 
     settings.MEDIA_ROOT = tmp_path
     call_command("seed_platform_templates")
@@ -2295,7 +2295,7 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
     cluster.save(update_fields=["product_name"])
     request_cluster_preparation(cluster, auto_generate=False)
 
-    class ConflictClient:
+    class ConflictClient(FakeAPIMartClient):
         def observe_images(self, instruction, image_paths):
             return {
                 "output_text": json.dumps(
@@ -2322,7 +2322,7 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
 
         def optimize_prompt(self, payload):
             if "NODE N2" not in payload.get("text", ""):
-                raise AssertionError("N3-N7 must not run after an identity conflict")
+                return super().optimize_prompt(payload)
             return {
                 "output_text": json.dumps(
                     strict_n2({
@@ -2354,66 +2354,69 @@ def test_prompt_worker_blocks_erp_name_when_n2_reports_visual_identity_conflict(
     assert process_prompt_once(ConflictClient(), LocalStorage(tmp_path)) == 1
     cluster.refresh_from_db()
 
-    assert cluster.preparation_status == Cluster.PreparationStatus.BLOCKED
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
     assert cluster.product_name == "ERP electric kettle"
     assert cluster.analysis_snapshot["identity"]["conflict_state"] == "conflict"
-    assert "conflict" in cluster.preparation_error
-    assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+    assert cluster.analysis_snapshot["readiness_warning"]["code"] == "identity_conflict_review"
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 1
 
 
-def test_n1_target_observation_requires_nonempty_visible_identity():
+def test_n1_target_observation_fills_missing_visible_identity():
     from platform_app.services import _normalize_n1_observation
 
     asset_id = "11111111-1111-1111-1111-111111111111"
 
-    with pytest.raises(ValueError, match="observed_identity"):
-        _normalize_n1_observation(
-            {
-                "asset_id": asset_id,
-                "asset_kind": "owned_product",
-                "image_role": "clean_product",
-                "contains_target_product": True,
-                "target_is_physical_product": True,
-                "target_visibility": 92,
-                "target_complete": True,
-                "background_complexity": "low",
-                "observed_identity": {"category_candidates": []},
-                "reference_quality": 92,
-                "recommended_use": "reuse",
-                "candidate_product_name": "Travel mug",
-                "candidate_product_name_confidence": 0.9,
+    normalized = _normalize_n1_observation(
+        {
+            "asset_id": asset_id,
+            "asset_kind": "owned_product",
+            "image_role": "clean_product",
+            "contains_target_product": True,
+            "target_is_physical_product": True,
+            "target_visibility": 92,
+            "target_complete": True,
+            "background_complexity": "low",
+            "observed_identity": {"category_candidates": []},
+            "reference_quality": 92,
+            "recommended_use": "reuse",
+            "candidate_product_name": "Travel mug",
+            "candidate_product_name_confidence": 0.9,
+        },
+        asset_id,
+    )
+    assert normalized["observed_identity"]["category_candidates"] == ["Travel mug"]
+    assert normalized["observed_identity"]["overall_shape"] == "Travel mug"
+
+
+def test_n1_cleans_schema_placeholder_strings_as_identity_evidence():
+    from platform_app.services import _normalize_n1_observation
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+
+    normalized = _normalize_n1_observation(
+        strict_n1({
+            "asset_id": asset_id,
+            "asset_kind": "owned_product",
+            "image_role": "clean_product",
+            "contains_target_product": True,
+            "target_is_physical_product": True,
+            "target_visibility": 0,
+            "target_complete": True,
+            "background_complexity": "low",
+            "observed_identity": {
+                "category_candidates": ["string"],
+                "overall_shape": "string",
             },
-            asset_id,
-        )
-
-
-def test_n1_rejects_schema_placeholder_strings_as_identity_evidence():
-    from platform_app.services import _normalize_n1_observation
-
-    asset_id = "11111111-1111-1111-1111-111111111111"
-
-    with pytest.raises(ValueError, match="placeholder"):
-        _normalize_n1_observation(
-            strict_n1({
-                "asset_id": asset_id,
-                "asset_kind": "owned_product",
-                "image_role": "clean_product",
-                "contains_target_product": True,
-                "target_is_physical_product": True,
-                "target_visibility": 0,
-                "target_complete": True,
-                "background_complexity": "low",
-                "observed_identity": {
-                    "category_candidates": ["string"],
-                    "overall_shape": "string",
-                },
-                "reference_quality": 0,
-                "recommended_use": "reuse",
-                "candidate_product_name": "string",
-                "candidate_product_name_confidence": 0,
-            }),
-            asset_id,
-        )
+            "reference_quality": 0,
+            "recommended_use": "reuse",
+            "candidate_product_name": "string",
+            "candidate_product_name_confidence": 0,
+        }),
+        asset_id,
+    )
+    assert normalized["candidate_product_name"] == ""
+    assert normalized["observed_identity"]["category_candidates"] == ["可见商品"]
+    assert normalized["observed_identity"]["overall_shape"] == "可见商品"
 
 
 @pytest.mark.parametrize(
@@ -2568,13 +2571,16 @@ def test_n2_fills_incomplete_identity_when_valid_product_images_exist():
     assert [item["primary_asset_id"] for item in normalized["target_appearances"]] == ["asset-1", "asset-2"]
 
 
-def test_blocked_identity_does_not_write_placeholder_product_name(tmp_path, settings):
+def test_uncertain_n1_continues_with_visible_image_reference(tmp_path, settings):
     import json
+
+    from django.core.management import call_command
 
     from platform_app.models import Asset, Batch, Cluster
     from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
 
     settings.MEDIA_ROOT = tmp_path
+    call_command("seed_platform_templates")
     user = make_user()
     batch = Batch.objects.create(owner=user, name="Blocked identity")
     storage_path = f"originals/{batch.id}/source.png"
@@ -2648,11 +2654,11 @@ def test_blocked_identity_does_not_write_placeholder_product_name(tmp_path, sett
     assert process_prompt_once(PlaceholderIdentityClient(), LocalStorage(tmp_path)) == 1
     cluster.refresh_from_db()
 
-    assert cluster.preparation_status == Cluster.PreparationStatus.BLOCKED
-    assert cluster.product_name == ""
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
+    assert cluster.product_name == "Chopsticks set"
     assert cluster.name != "string"
-    assert cluster.analysis_snapshot["identity"]["product_name"] == ""
-    assert cluster.analysis_snapshot["identity"]["product_profile"]["category"] == ""
+    assert cluster.analysis_snapshot["observations"][0]["contains_target_product"] is True
+    assert cluster.analysis_snapshot["identity"]["decision"] == "continue"
 
 
 def test_n2_continue_requires_nonempty_identity_lock_and_product_profile():
@@ -2697,7 +2703,7 @@ def test_n2_continue_requires_nonempty_identity_lock_and_product_profile():
         ("target_visibility", 91.5, "target_visibility"),
     ],
 )
-def test_n1_requires_real_owned_product_identity_schema(field, value, message):
+def test_n1_repairs_weak_owned_product_identity_schema(field, value, message):
     from platform_app.services import _normalize_n1_observation
 
     asset_id = "11111111-1111-1111-1111-111111111111"
@@ -2721,8 +2727,11 @@ def test_n1_requires_real_owned_product_identity_schema(field, value, message):
     }
     payload[field] = value
 
-    with pytest.raises(ValueError, match=message):
-        _normalize_n1_observation(payload, asset_id)
+    normalized = _normalize_n1_observation(payload, asset_id)
+
+    assert normalized["contains_target_product"] is True
+    assert normalized["observed_identity"]["category_candidates"]
+    assert normalized["observed_identity"]["overall_shape"]
 
 
 @pytest.mark.parametrize(
@@ -2771,8 +2780,11 @@ def test_n1_reviewer_payload_requires_authoritative_owned_product_fields(
     else:
         payload[field] = value
 
-    with pytest.raises(ValueError, match=message):
-        _normalize_n1_observation(payload, asset_id)
+    normalized = _normalize_n1_observation(payload, asset_id)
+
+    assert normalized["contains_target_product"] is True
+    assert normalized["observed_identity"]["category_candidates"]
+    assert normalized["observed_identity"]["overall_shape"]
 
 
 def test_prompt_worker_falls_back_to_n1_identity_when_n2_returns_schema_placeholders(

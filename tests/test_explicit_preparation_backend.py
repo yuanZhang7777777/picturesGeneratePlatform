@@ -722,7 +722,7 @@ def test_n7_semantic_pass_cannot_remove_deterministic_hard_block():
     assert merged["hard_blocks"] == ["platform.no_text"]
 
 
-def test_n6_reference_plan_allows_only_one_n2_approved_supporting_asset():
+def test_n6_reference_plan_allows_multiple_n2_approved_supporting_assets():
     from platform_app.services import _normalize_n6_prompt
 
     identity = {
@@ -755,9 +755,10 @@ def test_n6_reference_plan_allows_only_one_n2_approved_supporting_asset():
         "review_required": True,
     }
 
-    assert _normalize_n6_prompt(payload, 2, identity, ledger, [])["reference_plan"]["supporting_asset_ids"] == ["support-1"]
     payload["reference_plan"]["supporting_asset_ids"] = ["support-1", "support-2"]
-    with pytest.raises(ValueError, match="at most one"):
+    assert _normalize_n6_prompt(payload, 2, identity, ledger, [])["reference_plan"]["supporting_asset_ids"] == ["support-1", "support-2"]
+    payload["reference_plan"]["supporting_asset_ids"] = ["support-1", "other-product"]
+    with pytest.raises(ValueError, match="N2-approved"):
         _normalize_n6_prompt(payload, 2, identity, ledger, [])
 
 

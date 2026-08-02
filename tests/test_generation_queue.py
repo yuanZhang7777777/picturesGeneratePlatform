@@ -165,8 +165,8 @@ def test_confirm_generation_is_idempotent(tmp_path, settings):
     assert batch.generations.count() == 2
 
 
-def test_ensure_cluster_generations_creates_detail_slots_only_after_completed_hero(tmp_path, settings):
-    from platform_app.models import Generation, OutputSlot, OutputTemplate, PromptVersion, ResultAsset
+def test_ensure_cluster_generations_creates_all_slots_without_waiting_for_hero(tmp_path, settings):
+    from platform_app.models import OutputSlot, OutputTemplate
     from platform_app.services import ensure_cluster_generations
 
     settings.MEDIA_ROOT = tmp_path
@@ -184,28 +184,13 @@ def test_ensure_cluster_generations_creates_detail_slots_only_after_completed_he
     second = ensure_cluster_generations(cluster, user)
 
     assert [item.id for item in second] == [item.id for item in first]
-    assert list(cluster.generations.values_list("output_slot__order", flat=True)) == [1]
-
-    hero = first[0]
-    hero.status = Generation.Status.COMPLETED
-    hero.save(update_fields=["status", "updated_at"])
-    hero_path = f"results/{batch.id}/{cluster.id}/{hero.output_slot_id}/1/{hero.id}.png"
-    ResultAsset.objects.create(
-        generation=hero,
-        storage_path=hero_path,
-        sha256="1" * 64,
-        file_size=10,
-    )
-
-    all_generations = ensure_cluster_generations(cluster, user)
-
-    assert [item.output_slot.order for item in all_generations] == list(range(1, 10))
+    assert list(cluster.generations.values_list("output_slot__order", flat=True)) == list(range(1, 10))
     detail_refs = [
         generation.reference_snapshot
-        for generation in all_generations
+        for generation in first
         if generation.output_slot.order == 2
     ][0]
-    assert hero_path in detail_refs
+    assert detail_refs == [batch.assets.first().storage_path]
 
 
 def test_ensure_cluster_generations_cannot_compile_a_missing_prompt_version(
@@ -1487,24 +1472,16 @@ def test_shopee_vn_preserves_source_then_generates_white_hero_and_seven_marketin
 
     initial = ensure_cluster_generations(cluster, user)
 
-    assert [item.output_slot.order for item in initial] == [1, 2]
-    source, hero = initial
+    assert [item.output_slot.order for item in initial] == list(range(1, 10))
+    source, hero = initial[:2]
     assert source.status == Generation.Status.COMPLETED
     assert source.prompt_version.provider_model == "none"
     source_result = source.result_assets.get()
     assert source_result.storage_path.startswith(f"results/{batch.id}/{cluster.id}/{source.output_slot_id}/1/")
     assert LocalStorage(tmp_path).read(source_result.storage_path) == source_bytes
     assert hero.status == Generation.Status.QUEUED
-
-    assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
-    assert process_generation_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
-
-    generations = list(cluster.generations.order_by("output_slot__order"))
-    assert [item.output_slot.order for item in generations] == list(range(1, 10))
-    assert generations[1].status == Generation.Status.COMPLETED
-    assert all(item.status == Generation.Status.QUEUED for item in generations[2:])
-    white_result_path = generations[1].result_assets.get().storage_path
-    assert all(white_result_path in item.reference_snapshot for item in generations[2:])
+    assert all(item.status == Generation.Status.QUEUED for item in initial[1:])
+    assert all(asset.storage_path in item.reference_snapshot for item in initial[1:])
 
 
 def test_submit_unknown_is_not_reposted_automatically(tmp_path, settings):
@@ -1998,11 +1975,11 @@ def test_worker_rejects_a_queued_detail_image_without_its_required_hero(tmp_path
 
     assert client.calls == 0
     assert generation.status == Generation.Status.FAILED
-    assert "standard product hero" in generation.failure_reason.lower()
+    assert "promptversion" in generation.failure_reason.lower()
 
 
-def test_worker_requires_a_completed_hero_from_the_same_template_before_detail_submission(tmp_path, settings):
-    from platform_app.models import Generation, OutputSlot, OutputTemplate, ResultAsset
+def test_worker_can_submit_detail_while_hero_is_still_processing(tmp_path, settings):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
     from platform_app.services import (
         LocalStorage,
         ensure_cluster_generations,
@@ -2026,49 +2003,15 @@ def test_worker_requires_a_completed_hero_from_the_same_template_before_detail_s
     detail_slot = OutputSlot.objects.create(template=template, name="Detail", order=2)
     approve_prompt(cluster, user, hero_slot)
     approve_prompt(cluster, user, detail_slot)
-    other_template = OutputTemplate.objects.create(platform="global", name="Other template")
-    other_hero_slot = OutputSlot.objects.create(template=other_template, name="Hero", order=1)
     client = CapturingClient()
-
-    Generation.objects.create(
-        batch=batch,
-        cluster=cluster,
-        output_slot=other_hero_slot,
-        created_by=user,
-        status=Generation.Status.COMPLETED,
-    )
-    wrong_template_detail = Generation.objects.create(
-        batch=batch,
-        cluster=cluster,
-        output_slot=detail_slot,
-        created_by=user,
-        status=Generation.Status.QUEUED,
-        prompt_text="Detail after wrong-template hero",
-    )
-    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
-    wrong_template_detail.refresh_from_db()
-    assert client.calls == 0
-    assert wrong_template_detail.status == Generation.Status.FAILED
-
-    hero = next(
-        item
-        for item in ensure_cluster_generations(cluster, user)
-        if item.output_slot_id == hero_slot.id
-    )
-    hero.status = Generation.Status.COMPLETED
-    hero.save(update_fields=["status", "updated_at"])
-    hero_path = f"results/{batch.id}/{cluster.id}/{hero_slot.id}/{hero.attempt}/hero.png"
-    (tmp_path / hero_path).parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / hero_path).write_bytes(image_bytes())
-    ResultAsset.objects.create(
-        generation=hero,
-        storage_path=hero_path,
-        sha256="7" * 64,
-        file_size=len(image_bytes()),
-    )
+    generations = ensure_cluster_generations(cluster, user)
+    hero = next(item for item in generations if item.output_slot_id == hero_slot.id)
+    hero.status = Generation.Status.PROCESSING
+    hero.provider_task_id = "hero-still-running"
+    hero.save(update_fields=["status", "provider_task_id", "updated_at"])
     completed_hero_detail = next(
         item
-        for item in ensure_cluster_generations(cluster, user)
+        for item in generations
         if item.output_slot_id == detail_slot.id
         and item.status == Generation.Status.QUEUED
     )
@@ -2082,8 +2025,8 @@ def test_worker_requires_a_completed_hero_from_the_same_template_before_detail_s
 
 
 @pytest.mark.parametrize("hero_status", ["failed", "canceled"])
-def test_worker_keeps_detail_queued_until_a_failed_or_canceled_hero_is_redone(tmp_path, settings, hero_status):
-    from platform_app.models import Generation, OutputSlot, OutputTemplate, ResultAsset
+def test_worker_submits_detail_even_when_hero_failed_or_canceled(tmp_path, settings, hero_status):
+    from platform_app.models import OutputSlot, OutputTemplate
     from platform_app.services import (
         LocalStorage,
         ensure_cluster_generations,
@@ -2108,28 +2051,13 @@ def test_worker_keeps_detail_queued_until_a_failed_or_canceled_hero_is_redone(tm
     approve_prompt(cluster, user, hero_slot)
     approve_prompt(cluster, user, detail_slot)
     client = CapturingClient()
-    hero = ensure_cluster_generations(cluster, user)[0]
+    generations = ensure_cluster_generations(cluster, user)
+    hero = next(item for item in generations if item.output_slot_id == hero_slot.id)
     hero.status = hero_status
     hero.save(update_fields=["status", "updated_at"])
-    assert not cluster.generations.filter(output_slot=detail_slot).exists()
-
-    retry = hero.retry_failed(user)
-    assert retry.attempt == 2
-    assert retry.status == Generation.Status.QUEUED
-    retry.status = Generation.Status.COMPLETED
-    retry.save(update_fields=["status", "updated_at"])
-    hero_path = f"results/{batch.id}/{cluster.id}/{hero_slot.id}/{retry.attempt}/hero.png"
-    (tmp_path / hero_path).parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / hero_path).write_bytes(image_bytes())
-    ResultAsset.objects.create(
-        generation=retry,
-        storage_path=hero_path,
-        sha256="8" * 64,
-        file_size=len(image_bytes()),
-    )
     detail = next(
         item
-        for item in ensure_cluster_generations(cluster, user)
+        for item in generations
         if item.output_slot_id == detail_slot.id
     )
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
@@ -2138,7 +2066,7 @@ def test_worker_keeps_detail_queued_until_a_failed_or_canceled_hero_is_redone(tm
     assert detail.status == Generation.Status.SUBMITTED
 
 
-def test_worker_defers_detail_until_hero_completes_without_blocking_hero_or_polling(tmp_path, settings):
+def test_worker_submits_detail_without_waiting_for_hero_polling(tmp_path, settings):
     from platform_app.models import Generation, OutputSlot, OutputTemplate
     from platform_app.services import (
         LocalStorage,
@@ -2175,10 +2103,11 @@ def test_worker_defers_detail_until_hero_completes_without_blocking_hero_or_poll
     hero.refresh_from_db()
     assert hero.status == Generation.Status.SUBMITTED
     assert client.submitted_prompts == [hero.prompt_text]
-    assert not cluster.generations.filter(output_slot=detail_slot).exists()
+    detail = cluster.generations.get(output_slot=detail_slot)
+    assert detail.status == Generation.Status.QUEUED
 
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
-    hero.refresh_from_db()
-    assert hero.status == Generation.Status.PROCESSING
-    assert client.polls == 1
-    assert not cluster.generations.filter(output_slot=detail_slot).exists()
+    detail.refresh_from_db()
+    assert detail.status == Generation.Status.SUBMITTED
+    assert len(client.submitted_prompts) == 2
+    assert client.polls == 0

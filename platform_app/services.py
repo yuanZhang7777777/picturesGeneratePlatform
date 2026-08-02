@@ -206,7 +206,21 @@ def _sanitize_provider_text(text):
     text = str(text)
     if settings.APIMART_API_KEY:
         text = text.replace(settings.APIMART_API_KEY, "[redacted]")
-    return re.sub(r"Bearer\s+[A-Za-z0-9._-]+", "Bearer [redacted]", text)
+    text = re.sub(r"Bearer\s+[A-Za-z0-9._-]+", "Bearer [redacted]", text)
+    internal_tokens = (
+        "image_role",
+        "visible product identity",
+        "evidence_refs",
+        "json",
+        "schema",
+        "n1 output",
+        "n2 output",
+        "n3 output",
+        "n2 may",
+    )
+    if any(token in text.lower() for token in internal_tokens):
+        return "系统识别异常，请重试预备生成"
+    return text
 
 
 def _raise_provider_error(response):
@@ -2836,6 +2850,47 @@ def _normalize_n1_observation(payload, expected_asset_id):
     return normalized
 
 
+def _force_minimal_product_observation(observation, product_name):
+    fallback_name = _clean_schema_placeholder(product_name) or "可见商品"
+    observed_identity = observation.get("observed_identity")
+    if not isinstance(observed_identity, dict):
+        observed_identity = {}
+    observed_identity = copy.deepcopy(observed_identity)
+    category_candidates = _string_list(observed_identity.get("category_candidates")) or [fallback_name]
+    overall_shape = _clean_schema_placeholder(observed_identity.get("overall_shape")) or fallback_name
+    observed_identity.update(
+        {
+            "category_candidates": category_candidates,
+            "overall_shape": overall_shape,
+            "dominant_colors": _string_list(observed_identity.get("dominant_colors")),
+            "visible_material_cues": _string_list(observed_identity.get("visible_material_cues")),
+            "logos_or_markings": _string_list(observed_identity.get("logos_or_markings")),
+            "controls_ports_connectors": _string_list(observed_identity.get("controls_ports_connectors")),
+            "distinctive_parts": _string_list(observed_identity.get("distinctive_parts")),
+            "count_observations": observed_identity.get("count_observations")
+            if isinstance(observed_identity.get("count_observations"), list)
+            else [],
+        }
+    )
+    observation.update(
+        {
+            "contains_target_product": True,
+            "target_is_physical_product": True,
+            "target_visibility": max(int(observation.get("target_visibility") or 0), 50),
+            "target_complete": bool(observation.get("target_complete", True)),
+            "reference_quality": max(int(observation.get("reference_quality") or 0), 50),
+            "recommended_use": "reuse",
+            "observed_identity": observed_identity,
+            "candidate_product_name": _clean_schema_placeholder(observation.get("candidate_product_name")) or fallback_name,
+            "candidate_product_name_confidence": max(float(observation.get("candidate_product_name_confidence") or 0), 0.5),
+            "product_facts": _string_list(observation.get("product_facts")) or [fallback_name],
+            "identity_lock": _clean_schema_placeholder(observation.get("identity_lock")) or f"保持参考图中的{fallback_name}主体外观。",
+            "reason": str(observation.get("reason") or "前置识别不确定，按用户上传图片继续作为商品参考。"),
+        }
+    )
+    return observation
+
+
 def _normalize_n2_identity(
     payload,
     valid_asset_ids,
@@ -3274,14 +3329,22 @@ def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs,
     if not isinstance(supporting, list):
         raise ValueError("reference_plan supporting_asset_ids must be an array")
     supporting = [str(item) for item in supporting]
-    approved_supporting = {str(item) for item in identity.get("supporting_asset_ids", [])}
+    appearance_asset_ids = {
+        str(asset_id)
+        for appearance in identity.get("target_appearances", [])
+        if isinstance(appearance, dict)
+        for asset_id in appearance.get("asset_ids", [])
+    }
+    approved_supporting = {
+        str(item) for item in identity.get("supporting_asset_ids", [])
+    } | appearance_asset_ids
     if hero:
         if supporting != [str(item) for item in identity.get("supporting_asset_ids", [])]:
             raise ValueError("reference_plan supporting_asset_ids must match N2")
-    elif len(supporting) > 1 or len(supporting) != len(set(supporting)) or any(
+    elif len(supporting) != len(set(supporting)) or any(
         item not in approved_supporting for item in supporting
     ):
-        raise ValueError("marketing reference_plan allows at most one N2-approved supporting asset")
+        raise ValueError("marketing reference_plan must identify N2-approved product assets")
     fact_ids = {item["fact_id"] for item in ledger["facts"]}
     inferred_ids = {
         item["fact_id"] for item in ledger["facts"] if item["fact_class"] == "inferred"
@@ -4046,12 +4109,19 @@ def _appearance_reference_paths(cluster_assets, identity, appearance_ids=None):
         if appearance_ids is None
         else appearance_ids
     )
-    asset_ids = [
-        item.get("primary_asset_id")
-        for item in appearances
-        if item.get("appearance_id") in selected
+    asset_ids = []
+    for item in appearances:
+        if item.get("appearance_id") not in selected:
+            continue
+        primary_asset_id = item.get("primary_asset_id")
+        if primary_asset_id is not None:
+            asset_ids.append(primary_asset_id)
+        asset_ids.extend(item.get("asset_ids") or [])
+    references = [
+        paths_by_id[str(asset_id)]
+        for asset_id in asset_ids
+        if asset_id is not None and str(asset_id) in paths_by_id
     ]
-    references = [paths_by_id[str(asset_id)] for asset_id in asset_ids if asset_id is not None and str(asset_id) in paths_by_id]
     return list(dict.fromkeys(references)) or _identity_reference_paths(cluster_assets, identity)
 
 
@@ -4189,6 +4259,23 @@ def process_prompt_once(client=None, storage=None):
                             observation,
                         )
                     )
+            if not any(
+                item.get("contains_target_product")
+                and item.get("target_is_physical_product")
+                for item in observations
+            ):
+                fallback_name = cluster.product_name.strip()
+                if fallback_name == "名称待确认" or _is_schema_placeholder(fallback_name):
+                    fallback_name = ""
+                observations[0] = _force_minimal_product_observation(
+                    observations[0],
+                    fallback_name,
+                )
+                for snapshot in node_snapshots:
+                    if snapshot.get("node_id") == "N1" and str(snapshot["output_snapshot"].get("asset_id")) == str(observations[0]["asset_id"]):
+                        snapshot["output_snapshot"] = copy.deepcopy(observations[0])
+                        snapshot["output_hash"] = _snapshot_hash(observations[0])
+                        break
 
             observed_name = next(
                 (
@@ -4296,15 +4383,13 @@ def process_prompt_once(client=None, storage=None):
                 else "ai"
             ),
         }
-        if identity["decision"] != "continue" or identity["conflict_state"] == "conflict":
-            code = (
-                "identity_conflict"
-                if identity["conflict_state"] == "conflict"
-                else "identity_needs_input"
-            )
-            if identity["conflict_state"] == "conflict" and confirmed_product_name:
-                cluster_updates["product_name"] = confirmed_product_name
-                cluster_updates["name"] = cluster.name
+        if identity["conflict_state"] == "conflict":
+            analysis["readiness_warning"] = {
+                "code": "identity_conflict_review",
+                "message": "商品名和图片识别不完全一致，已按当前商品图继续生成，审核时确认。",
+            }
+        if identity["decision"] != "continue":
+            code = "identity_needs_input"
             analysis["readiness"] = {"status": "blocked", "code": code}
             _persist_prompt_terminal(
                 cluster.id,
@@ -5479,7 +5564,7 @@ def ensure_cluster_generations(
     creatable = [
         slot
         for slot in slots
-        if not is_source_product_photo_slot(slot) and (slot.id == hero_slot.id or hero is not None)
+        if not is_source_product_photo_slot(slot)
     ]
     if not force_new:
         existing = {}
@@ -5533,16 +5618,13 @@ def ensure_cluster_generations(
                 "reference_snapshot",
                 [],
             )
-            structural_reference = next(
-                (
-                    reference
-                    for reference in prepared_references
-                    if reference in approved_references
-                ),
-                approved_references[0],
-            )
-            references = [hero_refs[0], structural_reference]
-            hero_for_gate = hero
+            slot_references = [
+                reference
+                for reference in prepared_references
+                if reference in approved_references
+            ] or approved_references
+            references = [hero_refs[0], *slot_references] if hero_refs else slot_references
+            hero_for_gate = hero if hero_refs else None
         prompt_version = _create_gated_prompt_version(
             cluster=locked,
             batch=batch,
@@ -5921,7 +6003,7 @@ def _current_n2_reference_relations(cluster):
                 raise ValueError(
                     "Generation submission readiness N2 target appearances are invalid"
                 )
-            appearance_primary_ids.append(appearance_primary_id)
+            appearance_primary_ids.extend(asset_ids)
         if len(appearance_primary_ids) != len(set(appearance_primary_ids)):
             raise ValueError(
                 "Generation submission readiness N2 target appearances are invalid"
@@ -5961,27 +6043,30 @@ def _authorized_generation_references(generation, cluster, batch):
             if n7
             else None
         )
-        if current_hero is None or str(current_hero.id) != str(hero_id):
-            raise ValueError(
-                "Generation submission readiness requires the current completed white hero"
-            )
-        hero_path = current_hero.result_assets.order_by(
-            "created_at",
-            "id",
-        ).values_list("storage_path", flat=True).first()
-        if not hero_path:
-            raise ValueError(
-                "Generation submission readiness requires a current white hero result"
-            )
-        if (
-            len(generation.reference_snapshot) != 2
-            or generation.reference_snapshot[1] not in product_references
-        ):
-            raise ValueError(
-                "Generation submission readiness references are outside the current N2 authorization"
-            )
-        expected = [hero_path, generation.reference_snapshot[1]]
-        hero = current_hero
+        hero_path = None
+        if current_hero is not None and str(current_hero.id) == str(hero_id):
+            hero_path = current_hero.result_assets.order_by(
+                "created_at",
+                "id",
+            ).values_list("storage_path", flat=True).first()
+        if hero_path:
+            if (
+                len(generation.reference_snapshot) != 2
+                or generation.reference_snapshot[0] != hero_path
+                or generation.reference_snapshot[1] not in product_references
+            ):
+                raise ValueError(
+                    "Generation submission readiness references are outside the current N2 authorization"
+                )
+            expected = list(generation.reference_snapshot)
+            hero = current_hero
+        else:
+            expected = list(generation.reference_snapshot)
+            hero = None
+            if not expected or any(path not in product_references for path in expected):
+                raise ValueError(
+                    "Generation submission readiness references are outside the current N2 authorization"
+                )
     if generation.reference_snapshot != expected:
         raise ValueError(
             "Generation submission readiness references are outside the current N2 authorization"
@@ -6297,7 +6382,6 @@ def process_generation_once(client=None, storage=None):
     client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
     queued = None
-    rejected_queued = False
     active_count = _active_provider_generation_count()
     active_limit = _generation_active_limit()
     queued_candidates = (
@@ -6311,28 +6395,6 @@ def process_generation_once(client=None, storage=None):
         queued_owner_ids = [_generation_owner_id(candidate) for candidate in queued_candidates]
         for candidate in queued_candidates:
             if not _queue_is_fair_candidate(candidate, active_by_user, queued_owner_ids):
-                continue
-            hero_slot = standard_product_hero_slot(candidate.output_slot.template)
-            if hero_slot is not None and candidate.output_slot_id == hero_slot.id:
-                queued = candidate
-                break
-            hero = (
-                Generation.objects.filter(
-                    batch_id=candidate.batch_id,
-                    cluster_id=candidate.cluster_id,
-                    output_slot=hero_slot,
-                )
-                .order_by("-attempt", "-created_at", "-id")
-                .first()
-            )
-            if hero is None:
-                candidate.status = Generation.Status.FAILED
-                candidate.failure_reason = "A completed standard product hero is required before detail outputs can be generated"
-                candidate.save(update_fields=["status", "failure_reason", "updated_at"])
-                candidate.batch.recompute_status()
-                rejected_queued = True
-                continue
-            if hero.status != Generation.Status.COMPLETED:
                 continue
             queued = candidate
             break
@@ -6383,7 +6445,7 @@ def process_generation_once(client=None, storage=None):
         .first()
     )
     if active is None:
-        return 1 if rejected_queued else 0
+        return 0
     active = _claim_generation_for_polling(active.id)
     if active is None:
         return 0

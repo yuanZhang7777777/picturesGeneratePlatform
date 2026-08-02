@@ -315,9 +315,9 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
     }
 
     n6_reference = PROMPT_TEMPLATES["N6.generic"]["output_schema"]["properties"]["reference_plan"]
-    assert n6_reference["properties"]["supporting_asset_ids"]["maxItems"] == 1
-    assert "已完成白底图" in PROMPT_TEMPLATES["N6.generic"]["instruction"]
-    assert "最多一张" in PROMPT_TEMPLATES["N6.generic"]["instruction"]
+    assert "maxItems" not in n6_reference["properties"]["supporting_asset_ids"]
+    assert "没有白底图时直接使用当前槽位需要的商品参考图生成" in PROMPT_TEMPLATES["N6.generic"]["instruction"]
+    assert "不要求每张营销图都展示全部款式" in PROMPT_TEMPLATES["N6.generic"]["instruction"]
 
 
 def test_n5_n6_n7_publish_marketing_copy_contract():
