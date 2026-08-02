@@ -38,6 +38,7 @@ from .models import (
     RuleProfile,
     SkuImportItem,
 )
+from .prompt_templates_v3 import MARKETING_STRATEGY_MODES
 from .storage import StorageError, get_object_storage, validate_storage_path
 from .template_policy import (
     apply_standard_product_hero_policy,
@@ -82,6 +83,7 @@ MARKETING_DIVERSITY_MAX_SHARE = {
     "main_action": 0.5,
     "composition": 0.5,
 }
+_MARKETING_STRATEGY_MODE_SET = set(MARKETING_STRATEGY_MODES)
 
 
 class SubmitUnknown(Exception):
@@ -434,6 +436,21 @@ class FakeAPIMartClient:
                 "review_required": True,
             }
         elif "NODE N5" in text:
+            fact_ids = [
+                item.get("fact_id")
+                for item in node_input.get("fact_ledger", {}).get("facts", [])
+                if item.get("fact_id")
+            ]
+            modes = [
+                "fab_value",
+                "scene_ownership",
+                "emotion",
+                "personification",
+                "identity_signal",
+                "fab_value",
+                "scene_ownership",
+                "emotion",
+            ]
             output = {
                 "plans": [
                     {
@@ -461,8 +478,22 @@ class FakeAPIMartClient:
                         "must_show": [],
                         "must_avoid": [],
                         "visible_text_lines": [],
+                        "creative_strategy": {
+                            "mode": modes[index % len(modes)],
+                            "source_fact_refs": fact_ids[:1],
+                            "user_job": slot.get("purpose") or f"decision-{slot['slot_order']}",
+                            "consumer_tension": "The shopper needs a concrete reason to choose this product.",
+                            "feature": "visible product reference",
+                            "advantage": "the product is easy to understand visually",
+                            "consumer_benefit": "the shopper can picture using it with confidence",
+                            "mental_simulation": f"imagine the product in scene {slot['slot_order']}",
+                            "emotional_shift": "from uncertainty to confidence",
+                            "product_voice": "",
+                            "identity_signal": "",
+                            "selection_reason": "fake mode keeps the marketing plan schema complete",
+                        },
                     }
-                    for slot in node_input.get("slots", [])
+                    for index, slot in enumerate(node_input.get("slots", []))
                 ]
             }
         elif "NODE N6" in text:
@@ -481,8 +512,19 @@ class FakeAPIMartClient:
                 "localized_copy": {
                     "language": node_input.get("market_context", {}).get("language", "en"),
                     "lines": node_input.get("slot_plan", {}).get("visible_text_lines", []),
+                    "back_translation": "",
+                    "strategy_mode": node_input.get("slot_plan", {}).get("creative_strategy", {}).get("mode", "fab_value"),
                     "source_fact_refs": [],
                     "source_inference_refs": [],
+                    "quality": {
+                        "relevance": 90,
+                        "specificity": 90,
+                        "imagery": 90,
+                        "naturalness": 90,
+                        "truthfulness": 100,
+                        "mobile_readability": 90,
+                        "generic_phrase_hits": [],
+                    },
                 },
                 "prompt": prompt,
                 "character_count": len(prompt),
@@ -510,6 +552,13 @@ class FakeAPIMartClient:
                 "hard_blocks": hard_blocks,
                 "semantic_risks": [],
                 "warnings": [],
+                "copy_checks": {
+                    "lines_match_visible_text": True,
+                    "each_line_present_once": True,
+                    "language_match": True,
+                    "fact_refs_valid": True,
+                    "generic_phrase_hits": [],
+                },
                 "prompt_checks": {
                     "character_count": len(str(node_input.get("prompt") or "")),
                     "text_line_count": 0,
@@ -3153,6 +3202,85 @@ def _validate_marketing_diversity(plans):
             )
 
 
+def _strategy_text(value, field, *, required=True):
+    if not isinstance(value, str):
+        raise ValueError(f"creative_strategy {field} must be a string")
+    value = value.strip()
+    if required and not value:
+        raise ValueError(f"creative_strategy {field} is required")
+    return value
+
+
+def _fallback_creative_strategy(plan, mode):
+    fact_refs = plan.get("fact_refs", [])
+    return {
+        "mode": mode,
+        "source_fact_refs": list(fact_refs),
+        "user_job": plan["decision_task"],
+        "consumer_tension": plan.get("copy_intent") or plan["decision_task"],
+        "feature": "; ".join(plan.get("must_show", [])) or plan["subject_relationship"],
+        "advantage": plan["decision_task"],
+        "consumer_benefit": plan.get("copy_intent") or plan["decision_task"],
+        "mental_simulation": plan["main_scene"],
+        "emotional_shift": plan.get("copy_intent") or plan["decision_task"],
+        "product_voice": "",
+        "identity_signal": "",
+        "selection_reason": "Fallback strategy built from the normalized slot plan.",
+    }
+
+
+def _normalize_creative_strategy(plan, fact_ids, index):
+    strategy = plan.get("creative_strategy")
+    if strategy is None:
+        strategy = _fallback_creative_strategy(
+            plan,
+            MARKETING_STRATEGY_MODES[index % len(MARKETING_STRATEGY_MODES)],
+        )
+    if not isinstance(strategy, dict):
+        raise ValueError("creative_strategy must be an object")
+    normalized = copy.deepcopy(strategy)
+    mode = _strategy_text(normalized.get("mode"), "mode")
+    if mode not in _MARKETING_STRATEGY_MODE_SET:
+        raise ValueError("creative_strategy mode is not supported")
+    refs = _required_string_list(normalized, "source_fact_refs")
+    unknown_refs = [ref for ref in refs if ref not in fact_ids]
+    if unknown_refs:
+        raise ValueError("creative_strategy source_fact_refs contains an unknown fact reference")
+    required_strings = (
+        "user_job",
+        "consumer_tension",
+        "feature",
+        "advantage",
+        "consumer_benefit",
+        "mental_simulation",
+        "emotional_shift",
+        "selection_reason",
+    )
+    for field in required_strings:
+        normalized[field] = _strategy_text(normalized.get(field), field)
+    for field in ("product_voice", "identity_signal"):
+        normalized[field] = _strategy_text(normalized.get(field, ""), field, required=False)
+    normalized["mode"] = mode
+    normalized["source_fact_refs"] = refs
+    return normalized
+
+
+def _validate_marketing_strategy_distribution(plans):
+    if not plans:
+        return
+    modes = [plan["creative_strategy"]["mode"] for plan in plans]
+    if len(set(modes)) < min(4, len(modes)):
+        raise ValueError("creative strategy distribution requires enough distinct modes")
+    counts = Counter(modes)
+    if len(modes) >= 8 and counts.get("fab_value", 0) < 1:
+        raise ValueError("creative strategy distribution requires at least one fab_value")
+    if counts.get("personification", 0) > 1:
+        raise ValueError("creative strategy distribution allows at most one personification")
+    repeated = [mode for mode, count in counts.items() if count > 3]
+    if repeated:
+        raise ValueError("creative strategy distribution repeats one mode too often")
+
+
 def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, target_appearance_ids=None):
     plans = _normalized_marketing_plans(payload, marketing_slots)
     expected = {slot.order for slot in marketing_slots}
@@ -3180,7 +3308,7 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
     normalized = []
     target_appearance_ids = set(target_appearance_ids or [])
     covered_appearance_ids = set()
-    for slot in marketing_slots:
+    for index, slot in enumerate(marketing_slots):
         plan = copy.deepcopy(plans[slot.order])
         for field in required_strings:
             plan[field] = _required_string(plan, field)
@@ -3197,11 +3325,17 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
         if target_appearance_ids and (not appearance_ids or any(item not in target_appearance_ids for item in appearance_ids)):
             raise ValueError("appearance_ids must identify target appearances")
         plan["appearance_ids"] = appearance_ids
+        plan["creative_strategy"] = _normalize_creative_strategy(
+            plan,
+            set(fact_ids),
+            index,
+        )
         covered_appearance_ids.update(appearance_ids)
         normalized.append(plan)
     if target_appearance_ids - covered_appearance_ids:
         raise ValueError("marketing plans must cover every target appearance")
     _validate_marketing_diversity(normalized)
+    _validate_marketing_strategy_distribution(normalized)
     result = copy.deepcopy(payload)
     result["plans"] = normalized
     return result
@@ -3443,6 +3577,37 @@ def _identity_facts(identity):
         elif value:
             values.append(str(value).strip())
     return "; ".join(dict.fromkeys(item for item in values if item))
+
+
+def _fact_text_items(value):
+    items = []
+    for item in _string_list(value):
+        items.extend(part.strip() for part in item.split(";") if part.strip())
+    return list(dict.fromkeys(items))
+
+
+def _n5_consumer_context(identity, observations, product_facts):
+    profile = identity.get("product_profile") if isinstance(identity.get("product_profile"), dict) else {}
+    target_consumer = next(
+        (
+            _clean_schema_placeholder(item.get("target_consumer"))
+            for item in observations
+            if _clean_schema_placeholder(item.get("target_consumer"))
+        ),
+        "",
+    )
+    observed_facts = [
+        fact
+        for item in observations
+        for fact in _fact_text_items(item.get("product_facts") or item.get("facts"))
+    ]
+    return {
+        "target_consumer": str(target_consumer or ""),
+        "verified_use_relationships": _string_list(profile.get("verified_use_relationships")),
+        "product_facts": _fact_text_items(product_facts) or list(dict.fromkeys(observed_facts)),
+        "product_category": str(_clean_schema_placeholder(profile.get("category")) or ""),
+        "primary_appearance": str(_clean_schema_placeholder(profile.get("primary_appearance")) or ""),
+    }
 
 
 def _normalized_marketing_plans(marketing_plan, marketing_slots):
@@ -4140,6 +4305,11 @@ def process_prompt_once(client=None, storage=None):
                 "identity_lock": identity_lock,
                 "fact_ledger": ledger,
                 "target_appearances": identity.get("target_appearances", []),
+                "consumer_context": _n5_consumer_context(
+                    identity,
+                    observations,
+                    product_facts,
+                ),
                 "slots": [
                     {"slot_order": slot.order, "name": slot.name, "purpose": slot.purpose}
                     for slot in marketing_slots

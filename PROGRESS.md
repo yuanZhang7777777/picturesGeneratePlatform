@@ -169,6 +169,14 @@
 - Verification: targeted red test failed on missing 3.1 templates/schema, then `pytest tests/test_prompt_templates_v3.py tests/test_template_seed.py -q` passed 23.
 - Next: Task 2 will validate N5 consumer context, fact refs and strategy distribution in runtime normalization.
 
+# Prompt OS 3.1 Task 2 N5 strategy normalization
+
+- Status: completed local N5 runtime slice; unrelated existing N2 fallback work remains unstaged.
+- Red evidence: targeted tests first failed on missing `consumer_context`, unknown `creative_strategy` refs not raising, and strategy distribution not requiring enough modes/FAB.
+- Change: N5 runtime input now includes `consumer_context`; N5 plan normalization validates `creative_strategy`, known `source_fact_refs`, four-mode distribution, at least one FAB for eight slots, max one personification, and excessive repeat protection.
+- Verification: `pytest tests/test_prompt_os.py -k "creative_strategy or consumer_context or marketing" -q` passed targeted N5 regressions.
+- Next: Task 3 writes the full N5/N6/N7 system prompt content without changing schemas or adding nodes.
+
 # Prompt OS 3.2 node/workflow design handoff
 
 - Status: design-only handoff completed on 2026-08-02; no runtime code, paid call, OSS/ERP smoke or deployment was performed.

@@ -87,6 +87,47 @@ def make_cluster(
     return cluster
 
 
+def creative_strategy(mode="fab_value", refs=("fact.name.001",)):
+    return {
+        "mode": mode,
+        "source_fact_refs": list(refs),
+        "user_job": "understand the product value",
+        "consumer_tension": "the value is not obvious from a plain product view",
+        "feature": "visible product structure",
+        "advantage": "easier to understand before buying",
+        "consumer_benefit": "buy with clearer expectations",
+        "mental_simulation": "imagine using the product in a normal day",
+        "emotional_shift": "from uncertain to confident",
+        "product_voice": "",
+        "identity_signal": "",
+        "selection_reason": "supported by the referenced product fact",
+    }
+
+
+def n5_plan(slot_order, *, mode="fab_value", fact_refs=("fact.name.001",), appearance_ids=None):
+    return {
+        "slot_order": slot_order,
+        "role": f"marketing role {slot_order}",
+        "decision_task": f"decision task {slot_order}",
+        "fact_refs": list(fact_refs),
+        "inference_refs": [],
+        "main_scene": f"scene {slot_order}",
+        "main_action": f"action {slot_order}",
+        "subject_relationship": f"relationship {slot_order}",
+        "composition": f"composition {slot_order}",
+        "copy_intent": f"copy intent {slot_order}",
+        "text_mode": "up_to_3_lines",
+        "localization_notes": [],
+        "must_show": [],
+        "must_avoid": [],
+        "scene_family": f"scene-family-{slot_order}",
+        "environment": f"environment-{slot_order}",
+        "camera": f"camera-{slot_order}",
+        "appearance_ids": list(appearance_ids or []),
+        "creative_strategy": creative_strategy(mode, fact_refs),
+    }
+
+
 def test_confirm_generation_snapshots_selected_market_template_rule_and_prompt_asset():
     """A generation must retain the selected configuration after it is later edited."""
     from platform_app.models import Batch, OutputSlot, OutputTemplate, RuleProfile
@@ -2606,6 +2647,182 @@ def test_n5_requires_the_set_to_cover_every_target_appearance():
 
     with pytest.raises(ValueError, match="cover every target appearance"):
         _normalize_n5_plans(payload, slots, set(), set(), {"appearance.green", "appearance.blue"})
+
+
+def test_n5_receives_consumer_context_and_strategy_fact_refs(tmp_path, settings):
+    import json
+
+    from platform_app.management.commands.seed_platform_templates import GLOBAL_SLOTS
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Consumer context")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="e" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    template = OutputTemplate.objects.create(
+        seed_key="global-marketplace-nine-slot-template",
+        platform="global",
+        site="",
+        name="Nine slot",
+        version="2026.07.9",
+    )
+    for order, name, purpose in GLOBAL_SLOTS:
+        template.slots.create(order=order, name=name, purpose=purpose)
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class ConsumerContextClient(FakeAPIMartClient):
+        n5_input = None
+
+        def observe_images(self, instruction, image_paths):
+            observed_asset_id = instruction.split("ASSET_ID=", 1)[1].splitlines()[0]
+            return {
+                "output_text": json.dumps(strict_n1({
+                    "asset_id": observed_asset_id,
+                    "asset_kind": "owned_product",
+                    "image_role": "clean_product",
+                    "contains_target_product": True,
+                    "target_is_physical_product": True,
+                    "target_visibility": 93,
+                    "target_complete": True,
+                    "background_complexity": "low",
+                    "observed_identity": {
+                        "category_candidates": ["portable lunch utensil set"],
+                        "overall_shape": "wooden spoon and chopsticks in a slim case",
+                    },
+                    "reference_quality": 93,
+                    "recommended_use": "reuse",
+                    "candidate_product_name": "Portable lunch utensil set",
+                    "candidate_product_name_confidence": 0.93,
+                    "product_facts": ["wooden spoon", "matching chopsticks", "slim carry case"],
+                    "identity_lock": "Keep the spoon, chopsticks, and slim case together.",
+                    "target_consumer": "office lunch users",
+                })),
+                "raw": {},
+            }
+
+        def optimize_prompt(self, payload):
+            text = payload.get("text", "")
+            if "NODE N5" in text:
+                self.n5_input = json.loads(text.splitlines()[-1])
+                modes = [
+                    "fab_value",
+                    "scene_ownership",
+                    "emotion",
+                    "identity_signal",
+                    "fab_value",
+                    "scene_ownership",
+                    "emotion",
+                    "identity_signal",
+                ]
+                appearances = [
+                    item["appearance_id"]
+                    for item in self.n5_input.get("target_appearances", [])
+                    if item.get("appearance_id")
+                ]
+                return {
+                    "output_text": json.dumps({
+                        "plans": [
+                            n5_plan(
+                                slot["slot_order"],
+                                mode=modes[index],
+                                fact_refs=("fact.name.001",),
+                                appearance_ids=appearances,
+                            )
+                            for index, slot in enumerate(self.n5_input["slots"])
+                        ]
+                    }),
+                    "raw": {},
+                }
+            return super().optimize_prompt(payload)
+
+    client = ConsumerContextClient()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+
+    assert client.n5_input["consumer_context"]["target_consumer"] == "office lunch users"
+    assert "wooden spoon" in client.n5_input["consumer_context"]["product_facts"]
+    cluster.refresh_from_db()
+    first_plan = cluster.analysis_snapshot["marketing_plan"]["plans"][0]
+    assert first_plan["creative_strategy"]["source_fact_refs"] == ["fact.name.001"]
+
+
+def test_n5_rejects_unknown_creative_strategy_fact_ref():
+    from types import SimpleNamespace
+
+    from platform_app.services import _normalize_n5_plans
+
+    slots = [SimpleNamespace(order=2, name="Benefit")]
+    payload = {
+        "plans": [
+            {
+                **n5_plan(2, fact_refs=("fact.name.001",)),
+                "creative_strategy": creative_strategy("fab_value", ("fact.missing",)),
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="creative_strategy"):
+        _normalize_n5_plans(payload, slots, {"fact.name.001"}, set())
+
+
+def test_n5_requires_four_modes_and_at_least_one_fab_for_eight_slots():
+    from types import SimpleNamespace
+
+    from platform_app.services import _normalize_n5_plans
+
+    slots = [SimpleNamespace(order=order, name=f"Slot {order}") for order in range(2, 10)]
+    invalid_modes = [
+        "scene_ownership",
+        "emotion",
+        "identity_signal",
+        "scene_ownership",
+        "emotion",
+        "identity_signal",
+        "scene_ownership",
+        "emotion",
+    ]
+    invalid = {
+        "plans": [
+            n5_plan(slot.order, mode=invalid_modes[index], fact_refs=("fact.name.001",))
+            for index, slot in enumerate(slots)
+        ]
+    }
+    with pytest.raises(ValueError, match="creative strategy"):
+        _normalize_n5_plans(invalid, slots, {"fact.name.001"}, set())
+
+    valid_modes = [
+        "fab_value",
+        "scene_ownership",
+        "emotion",
+        "identity_signal",
+        "fab_value",
+        "scene_ownership",
+        "emotion",
+        "identity_signal",
+    ]
+    valid = {
+        "plans": [
+            n5_plan(slot.order, mode=valid_modes[index], fact_refs=("fact.name.001",))
+            for index, slot in enumerate(slots)
+        ]
+    }
+
+    normalized = _normalize_n5_plans(valid, slots, {"fact.name.001"}, set())
+    assert [plan["creative_strategy"]["mode"] for plan in normalized["plans"]] == valid_modes
 
 
 def test_n5_diversity_rejects_one_repeated_dimension_even_when_tuples_differ():
