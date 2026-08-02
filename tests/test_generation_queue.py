@@ -1502,6 +1502,32 @@ def test_submit_unknown_is_not_reposted_automatically(tmp_path, settings):
     assert Generation.objects.filter(cluster=cluster).count() == 1
 
 
+def test_stale_submitting_without_provider_task_id_is_requeued(tmp_path, settings):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from platform_app.models import Generation
+    from platform_app.services import LocalStorage, process_generation_once
+
+    class Client:
+        def submit_generation(self, prompt, image_paths, size, resolution):
+            return "task-new"
+
+    _, _, _, generation = queue_approved_hero(tmp_path, settings)
+    Generation.objects.filter(id=generation.id).update(
+        status=Generation.Status.SUBMITTING,
+        provider_task_id=None,
+        updated_at=timezone.now() - timedelta(seconds=660),
+    )
+
+    assert process_generation_once(Client(), LocalStorage(tmp_path)) == 1
+
+    generation.refresh_from_db()
+    assert generation.status == Generation.Status.SUBMITTED
+    assert generation.provider_task_id == "task-new"
+
+
 def test_prompt_complexity_failure_creates_one_shorter_n9_retry(tmp_path, settings):
     import json
 

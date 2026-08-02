@@ -55,6 +55,14 @@
 
 实际 system Prompt 源文件是 `platform_app/prompt_templates_v3.py`，数据库发布后由 `PromptNodeTemplate` 保存版本。运行时发送的是完整模板，不是文档摘要。
 
+## 运行容错与耗时边界
+
+- DeepSeek 文本节点单次等待 20 秒；空响应、坏 JSON 或缺少非关键字段时使用当前商品事实生成兜底结构，不让商品卡因为内部 Schema 错误卡死。
+- `preparing` 超过 120 秒会回到待处理，下一轮 Prompt Worker 继续预备。
+- 正式生成只复用当前配置下已通过 N7 的 `PromptVersion`，不再在创建 `Generation` 时二次跑 N7。
+- `submitting` 且没有 `provider_task_id` 超过 600 秒会回到队列重新提交，用于恢复部署中断或网络提交中断。
+- `gpt-image-2` 单张图 80–120 秒属于正常后台生成区间；265–358 秒属于偏慢但不是必然失败。系统必须显示进度和可刷新状态，不能让用户误以为按钮没反应。
+
 ## 失败边界
 
 应该阻断用户的情况只有这些：

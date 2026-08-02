@@ -6624,6 +6624,20 @@ PROVIDER_ACTIVE_GENERATION_STATUSES = (
 )
 
 
+def _restore_stale_generation_submissions():
+    stale_before = timezone.now() - timedelta(seconds=600)
+    Generation.objects.filter(
+        Q(provider_task_id__isnull=True) | Q(provider_task_id=""),
+        status=Generation.Status.SUBMITTING,
+        updated_at__lt=stale_before,
+        cluster__archived_at__isnull=True,
+    ).update(
+        status=Generation.Status.QUEUED,
+        failure_reason="",
+        updated_at=timezone.now(),
+    )
+
+
 def _generation_active_limit():
     provider_limit = max(1, int(getattr(settings, "GENERATION_PROVIDER_ACTIVE_LIMIT", 500)))
     configured = max(1, int(getattr(settings, "MAX_ACTIVE_GENERATIONS", provider_limit)))
@@ -6672,6 +6686,7 @@ def _queue_is_fair_candidate(candidate, active_by_user, queued_owner_ids):
 def process_generation_once(client=None, storage=None):
     client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
+    _restore_stale_generation_submissions()
     queued = None
     active_count = _active_provider_generation_count()
     active_limit = _generation_active_limit()
