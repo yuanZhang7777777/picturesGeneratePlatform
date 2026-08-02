@@ -206,3 +206,17 @@
 - Change: consolidated the latest user decisions into a single 3.3 baseline: organize import remains zero AI, prepare/formal generation share N1–N7, one product card with multiple images produces one 1+8 set, N2 owns `target_appearances`, N5 owns five creative copy strategies, N6 locks target-language visible copy into an English GPT Image 2 prompt, and N7 blocks only fact/rule/version/copy-lock failures.
 - Deliverables: `docs/superpowers/specs/2026-08-02-prompt-os-3.3-production-node-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-3.3-implementation-plan.md`, `docs/project/LEADER-GOAL-PROMPT-OS-3.3.md`.
 - Next: GPT-5.5 should execute the 3.3 Task 0–8 plan; 3.1 and 3.2 are historical inputs.
+
+# Prompt OS 4.1 node and marketing-design handoff
+
+- Status: design-only handoff tightened on 2026-08-02; no runtime code, paid call, OSS/ERP smoke or deployment was performed.
+- Change: kept 4.1 as the single GPT-5.5 execution baseline and added the missing hard details: every node template needs six executable sections, N5 must output a `copywriting_chain` from product fact to user result, use moment, emotion hook and copy angle, N6 must create three target-language copy candidates with scoring before locking the selected text into the English GPT Image 2 prompt, and Style DNA must be atomized instead of pasted whole into final prompts.
+- Deliverables: updated `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`, `docs/project/LEADER-GOAL-PROMPT-OS-4.1.md`, `CLAUDE.md`, and `docs/project/STATUS.md`.
+- Next: GPT-5.5 should execute the 4.1 Task 0–9 plan. 3.1–4.0 remain historical inputs only.
+
+# Prompt OS 4.1 final design freeze
+
+- Status: design-only freeze completed on 2026-08-02; no runtime code, paid call, OSS/ERP smoke or deployment was performed.
+- Change: added the missing paid-generation gate and employee-facing error boundary to the 4.1 spec, and made the GPT-5.5 plan explicitly implementation-only so the next agent does not create another 4.x design.
+- Deliverables: `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`, `docs/superpowers/specs/节点prompt设定初稿.md`, and `docs/project/LEADER-GOAL-PROMPT-OS-4.1.md`.
+- Next: give the 4.1 task book to GPT-5.5 and execute Task 0–9 with red/green tests and small commits.

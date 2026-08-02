@@ -2,7 +2,7 @@
 
 最后更新：2026-08-02
 维护者：主 Agent
-状态：`lxc/workbench-v4` 已完成 Prompt OS 4.1 节点与营销生成设计、实施计划和 GPT-5.5 任务书，尚未实现或发布。当前生产继续使用已部署运行版本；目标 4.1.0 将把整理零 AI、正式生成自动预备、一卡多图 `target_appearances`、五策略购买心理文案、目标语言文字锁、Style DNA、员工错误脱敏和 N7 付费门禁变成可验证契约；真实 ERP/OSS、新付费 1+8 和 50 商品浏览器验收仍未完成。
+状态：`lxc/workbench-v4` 已重整 Prompt OS 4.1 节点设计、实施计划和 GPT-5.5 任务书，尚未实现或发布。当前生产继续使用已部署运行版本；目标 4.1.0 将把整理零 AI、正式生成自动预备、一卡多图 `target_appearances`、N5 购买冲动转换链、N6 三候选目标语言文案自评、目标语言文字锁、Style DNA、员工错误脱敏、固定侧浮层工作台和 N7 付费门禁变成可验证契约；真实 ERP/OSS、新付费 1+8 和 50 商品浏览器验收仍未完成。
 
 ## 当前目标
 
@@ -50,7 +50,7 @@
 | R0-05 | GPT-5.5 执行 Agent（主 Agent 验收） | Prompt OS 3.3 生产节点设计与执行计划 | 用户最新确认、3.1 营销文案、3.2 工作台/多图链路、优秀 Style DNA 样例、公开视频文案方法 | 历史设计：导入整理零AI；预备/正式生成统一 N1–N7；一卡多图 `target_appearances`；五策略营销导演；目标语言文案逐字锁；英文 `gpt-image-2` Prompt；内部错误脱敏；5.5 `/goal` 任务书 | `docs/superpowers/specs/2026-08-02-prompt-os-3.3-production-node-design.md`、`docs/superpowers/plans/2026-08-02-prompt-os-3.3-implementation-plan.md`、`docs/project/LEADER-GOAL-PROMPT-OS-3.3.md` | 文档自检；已由 R0-08 收口 | 历史完成 | 真实付费、ERP/OSS smoke 与 Hermes 部署需主 Agent 签核 |
 | R0-06 | GPT-5.5 执行 Agent（主 Agent 验收） | Prompt OS 3.4 节点与执行计划 | 3.3 设计、用户最新多图/交互/文案确认、APIMart GPT Image 2 参考图契约、公开视频文案方法 | 历史设计：每图默认一卡；卡内多图共同定义一套 1+8；N2 输出商品家族和目标外观；国家只控语言/规则；N5 五策略营销；N6 目标语言直写与英文生图 Prompt；N7 文字锁和一次重写；员工错误脱敏；5.5 任务书 | `docs/superpowers/specs/2026-08-02-prompt-os-3.4-node-execution-design.md`、`docs/superpowers/plans/2026-08-02-prompt-os-3.4-gpt55-implementation.md`、`docs/project/LEADER-GOAL-PROMPT-OS-3.4.md` | 文档自检；已由 R0-08 收口 | 历史完成 | 真实付费、ERP/OSS smoke 与 Hermes 部署需主 Agent 签核 |
 | R0-07 | GPT-5.5 执行 Agent（主 Agent 验收） | Prompt OS 4.0 节点生产设计与执行计划 | 3.4 设计、用户最新确认、优秀 Style DNA 样例、公开视频文案方法、APIMart GPT Image 2 参考图契约 | 下一轮执行基线：导入整理零 AI；正式生成缺 Prompt 自动预备；一卡多图共同定义一套 1+8；N2 输出目标外观；N5 五策略购买心理；N6 目标语言文案逐字锁进英文 Prompt；N7 硬门禁和一次低风险重写；前端脉冲进度和员工错误脱敏；5.5 `/goal` 任务书 | `docs/superpowers/specs/2026-08-02-prompt-os-4.0-node-production-design.md`、`docs/superpowers/plans/2026-08-02-prompt-os-4.0-gpt55-implementation.md`、`docs/project/LEADER-GOAL-PROMPT-OS-4.0.md` | 文档自检；下一步由 5.5 按计划跑红绿测试、全量验证和签核门禁 | 设计与计划完成，待 GPT-5.5 执行 | 真实付费、ERP/OSS smoke 与 Hermes 部署需主 Agent 签核 |
-| R0-08 | GPT-5.5 执行 Agent（主 Agent 验收） | Prompt OS 4.1 节点与营销生成设计 | 4.0 设计、用户最新多图/交互/文案确认、公开视频五段位文案方法、优秀 Style DNA 样例、APIMart GPT Image 2 文档 | 下一轮唯一执行基线：导入整理零 AI；正式生成缺 Prompt 自动预备；一卡多图共同定义一套 1+8；N2 输出商品家族和目标外观；N5 按 FAB、场景占有、情绪触发、拟人表达、身份表达动态策划；N6 目标语言直写并锁进英文生图 Prompt；N7 硬门禁和一次低风险重写；员工错误脱敏；5.5 任务书 | `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`、`docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`、`docs/project/LEADER-GOAL-PROMPT-OS-4.1.md` | 文档自检；下一步由 5.5 按计划跑红绿测试、全量验证和签核门禁 | 设计与计划完成，待 GPT-5.5 执行 | 真实付费、ERP/OSS smoke 与 Hermes 部署需主 Agent 签核 |
+| R0-08 | GPT-5.5 执行 Agent（主 Agent 验收） | Prompt OS 4.1 节点与营销生成设计 | 4.0 设计、用户最新多图/交互/文案确认、公开视频五段位文案方法、优秀 Style DNA 样例、APIMart GPT Image 2 文档、OpenAI/Shopify 生成指导 | 下一轮唯一执行基线：导入整理零 AI；正式生成缺 Prompt 自动预备；一卡多图共同定义一套 1+8；N1–N7 以节点 IO 表和变量交接线贯通；N2 输出商品家族和目标外观；每个节点模板必须有六段硬结构；N5 按 FAB、场景占有、情绪触发、拟人表达、身份表达动态策划，并输出购买任务、情绪触发、画面签名和 `copywriting_chain`；N6 目标语言直写、三候选自评并锁进英文生图 Prompt；N7 只阻断付费风险、商品错误和文案错误，低风险只重写当前槽一次；工作台一行配置、同屏导入、固定操作条和右侧浮层；员工错误脱敏；5.5 任务书 | `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`、`docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`、`docs/project/LEADER-GOAL-PROMPT-OS-4.1.md` | 文档自检；下一步由 5.5 按计划跑红绿测试、全量验证和签核门禁 | 设计与计划已三次收口，待 GPT-5.5 执行 | 真实付费、ERP/OSS smoke 与 Hermes 部署需主 Agent 签核 |
 | P0-01 | 产品与 Prompt OS | Prompt OS v2 九节点、事实与身份锁 | 九节点规格、官网规则包 | N1 逐图观察、N2–N6 分析/编译、N7 确定性闸门、N8 修改导演、N9 失败简化；完整 2.1.0 核心提示词通过实际 system/视觉指令发送；推断台账和不可变快照 | `platform_app/services.py`、节点规格、测试 | 历史节点 smoke 已有；本轮发现新生成链路可能绕过合格 PromptVersion/N7，正在以 R0-01 重构修复 | 被 R0-01 收紧 | 新硬门禁、Worker CAS、质量基准与真实验收待完成 |
 | P0-02 | 前端体验 | 可用上传入口、推断台账和结构化 Prompt 编辑 | React 工作台与 Prompt OS v2 API | 图片/文件夹/拖拽、失败项重传、事实/推断/规则阻断展示、结构化 Prompt 保存 | `frontend/src/**` | 前端 45 passed、Vite build passed；登录态 multipart 图片/WebP/TXT 上传、OSS 读回与预览 passed | 已部署 | 浏览器原生文件夹选择 smoke 待人工执行 |
 | P0-03 | 后端平台 | 商品准备、9 图生成、修订与选择式导出 | Prompt OS v2 与商品资料接口 | 分文件上传结果、结构化 PromptVersion、白底门禁、Shopee VN 原图直通、人工审核后导出、历史版本保留 | Django 应用、迁移、测试、环境模板 | 后端 193 passed；迁移 0012、商品名/关系保存、PostgreSQL 行锁和准备重试 passed | 已部署 | 真实 ERP 员工账号成功登录/SKU 导入 smoke 待验收 |
@@ -62,7 +62,10 @@
 
 | 日期 | 决定 | 原因 | 影响 |
 | --- | --- | --- | --- |
+| 2026-08-02 | Prompt OS 4.1 最终设计冻结 | 用户要求先真正设计好每个节点和计划书，后续交给 GPT-5.5 执行 | 4.1 设计新增付费生成前唯一门禁、员工错误边界和“节点模板不是职责摘要”验收；GPT-5.5 只执行 4.1 Task 0–9，不再新建 4.x 设计 |
 | 2026-08-02 | Prompt OS 4.1 取代 4.0 成为下一轮 GPT-5.5 唯一执行基线 | 用户要求真正设计每个节点和计划书，并把公开视频文案方法、优秀 Style DNA、多图外观、目标语言文字锁和错误脱敏收口到一份可执行文档 | 5.5 后续优先读取 4.1 设计、计划和任务书；3.1–4.0 只作为历史推演 |
+| 2026-08-02 | Prompt OS 4.1 节点提示词三次收口 | 用户要求每个节点真正设计清楚，尤其是营销文案和场景创意不能再是短职责摘要 | 节点模板必须包含六段硬结构；N5 增加 `copywriting_chain`；N6 增加三候选目标语言文案自评；5.5 执行计划和任务书同步更新 |
+| 2026-08-02 | Prompt OS 4.1 文档二次收口 | 用户要求 5.5 执行前先把节点、工作台和计划书全部设计清楚 | 4.1 设计新增节点 IO 表、N1→N7 变量交接线、双路径触发、固定侧浮层、同屏导入、卡内多图多款、N5 购买任务链、N6 英文 Prompt 骨架和 N7 三类阻断；4.1 计划和任务书同步更新 |
 | 2026-08-02 | 退出登录按幂等处理 | 用户点击退出时，session/token/CSRF 过期本身就说明当前会话不能继续，前端不应要求再重试一次退出 | `logoutUser()` 在 CSRF 启动或 logout POST 遇到登录跳转、401 或 403 时视为退出完成并跳 `/login/`；500 等真实服务错误仍显示失败 |
 | 2026-08-02 | 商品卡是一套图生产单元，N2 区分商品家族与目标外观 | 同一卡内可能是多角度，也可能是不同颜色/规格/款式，不能硬压成单一外观，也不能要求运营维护多图关系 | N1 读全部图；N2 输出共有身份锁与 `target_appearances`；N5/N6 用 `appearance_ids` 覆盖整套 1+8；点击缩略图只预览，拖动到第一位才改变主参考 |
 | 2026-08-02 | Prompt Worker 预备生成支持可配置并发 | 多商品预备不应在一个 worker 里完全串行，且现有 CAS 已能避免重复认领 | `run_prompt_worker --concurrency` 默认 2，可用 `PROMPT_WORKER_CONCURRENCY` 调整；不引入 Redis、WebSocket 或新队列 |
