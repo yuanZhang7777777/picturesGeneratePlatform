@@ -3639,6 +3639,8 @@ def test_fallback_n6_usage_set_does_not_force_holder_into_every_scene():
     compiled = _fallback_n6_prompt(slot_input, identity, ledger, set())
 
     assert "functional product component" in compiled["prompt"]
+    assert "multiple co-primary usable pieces" in compiled["prompt"]
+    assert "natural co-use subset" in compiled["prompt"]
     assert "commercial lighting chosen to match the scene" in compiled["prompt"]
     assert "Storage cases, trays, boxes" in compiled["prompt"]
     assert "arrange them naturally as a set" not in compiled["prompt"]

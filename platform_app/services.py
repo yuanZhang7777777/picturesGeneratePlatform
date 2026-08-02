@@ -2497,6 +2497,7 @@ def compile_slot_prompt(
             "Use the supplied product reference images to understand product identity, usable components, included parts, variants, proportions, and material cues.",
             "Create a new ecommerce composition with a fresh camera angle, background, lighting, scene, and product arrangement.",
             "For lifestyle/use scenes, make the functional product component(s) needed for the action the hero.",
+            "If the product is a functional set with multiple co-primary usable pieces, show the natural co-use subset for the action instead of isolating only the easiest piece.",
             "Storage cases, trays, boxes, holders, packaging, and extra kit pieces are secondary context only when they help the buyer understand the scene.",
             "For white-background, overview, or contents slots, show the complete set clearly. For detail slots, show the component or touchpoint that proves the current buying point.",
             "Keep visible copy, branding, and claims limited to confirmed product evidence and the locked localized text.",
@@ -3947,6 +3948,7 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
         "Lighting: photoreal commercial lighting chosen to match the scene, with clean shadows, realistic materials, and high detail.",
         "Use the product references to understand the product, but create a new selling composition rather than copying the source photo.",
         "For lifestyle/use scenes, make the functional product component(s) needed for the action the hero.",
+        "If the product is a functional set with multiple co-primary usable pieces, show the natural co-use subset for the action instead of isolating only the easiest piece.",
         "Storage cases, trays, boxes, holders, packaging, and extra kit pieces are secondary context only when they help the buyer understand the scene.",
         "For white-background, overview, or contents slots, show the complete set clearly. For detail slots, show the component or touchpoint that proves the current buying point.",
         "Match the visible product type, main shape, proportions, color relationships, and real parts from the supplied references.",
@@ -6696,12 +6698,9 @@ def _lock_submission_dependencies(generation, cluster, batch):
         .order_by("id")
     )
 
-    template_id = batch.output_template_id or generation.output_slot.template_id
+    template_id = generation.output_slot.template_id
     locked_template = OutputTemplate.objects.select_for_update().get(id=template_id)
-    locked_slot = OutputSlot.objects.select_for_update().get(
-        id=generation.output_slot_id,
-        template_id=locked_template.id,
-    )
+    locked_slot = OutputSlot.objects.select_for_update().get(id=generation.output_slot_id)
     batch.output_template = locked_template
     generation.output_slot = locked_slot
 
@@ -7639,9 +7638,9 @@ def _generation_status(status):
 
 def generation_failure_message(generation):
     if generation.status == Generation.Status.SUBMIT_UNKNOWN:
-        return "Generation status is uncertain. Contact an administrator before retrying."
+        return "本张出图状态不确定，请稍后刷新后重试。"
     if generation.status in {Generation.Status.FAILED, Generation.Status.CANCELED}:
-        return "Generation failed. Retry this item or contact an administrator."
+        return "本张出图未成功，可直接重试。"
     return ""
 
 

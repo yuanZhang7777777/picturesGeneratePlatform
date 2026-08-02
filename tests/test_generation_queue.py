@@ -1108,6 +1108,48 @@ def test_project_settings_reject_change_while_sealed_submission_is_active(
     assert sealed.provider_payload["submission"]["fingerprint"]
 
 
+def test_sealing_uses_generation_slot_template_for_product_override(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import Batch, OutputSlot, OutputTemplate
+    from platform_app.services import (
+        _claim_generation_for_submission,
+        _seal_generation_submission,
+        ensure_cluster_generations,
+    )
+    from platform_app.template_policy import STANDARD_PRODUCT_HERO_NAME
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    default_template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = default_template
+    batch.save(update_fields=["output_template"])
+    override_template = OutputTemplate.objects.create(
+        seed_key="shopee-vn-general-nine-slot-v2-template",
+        platform="shopee",
+        site="VN",
+        name="Shopee VN override",
+    )
+    slot = OutputSlot.objects.create(
+        template=override_template,
+        name=STANDARD_PRODUCT_HERO_NAME,
+        order=1,
+    )
+    cluster = batch.clusters.get()
+    cluster.platform_override = "shopee"
+    cluster.market_override = "VN"
+    cluster.seller_tier_override = Batch.SellerTier.GENERAL
+    cluster.save(update_fields=["platform_override", "market_override", "seller_tier_override", "updated_at"])
+    approve_prompt(cluster, user, slot)
+
+    generation = ensure_cluster_generations(cluster, user)[0]
+    claimed = _claim_generation_for_submission(generation.id)
+    sealed = _seal_generation_submission(claimed.id)
+
+    assert sealed.output_slot_id == slot.id
+    assert sealed.provider_payload["submission"]["request"]["output_slot_id"] == str(slot.id)
+
+
 def test_sealed_submission_fingerprint_cannot_be_overwritten(
     tmp_path,
     settings,
