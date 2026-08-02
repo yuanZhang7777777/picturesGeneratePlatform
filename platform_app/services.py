@@ -724,7 +724,7 @@ class APIMartClient:
                 "messages": messages,
             },
             headers=self.headers,
-            timeout=self.timeout,
+            timeout=settings.APIMART_PROMPT_TIMEOUT_SECONDS,
         )
         payload = self._json(response)
         choices = payload.get("choices")
