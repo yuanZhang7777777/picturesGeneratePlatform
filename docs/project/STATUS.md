@@ -126,6 +126,7 @@
 | 2026-07-29 | APIMart 的真实账号包络优先于文档示例 | 同一供应商不同模型端点的外层 JSON 已出现不一致，不能依赖单一伪造包络 | `deepseek-v4-pro` 账户实测为顶层 OpenAI Chat Completions 包络，非文档示例的 `code/data`；适配器必须按端点/模型显式解析并以真实 fixture 回归。GPT Image 2 已实测 `submitted → processing → completed`、结果 URL 与费用字段，完成后必须立即受限下载归档；`cancelled` 视为终态 |
 | 2026-08-02 | 预备生成与图片生成并发调度上线 | 多商品点击预备/正式生成后，运营应同时看到多个商品进入队列和加载态，而不是误以为只有第一张在工作 | N1/N2 对真实模型短 JSON、0–1 评分和不完整外观分配做归一化；Prompt Worker 默认 `16` 并发，Generation Worker 默认 `32` 线程；`MAX_ACTIVE_GENERATIONS=50` 控制真实同时生图，`GENERATION_USER_ACTIVE_SOFT_LIMIT=10` 做用户公平借用 |
 | 2026-08-02 | VN 等非中文国家禁止中文内部变量进入图片可见文字 | 线上样图在越南站把中文商品名渲染进图片标题，且参考图复刻过重 | 最终 GPT Image 2 Prompt 只允许 N6 锁定的目标语言文案作为可见文字；非中文市场会清理中文商品名/事实变量；参考图只锁商品身份和包含物，营销图强制新场景、新机位和新构图 |
+| 2026-08-02 | 营销 Agent 必须驱动套图文案，身份锁只防换货不限制创意 | 玩偶样图暴露出 N5/N6 fallback 写死包装/居家场景、空文案和非目标图片污染商品事实的问题 | N3 confirmed points 改用商品名、身份事实和目标图观察事实；N5 fallback 删除无证据包装图并按 FAB/场景代入/情绪/拟人/身份表达生成购买任务；N6 fallback 生成目标语言可见文案；最终 `gpt-image-2` Prompt 以正向描述为主，不再堆叠负向数量示例 |
 
 ## 阻塞与风险
 

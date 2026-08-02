@@ -400,7 +400,8 @@ def test_vn_image_prompt_does_not_render_chinese_internal_product_name():
     assert "木质餐具套装" not in compiled["prompt"]
     assert "Bộ dụng cụ ăn uống" in compiled["prompt"]
     assert compiled["input_snapshot"]["visible_text_lines"] == ["Bộ dụng cụ ăn uống"]
-    assert "Do not reproduce the original seller photo" in compiled["prompt"]
+    assert "Create a new ecommerce composition" in compiled["prompt"]
+    assert "Make the visible product set match the supplied references" in compiled["prompt"]
 
 
 def test_confirm_generation_keeps_prompt_override_as_extra_creative_requirements():
@@ -3492,6 +3493,108 @@ def test_n5_receives_consumer_context_and_strategy_fact_refs(tmp_path, settings)
     cluster.refresh_from_db()
     first_plan = cluster.analysis_snapshot["marketing_plan"]["plans"][0]
     assert first_plan["creative_strategy"]["source_fact_refs"] == ["fact.name.001"]
+
+
+def test_target_observed_product_facts_ignore_unrelated_reference_images():
+    from platform_app.services import _target_observed_product_facts
+
+    identity = {
+        "primary_asset_id": "asset-plush",
+        "supporting_asset_ids": [],
+        "target_appearances": [
+            {
+                "appearance_id": "appearance.1",
+                "asset_ids": ["asset-plush"],
+                "primary_asset_id": "asset-plush",
+            }
+        ],
+    }
+    observations = [
+        {
+            "asset_id": "asset-plush",
+            "contains_target_product": True,
+            "product_facts": ["yellow plush toy", "large round eyes"],
+        },
+        {
+            "asset_id": "asset-noodle-poster",
+            "contains_target_product": False,
+            "product_facts": ["foreground shows a bowl of noodles", "busy street stall"],
+        },
+    ]
+
+    facts = _target_observed_product_facts(observations, identity)
+
+    assert facts == ["yellow plush toy", "large round eyes"]
+
+
+def test_fallback_n5_does_not_invent_packaging_without_evidence():
+    from types import SimpleNamespace
+
+    from platform_app.services import _fallback_n5_plans
+
+    slots = [SimpleNamespace(order=order, name=f"营销图 {order}", purpose=f"购买问题 {order}") for order in range(2, 10)]
+
+    plans = _fallback_n5_plans(
+        {"seed_style": "", "consumer_context": {"product_category": "plush_toy"}},
+        slots,
+        {"fact.name.001"},
+        set(),
+        {"appearance.1"},
+    )["plans"]
+
+    joined = " ".join(
+        " ".join(str(plan.get(field, "")) for field in ("decision_task", "main_scene", "main_action", "copy_intent"))
+        for plan in plans
+    ).lower()
+    assert "packaging" not in joined
+    assert "included items" not in joined
+    assert "contents overview" not in joined
+
+
+def test_fallback_n6_creates_target_language_marketing_copy_for_named_product():
+    from platform_app.services import _fallback_n6_prompt
+
+    identity = {
+        "primary_asset_id": "asset-plush",
+        "supporting_asset_ids": [],
+        "target_appearances": [
+            {
+                "appearance_id": "appearance.1",
+                "asset_ids": ["asset-plush"],
+                "primary_asset_id": "asset-plush",
+            }
+        ],
+    }
+    ledger = {"facts": [{"fact_id": "fact.name.001", "fact_class": "confirmed"}]}
+    slot_input = {
+        "slot_order": 3,
+        "product_name": "奶龙玩偶",
+        "slot_plan": {
+            "slot_order": 3,
+            "appearance_ids": ["appearance.1"],
+            "main_scene": "a playful giftable plush toy scene chosen by the marketing director",
+            "main_action": "make the buyer imagine a child hugging the plush toy",
+            "composition": "large product focus with a clean text-safe area",
+            "camera": "warm editorial ecommerce angle",
+            "copy_intent": "让买家感到这是适合送给小朋友的治愈陪伴玩偶",
+            "text_mode": "up_to_3_lines",
+            "seed_style": "",
+            "creative_strategy": creative_strategy("emotion", ("fact.name.001",)),
+        },
+        "market_context": {"language": "vi", "market": "VN"},
+        "size": "1:1",
+        "resolution": "1k",
+    }
+
+    compiled = _fallback_n6_prompt(slot_input, identity, ledger, set())
+
+    assert compiled["visible_text_lines"]
+    assert compiled["localized_copy"]["lines"] == compiled["visible_text_lines"]
+    assert all("奶龙" not in line for line in compiled["visible_text_lines"])
+    assert "Only render the quoted localized copy" in compiled["prompt"]
+    assert "no extra" not in compiled["prompt"].lower()
+    assert "missing" not in compiled["prompt"].lower()
+    assert "duplicated" not in compiled["prompt"].lower()
 
 
 def test_n5_rejects_unknown_creative_strategy_fact_ref():

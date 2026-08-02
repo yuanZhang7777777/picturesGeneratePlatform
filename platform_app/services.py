@@ -66,6 +66,7 @@ STYLE_DNA_VALUES = {
 STYLE_DNA_FIELDS = set(STYLE_DNA_VALUES)
 _UNSET = object()
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
+_CJK_RUN_RE = re.compile(r"[\u3400-\u9fff]+")
 INFANT_KEYWORDS = ("baby", "infant", "newborn", "toddler", "婴", "幼儿", "宝宝")
 ADULT_KEYWORDS = ("adult", "clothing", "apparel", "beauty", "fashion", "成人", "服装", "美容")
 TEST_NODE_INSTRUCTIONS = {
@@ -2410,7 +2411,7 @@ def _visible_text_for_language(lines, language):
 def _sanitize_image_prompt_language(prompt, language):
     if _language_allows_cjk(language):
         return prompt
-    return _CJK_RE.sub("the uploaded product", prompt)
+    return _CJK_RUN_RE.sub("the uploaded product", prompt)
 
 
 def compile_slot_prompt(
@@ -2495,9 +2496,8 @@ def compile_slot_prompt(
             str(slot_directive).strip(),
             "Use the supplied product reference images only to understand product identity, included parts, variants, proportions, and material cues.",
             "Create a new ecommerce composition with a fresh camera angle, background, lighting, scene, and product arrangement.",
-            "Do not reproduce the original seller photo's exact composition, crop, camera angle, background, props, or layout.",
-            "Keep paired or repeated parts visible as paired/repeated when they are visible in the references; do not merge, omit, or invent included parts.",
-            "Do not add unprovided claims, third-party logos, contact information, watermarks, or random text.",
+            "Make the visible product set match the supplied references while allowing a new arrangement and creative selling scene.",
+            "Keep visible copy, branding, and claims limited to confirmed product evidence and the locked localized text.",
         ]
     if visible_text_lines:
         prompt_lines.append(
@@ -3755,62 +3755,62 @@ def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids
         {
             "mode": "fab_value",
             "family": "core-benefit",
-            "task": "让买家一眼看懂这件商品最值得买的核心价值",
-            "scene": "a clean premium ecommerce hero scene with the product arranged as the clear main subject, surrounded by only minimal relevant props",
-            "action": "highlight the product's most useful everyday value without adding text or fake claims",
+            "task": "把商品可见特征翻译成买家能立刻理解的购买理由",
+            "scene": "a fresh ecommerce advertising scene chosen to make the product's visible value obvious at first glance",
+            "action": "show the product creating a clear everyday benefit for the buyer",
             "camera": "slightly elevated three-quarter product angle",
             "composition": "large centered product, generous negative space, mobile-first square crop",
         },
         {
             "mode": "scene_ownership",
             "family": "detail-trust",
-            "task": "让买家看清结构、做工和细节，降低下单疑虑",
-            "scene": "a close-up detail scene focused on visible edges, joints, texture, compartments, and contact points from the uploaded product",
-            "action": "show the product detail that proves quality and practical design",
+            "task": "让买家代入拥有后的细节体验，而不是只看一张摆拍",
+            "scene": "a close-up ownership scene that makes one visible detail feel useful, tactile, and worth choosing",
+            "action": "turn a visible product detail into a believable reason to want it",
             "camera": "macro close-up with shallow depth of field",
             "composition": "detail fills most of the frame while the full product remains recognizable",
         },
         {
             "mode": "emotion",
             "family": "real-use",
-            "task": "让买家代入真实使用瞬间",
-            "scene": "a realistic everyday use scene with an adult naturally using or reaching for the product in a believable home or lifestyle setting",
-            "action": "show the product solving a small daily task in a natural moment",
+            "task": "制造情绪触发，让买家想到自己或收礼人正在使用它",
+            "scene": "an emotionally warm use scene selected for the product category and buyer motivation, not for a fixed country setting",
+            "action": "show the product creating a small desirable moment",
             "camera": "human-eye lifestyle angle",
             "composition": "hands or user action support the product, product remains unobstructed and dominant",
         },
         {
             "mode": "personification",
             "family": "function-explain",
-            "task": "把功能讲清楚，让买家不用读说明也能懂",
-            "scene": "an organized explanatory product scene that visually separates each visible part and how it is used together",
-            "action": "demonstrate the visible functional relationship between parts without arrows or random labels",
+            "task": "用轻拟人或商品口吻讲清一个低风险价值点",
+            "scene": "a charming product-led scene where the product's personality or use value is clear without inventing functions",
+            "action": "let the product feel memorable while keeping the real item as the hero",
             "camera": "top-down organized layout",
             "composition": "clear spacing between parts, structured but not like a technical diagram",
         },
         {
             "mode": "identity_signal",
             "family": "scale-context",
-            "task": "让买家理解大小、比例和适合谁用",
-            "scene": "a natural scale scene with the product beside ordinary everyday objects or an adult hand for proportion",
-            "action": "make size and handling feel obvious through context",
+            "task": "让商品代表一种审美、身份或送礼选择",
+            "scene": "an aspirational product scene that signals taste, fit, or gifting value without fake claims",
+            "action": "make the buyer feel the product matches their taste or the recipient",
             "camera": "medium close product angle",
             "composition": "product in foreground, scale cue secondary and not distracting",
         },
         {
             "mode": "fab_value",
-            "family": "contents-overview",
-            "task": "展示包装、包含物或多色多款组合，避免买家误解收到什么",
-            "scene": "a neat contents overview showing the product set, variants, packaging, or included items that are visible in the references",
-            "action": "show exactly what is included or represented by the uploaded references",
+            "family": "variant-overview",
+            "task": "如果有多色多款就做总览；没有多款就补一个新的购买疑虑",
+            "scene": "a clean visual overview of the target appearances or another unmet buyer question, using only visible product evidence",
+            "action": "help the buyer understand the available appearance or one remaining practical reason to buy",
             "camera": "flat lay catalog angle",
-            "composition": "all included or target appearances arranged neatly with consistent spacing",
+            "composition": "target appearances or product angles arranged clearly with consistent spacing",
         },
         {
             "mode": "scene_ownership",
             "family": "lifestyle-desire",
             "task": "制造想拥有的生活方式画面",
-            "scene": "an aspirational but realistic lifestyle scene where the product makes the surrounding moment feel cleaner, easier, or more tasteful",
+            "scene": "an aspirational but realistic lifestyle scene invented from the product's buyer motivation and seed style",
             "action": "make the buyer imagine owning and using the product",
             "camera": "soft editorial ecommerce angle",
             "composition": "product sharp in the foreground with a soft contextual background",
@@ -3882,6 +3882,41 @@ def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids
     )
 
 
+def _fallback_marketing_copy_lines(plan, product_name, language):
+    if plan.get("text_mode") == "none":
+        return []
+    mode = (plan.get("creative_strategy") or {}).get("mode") or "fab_value"
+    language = str(language or "en").lower()
+    if language.startswith("vi"):
+        phrases = {
+            "fab_value": ["Dễ thương mỗi ngày", "Dễ chọn, dễ yêu"],
+            "scene_ownership": ["Nhìn là muốn mang về", "Hợp với khoảnh khắc của bạn"],
+            "emotion": ["Ôm là thấy vui", "Một chút đáng yêu mỗi ngày"],
+            "personification": ["Tôi ở đây để làm bạn vui", "Mang tôi về nhé"],
+            "identity_signal": ["Món quà có gu", "Đáng yêu theo cách riêng"],
+        }
+    elif language.startswith("zh"):
+        phrases = {
+            "fab_value": ["一眼看懂它的好", "日常更省心"],
+            "scene_ownership": ["放进生活里更想要", "越看越想拥有"],
+            "emotion": ["抱一下就被治愈", "每天多一点开心"],
+            "personification": ["带我回家吧", "我来陪你开心"],
+            "identity_signal": ["送礼有眼光", "可爱也有态度"],
+        }
+    else:
+        phrases = {
+            "fab_value": ["Easy to love every day", "Clear value at a glance"],
+            "scene_ownership": ["Picture it in your day", "Made for moments you keep"],
+            "emotion": ["A little joy every day", "Feels good to have around"],
+            "personification": ["Take me home", "Here to brighten your day"],
+            "identity_signal": ["A gift with taste", "Cute with character"],
+        }
+    lines = phrases.get(mode, phrases["fab_value"])[:2]
+    if not _language_allows_cjk(language):
+        lines = _visible_text_for_language(lines, language)
+    return lines[:3]
+
+
 def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
     plan = slot_input["slot_plan"]
     fact_trace = [item["fact_id"] for item in ledger["facts"][:2]]
@@ -3898,30 +3933,40 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
     ][:3]
     style = str(plan.get("seed_style") or "").strip()
     language = slot_input.get("market_context", {}).get("language") or "en"
+    product_label = slot_input.get("product_name") or "the uploaded product"
+    if not _language_allows_cjk(language) and _contains_cjk(product_label):
+        product_label = "the uploaded product"
+    visible_text_lines = _fallback_marketing_copy_lines(plan, product_label, language)
     prompt_parts = [
-        f"Create a polished 1:1 ecommerce listing image for {slot_input.get('product_name') or 'the uploaded product'}.",
+        f"Create a polished 1:1 ecommerce listing image for {product_label}.",
         f"Scene: {plan['main_scene']}.",
         f"Main action: {plan['main_action']}.",
         f"Composition: {plan['composition']}. Camera: {plan['camera']}.",
         "Lighting: bright natural commercial lighting, clean shadows, realistic materials, high detail.",
-        "The uploaded product reference images define the product identity. Preserve the visible shape, proportions, color relationships, quantity, and included parts.",
+        "Use the product references to understand the product, but create a new selling composition rather than copying the source photo.",
+        "Make the visible product type, main shape, proportions, color relationships, and real parts match the supplied references.",
         "If multiple variants or colors are assigned to this slot, arrange them naturally as a set; otherwise feature one representative product clearly.",
-        "Do not add text unless exact quoted visible text lines are provided. If text is provided, render it only in the target language and do not translate or invent extra wording.",
-        "No unprovided claims, fake specs, third-party logos, contact info, watermarks, clutter, or random decorative words.",
+        "Only render the quoted localized copy if provided; do not translate, rewrite, add, omit, or render any other text.",
+        "Keep visible copy, branding, and claims limited to confirmed product evidence and the locked localized text.",
     ]
     if style:
         prompt_parts.insert(4, f"Creative style to blend in: {style}.")
+    if visible_text_lines:
+        prompt_parts.append(
+            "Only render the quoted localized copy exactly once: "
+            f"{json.dumps(visible_text_lines, ensure_ascii=False)}."
+        )
     prompt = " ".join(prompt_parts)
     return _normalize_n6_prompt(
         {
             "slot_id": str(slot_input["slot_order"]),
             "main_scene": plan["main_scene"],
             "main_action": plan["main_action"],
-            "visible_text_lines": [],
+            "visible_text_lines": visible_text_lines,
             "localized_copy": {
                 "language": language,
-                "lines": [],
-                "source_fact_refs": [],
+                "lines": visible_text_lines,
+                "source_fact_refs": fact_trace,
                 "source_inference_refs": [],
             },
             "prompt": prompt,
@@ -4183,6 +4228,29 @@ def _fact_text_items(value):
     return list(dict.fromkeys(items))
 
 
+def _target_observed_product_facts(observations, identity):
+    target_asset_ids = {str(identity.get("primary_asset_id") or "")}
+    target_asset_ids.update(str(item) for item in _string_list(identity.get("supporting_asset_ids")))
+    for appearance in identity.get("target_appearances", []):
+        if not isinstance(appearance, dict):
+            continue
+        target_asset_ids.update(str(item) for item in _string_list(appearance.get("asset_ids")))
+        if appearance.get("primary_asset_id"):
+            target_asset_ids.add(str(appearance["primary_asset_id"]))
+    target_asset_ids.discard("")
+    facts = []
+    for observation in observations:
+        if not isinstance(observation, dict):
+            continue
+        asset_id = str(observation.get("asset_id") or "")
+        if target_asset_ids and asset_id not in target_asset_ids:
+            continue
+        if observation.get("contains_target_product") is False:
+            continue
+        facts.extend(_fact_text_items(observation.get("product_facts") or observation.get("facts")))
+    return list(dict.fromkeys(facts))
+
+
 def _n5_consumer_context(identity, observations, product_facts):
     profile = identity.get("product_profile") if isinstance(identity.get("product_profile"), dict) else {}
     target_consumer = next(
@@ -4193,11 +4261,7 @@ def _n5_consumer_context(identity, observations, product_facts):
         ),
         "",
     )
-    observed_facts = [
-        fact
-        for item in observations
-        for fact in _fact_text_items(item.get("product_facts") or item.get("facts"))
-    ]
+    observed_facts = _target_observed_product_facts(observations, identity)
     return {
         "target_consumer": str(target_consumer or ""),
         "verified_use_relationships": _string_list(profile.get("verified_use_relationships")),
@@ -4747,15 +4811,20 @@ def process_prompt_once(client=None, storage=None):
         product_name = str(confirmed_product_name or identity_product_name).strip()
         identity_lock = identity["identity_lock"]
         identity_facts = _identity_facts(identity)
-        observed_facts = [
-            fact
-            for item in observations
-            for fact in _string_list(item.get("product_facts") or item.get("facts"))
-        ]
+        observed_facts = _target_observed_product_facts(observations, identity)
         product_facts = (
             cluster.product_facts
             or "; ".join(observed_facts)
             or identity_facts
+        )
+        ledger_confirmed_points = list(
+            dict.fromkeys(
+                [
+                    *(_string_list(product_name) if product_name else []),
+                    *_fact_text_items(identity_facts),
+                    *observed_facts,
+                ]
+            )
         )
         cluster_updates = {
             "product_name": product_name,
@@ -4834,7 +4903,7 @@ def process_prompt_once(client=None, storage=None):
         _set_preparation_progress(cluster.id, claimed_revision, "N3", 2)
         ledger_input = {
             "product_name": product_name,
-            "confirmed_points": _string_list(product_facts),
+            "confirmed_points": ledger_confirmed_points,
             "product_profile": identity["product_profile"],
             "identity_lock": identity_lock,
             "owned_observations": observations,
@@ -4974,7 +5043,7 @@ def process_prompt_once(client=None, storage=None):
                 "consumer_context": _n5_consumer_context(
                     identity,
                     observations,
-                    product_facts,
+                    "; ".join(ledger_confirmed_points),
                 ),
                 "slots": [
                     {"slot_order": slot.order, "name": slot.name, "purpose": slot.purpose}
