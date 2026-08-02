@@ -676,13 +676,13 @@ def api_project_generate(request, batch_id):
                     Cluster.PreparationStatus.BLOCKED,
                     Cluster.PreparationStatus.FAILED,
                 }:
+                    request_cluster_preparation(cluster, auto_generate=True)
                     items.append(
                         {
                             "cluster_id": str(cluster.id),
-                            "status": "blocked",
-                            "code": f"preparation_{cluster.preparation_status}",
-                            "message": cluster.preparation_error
-                            or "Product preparation is blocked.",
+                            "status": "preparing",
+                            "code": "prompt_preparation_started",
+                            "message": "Product preparation will queue generation automatically.",
                         }
                     )
                     continue

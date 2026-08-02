@@ -386,14 +386,20 @@ def test_project_generate_api_isolates_queued_waiting_and_blocked_products(
     }
     assert items[str(pending.id)]["status"] == "preparing"
     assert items[str(preparing.id)]["status"] == "preparing"
-    assert items[str(blocked.id)]["status"] == "blocked"
-    assert items[str(failed.id)]["status"] == "blocked"
+    assert items[str(blocked.id)]["status"] == "preparing"
+    assert items[str(blocked.id)]["code"] == "prompt_preparation_started"
+    assert items[str(failed.id)]["status"] == "preparing"
+    assert items[str(failed.id)]["code"] == "prompt_preparation_started"
     assert items[str(invalid_ready.id)]["status"] == "preparing"
     assert items[str(invalid_ready.id)]["code"] == "prompt_preparation_started"
     pending.refresh_from_db()
     preparing.refresh_from_db()
+    blocked.refresh_from_db()
+    failed.refresh_from_db()
     assert pending.auto_generate is True
     assert preparing.auto_generate is True
+    assert blocked.auto_generate is True
+    assert failed.auto_generate is True
     assert batch.generations.count() == 1
 
 
