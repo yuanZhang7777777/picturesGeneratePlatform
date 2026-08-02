@@ -79,6 +79,31 @@ test("logs out with a CSRF-protected same-origin POST", async () => {
   expect(fetchMock.mock.calls[1][1].headers.get("X-CSRFToken")).toBe("csrf-for-test");
 });
 
+test("treats an expired session during logout CSRF bootstrap as logged out", async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    redirected: true,
+    url: "http://localhost:3000/login/",
+    json: async () => ({}),
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(logoutUser()).resolves.toBeUndefined();
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock).toHaveBeenCalledWith("/api/csrf/", { credentials: "same-origin" });
+});
+
+test("treats an expired logout POST as logged out", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))
+    .mockResolvedValueOnce(response(403, { error: "CSRF Failed" }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(logoutUser()).resolves.toBeUndefined();
+});
+
 test("rejects a logout response that did not redirect to login", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response(200, { csrf_token: "csrf-for-test" }))

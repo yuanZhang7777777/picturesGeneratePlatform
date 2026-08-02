@@ -136,6 +136,24 @@ test("redirects to login only after logout succeeds", async () => {
   await waitFor(() => expect(assign).toHaveBeenCalledWith("/login/"));
 });
 
+test("redirects to login when the logout session is already expired", async () => {
+  const assign = vi.fn();
+  vi.stubGlobal("location", { assign, origin: "http://localhost:3000" });
+  stubFetch(async (url) => {
+    if (url.includes("/csrf/")) {
+      return { ok: true, status: 200, redirected: true, url: "http://localhost:3000/login/", json: async () => ({}) };
+    }
+    if (url.includes("/workspace/")) return response(200, { projects: [project] });
+    return response(200, project);
+  });
+  renderApp();
+
+  fireEvent.click(await screen.findByRole("button", { name: "退出登录" }));
+
+  await waitFor(() => expect(assign).toHaveBeenCalledWith("/login/"));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 test("shows a logout error and stays on the page when logout fails", async () => {
   const assign = vi.fn();
   vi.stubGlobal("location", { assign, origin: "http://localhost:3000" });

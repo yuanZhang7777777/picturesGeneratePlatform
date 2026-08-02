@@ -79,11 +79,19 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export async function logoutUser(): Promise<void> {
+  let token = "";
+  try {
+    token = await csrfToken();
+  } catch (error) {
+    if (error instanceof ApiError && error.authRequired) return;
+    throw error;
+  }
   const response = await fetch("/logout/", {
     method: "POST",
-    headers: new Headers({ "X-CSRFToken": await csrfToken() }),
+    headers: new Headers({ "X-CSRFToken": token }),
     credentials: "same-origin",
   });
+  if (isLoginResponse(response) || response.status === 401 || response.status === 403) return;
   if (!response.ok || !isLogoutRedirect(response)) throw await errorFor(response);
 }
 
