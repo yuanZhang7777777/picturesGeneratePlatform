@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+from threading import Lock
 from urllib.parse import urljoin, urlparse
 
 from django.conf import settings
@@ -85,6 +86,8 @@ MARKETING_DIVERSITY_MAX_SHARE = {
     "composition": 0.5,
 }
 _MARKETING_STRATEGY_MODE_SET = set(MARKETING_STRATEGY_MODES)
+_APIMART_UPLOAD_URL_CACHE = {}
+_APIMART_UPLOAD_URL_CACHE_LOCK = Lock()
 
 
 class SubmitUnknown(Exception):
@@ -659,7 +662,7 @@ class APIMartClient:
     def _uploaded_image_urls(self, image_paths):
         return [self.upload_image(path) for path in image_paths]
 
-    def submit_generation(self, prompt, image_paths, size, resolution):
+    def submit_generation(self, prompt, image_paths, size, resolution, image_urls=None):
         payload = {
             "model": settings.APIMART_IMAGE_MODEL,
             "prompt": prompt,
@@ -668,7 +671,9 @@ class APIMartClient:
             "resolution": resolution,
             "official_fallback": False,
         }
-        if image_paths:
+        if image_urls:
+            payload["image_urls"] = list(image_urls)
+        elif image_paths:
             payload["image_urls"] = self._uploaded_image_urls(image_paths)
 
         try:
@@ -6663,16 +6668,25 @@ def _submit_generation_under_lock(
     fingerprint,
     client,
     image_paths,
+    image_urls=None,
 ):
     generation = _locked_submission_fingerprint_current(
         generation_id,
         fingerprint,
     )
+    if image_urls is None:
+        return client.submit_generation(
+            generation.prompt_text,
+            image_paths,
+            generation.size,
+            generation.resolution,
+        )
     return client.submit_generation(
         generation.prompt_text,
-        image_paths,
+        [],
         generation.size,
         generation.resolution,
+        image_urls=image_urls,
     )
 
 
@@ -6684,6 +6698,21 @@ def _provider_payload_with(generation, **values):
     )
     payload.update(values)
     return payload
+
+
+def _uploaded_reference_urls(client, storage, storage_paths):
+    urls = []
+    for storage_path in storage_paths:
+        with _APIMART_UPLOAD_URL_CACHE_LOCK:
+            cached = _APIMART_UPLOAD_URL_CACHE.get(storage_path)
+            if cached:
+                urls.append(cached)
+                continue
+            with storage.reference_paths([storage_path]) as image_paths:
+                url = client.upload_image(image_paths[0])
+            _APIMART_UPLOAD_URL_CACHE[storage_path] = url
+            urls.append(url)
+    return urls
 
 
 PROVIDER_ACTIVE_GENERATION_STATUSES = (
@@ -6787,13 +6816,22 @@ def process_generation_once(client=None, storage=None):
             queued.batch.recompute_status()
             return 1
         try:
-            with storage.reference_paths(queued.reference_snapshot) as image_paths:
+            if isinstance(client, APIMartClient):
                 task_id = _submit_generation_under_lock(
                     queued.id,
                     queued.provider_payload["submission"]["fingerprint"],
                     client,
-                    image_paths,
+                    [],
+                    image_urls=_uploaded_reference_urls(client, storage, queued.reference_snapshot),
                 )
+            else:
+                with storage.reference_paths(queued.reference_snapshot) as image_paths:
+                    task_id = _submit_generation_under_lock(
+                        queued.id,
+                        queued.provider_payload["submission"]["fingerprint"],
+                        client,
+                        image_paths,
+                    )
         except SubmitUnknown as exc:
             queued.status = Generation.Status.SUBMIT_UNKNOWN
             queued.failure_reason = str(exc)

@@ -1528,6 +1528,51 @@ def test_stale_submitting_without_provider_task_id_is_requeued(tmp_path, setting
     assert generation.provider_task_id == "task-new"
 
 
+def test_apimart_reference_upload_is_reused_for_same_storage_path(tmp_path, settings):
+    from platform_app.models import OutputSlot, OutputTemplate
+    from platform_app.services import (
+        APIMartClient,
+        LocalStorage,
+        _APIMART_UPLOAD_URL_CACHE,
+        ensure_cluster_generations,
+        process_generation_once,
+    )
+
+    class Client(APIMartClient):
+        def __init__(self):
+            super().__init__(session=None)
+            self.upload_count = 0
+            self.submit_count = 0
+
+        def upload_image(self, path):
+            self.upload_count += 1
+            return "https://upload.apimart.ai/reused.png"
+
+        def submit_generation(self, prompt, image_paths, size, resolution, image_urls=None):
+            self.submit_count += 1
+            assert image_paths == []
+            assert image_urls == ["https://upload.apimart.ai/reused.png"]
+            return f"task-{self.submit_count}"
+
+    _APIMART_UPLOAD_URL_CACHE.clear()
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    OutputSlot.objects.create(template=template, name="Slot 2", order=2)
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    for slot in template.slots.order_by("order"):
+        approve_prompt(cluster, user, slot)
+    ensure_cluster_generations(cluster, user)
+    client = Client()
+
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+    assert process_generation_once(client, LocalStorage(tmp_path)) == 1
+
+    assert client.submit_count == 2
+    assert client.upload_count == 1
+
+
 def test_prompt_complexity_failure_creates_one_shorter_n9_retry(tmp_path, settings):
     import json
 
