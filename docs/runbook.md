@@ -25,6 +25,8 @@ Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worke
 
 `MAX_ACTIVE_GENERATIONS` 表示活跃供应商异步任务的运行配置；供应商 API 上限为 **500**，有效值必须在 `1..500`。当前代码尚未完成跨进程原子认领和该上限的实际执行，因此预览仍固定使用 `2`；任何环境不得仅修改环境变量就直接提升到 500。按 2、5、8、50、100、250、500 分级压测并记录 429/5xx、P95、归档成功率和数据库资源后，才能提高下一档。公平队列的基础配额为每人 2 个活跃任务；容量空闲时可临时借用更多，出现其他待处理用户时停止继续借用。
 
+`PROMPT_WORKER_CONCURRENCY` 只控制预备生成阶段的 N1–N7 商品并发，默认 `2`。它与 `MAX_ACTIVE_GENERATIONS` 分开：前者调用视觉/文本分析和 Prompt 编译，后者控制 `gpt-image-2` 付费生图活跃任务。提高该值前先观察 APIMart 文本/视觉限流、数据库连接数和单商品失败率。
+
 登录使用 ERP：`ERP_LOGIN_URL` 接收用户输入的用户名和密码，平台只把返回的 Token 保存在服务端 session 中，不保存 ERP 密码。所有 ERP 登录成功用户都可进入平台；`PLATFORM_ADMIN_ERP_USERS` 用逗号分隔管理员 ERP 登录名，默认仅配置刘学城的登录名。
 
 SKU 商品资料导入使用当前登录用户的 ERP Token 调用 `CATALOG_QUERY_URL`，请求体只发送 `{"skuList": [...]}`。`CATALOG_ALLOWED_IMAGE_HOSTS` 仅接受逗号分隔的公网 IPv4/IPv6 字面量，不能填主机名；当前 ERP 图片源必须包含 `180.167.156.35`，初始图片链接和每次重定向都必须命中该名单。单请求默认最多 `CATALOG_MAX_SKUS_PER_REQUEST=50`；其余下载门限为超时、重定向次数、最大字节数与最大像素数。发布前用受限测试 SKU 验证登录包络、Token 字段、过期行为、图片源 IP 白名单和私有归档；不能把原始商品资料响应、图片 URL 或 Token 写进日志。
@@ -120,7 +122,7 @@ docker compose logs --tail=100 web generation-worker prompt-worker proxy
 
 不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 尚未实现跨进程任务原子认领；并发 one-shot 调试可能在真实付费模式重复提交。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 
-前端工作台使用双速项目工作区和项目结果页。手工验收路径为：登录测试账号 → 创建项目并确认默认“Shopee/东南亚通用/1:1/1K” → 选择整理模式上传图片/文件夹或输入 ERP SKU → 确认只出现商品卡且没有 Prompt/视觉模型调用 → 在卡内排序或跨卡移动缩略图，并为多图卡选择“同商品参考”或“多色/多款组合” → 填写名称、补充信息或单品风格 → 选中商品点击预备生成 → 在固定侧浮层查看 N1–N7 进度、多外观身份卡和 9 槽 Prompt → 正式生成 → 白底图完成后生成营销图 → 结果进入待审核 → 人工通过需要导出的版本 → 圈选修改单张或重做失败项 → 下载本地 ZIP。正式生成若发现 Prompt 缺失或过期，须先返回准备态并自动完成同一 N1–N7 后续接；整理导入本身仍不得调用 AI。Shopee VN 普通店还须验证槽位 1 为真实来源图直通、槽位 2 白底完成后才提交槽位 3–9。未审核通过的结果不得导出。
+前端工作台使用双速项目工作区和项目结果页。手工验收路径为：登录测试账号 → 创建项目并确认默认“Shopee/东南亚通用/1:1/1K” → 选择整理模式上传图片/文件夹或输入 ERP SKU → 确认只出现商品卡且没有 Prompt/视觉模型调用 → 在卡内排序缩略图，或把图片拖入另一商品卡共同生成一套图 → 填写名称、补充信息或单品风格 → 选中商品点击预备生成 → 在固定侧浮层查看 N1–N7 进度、多外观身份卡和 9 槽 Prompt → 正式生成 → 白底图完成后生成营销图 → 结果进入待审核 → 人工通过需要导出的版本 → 圈选修改单张或重做失败项 → 下载本地 ZIP。正式生成若发现 Prompt 缺失或过期，须先返回准备态并自动完成同一 N1–N7 后续接；整理导入本身仍不得调用 AI。Shopee VN 普通店还须验证槽位 1 为真实来源图直通、槽位 2 白底完成后才提交槽位 3–9。未审核通过的结果不得导出。
 
 阶段 1 的整理接口保持同源 Session/CSRF 与项目对象权限：`DELETE /api/assets/<asset_id>/` 删除单张参考图，`DELETE /api/clusters/<cluster_id>/` 删除商品。没有生成历史时返回 `{"status":"deleted"}` 并异步清理私有素材；存在历史时返回 `{"status":"archived"}` 并保留 Prompt、结果和审核记录；Prompt 正在准备、活跃生成或 `submit_unknown` 返回 `409`。发布 smoke 必须确认归档商品不会再次进入 Prompt Worker、Generation Worker、审核或 ZIP。
 

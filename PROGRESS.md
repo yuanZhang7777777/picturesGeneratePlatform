@@ -145,3 +145,11 @@
 - Change: logout is now idempotent for expired sessions. Login redirects, 401 and 403 during logout are treated as logout-complete and the UI redirects to `/login/`; 500-level real service failures remain visible.
 - Verification: added API and page regression tests for expired-session logout. `npm --prefix frontend test` passed 88 tests; `npm --prefix frontend run build` passed; `git diff --check` passed with CRLF warnings only. Remote Compose build/up, migrate, template seed, Django check, local/public `/health/ready`, deployed marker and public static bundle readback passed.
 - Deployment: backup `/opt/independent-image-platform-backups/20260802_144804-29ef250`; `global.lock` released.
+
+# Prompt OS 3.1 marketing-copy design and GPT-5.5 handoff
+
+- Status: design and execution plan completed on 2026-08-02; runtime remains Prompt OS 3.0.0 and no paid call or deployment was performed.
+- Design: N1–N9 responsibilities are fixed; N5 dynamically selects FAB value, scene ownership, emotion, personification, or identity signaling; N6 writes native target-language copy and compiles the English image prompt; N7 locks copy, facts, language, diversity, and platform rules.
+- Deliverables: `docs/superpowers/specs/2026-08-02-prompt-os-3.1-marketing-copy-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-3.1-marketing-copy-implementation.md`, and `docs/project/LEADER-GOAL-PROMPT-OS-3.1.md`.
+- Baseline: backend 353 collected and full pytest passed; frontend 89 passed; current published N5/N6/N7 templates remain 3.0.0 with no database/template drift.
+- Next: GPT-5.5 executes Task 0–7; publish 3.1.0 only after six-category 48-slot checks and an operator-reviewed paid 1+8 score at least 4/5 in all five dimensions.

@@ -1,5 +1,7 @@
 # Prompt OS v3 九节点与平台变体可执行规格
 
+> 2026-08-02 已确认 Prompt OS 3.1 营销文案升级设计。当前生产仍为 3.0.0；目标契约、五种营销策略、节点温度、文案锁和质量门禁见 [Prompt OS 3.1 营销文案设计](./2026-08-02-prompt-os-3.1-marketing-copy-design.md)。实施完成并发布前，不得把 3.1.0 写成现有运行能力。
+
 ## 1. 目标与边界
 
 本文定义 AI 商品出图平台的九个生产节点、平台变体、节点间 JSON 契约、系统提示词行为边界、失败处理和不可变快照。它是 Prompt 模板与后端实现的共同规格，不是给普通员工阅读的操作手册。
@@ -18,7 +20,7 @@ Shopee VN 普通店是唯一已发布的顺序例外：槽位 01 为真实上传
 | 能力 | 固定模型或执行器 | 约束 |
 | --- | --- | --- |
 | 视觉观察 | `gpt-5-nano-2025-08-07` | APIMart Responses；只解析 `output[].content[].text` |
-| 文本分析、策划、编译、修改和简化 | `deepseek-v4-pro` | APIMart 非流式 Chat Completions；默认 `temperature=1.6`；严格 JSON |
+| 文本分析、策划、编译、修改和简化 | `deepseek-v4-pro` | APIMart 非流式 Chat Completions；严格 JSON；3.0.0 仍使用现有全局温度，3.1.0 发布后改为节点级温度 |
 | 图片生成与圈选修订 | `gpt-image-2` | 参考图先上传；`image_urls` 为 URL 字符串数组；`n=1` |
 | 硬规则执行 | 后端确定性规则引擎 | 模型不得覆盖确定性硬阻断 |
 
@@ -37,9 +39,9 @@ v3 当前运行输入以 `platform_app/services.py` 实际组装的 payload 为�
 | N1 | `asset_id, asset_kind, product_name, confirmed_points`；对当前商品的全部图片逐张执行，图片走视觉输入 |
 | N2 | `product_name, confirmed_points, relation_type, observations, max_supporting_images`；`observations` 必须覆盖当前全部可用图片 |
 | N3 | `product_name, confirmed_points, product_profile, identity_lock, owned_observations, market_context` |
-| N4 | `slot_order, role, product_name, product_profile, identity_lock, fact_ledger, primary_asset_id, supporting_asset_ids, resolved_rule_directives, rule_refs, size, resolution, prompt_limits` |
-| N5.* | `product_name, product_profile, identity_lock, fact_ledger, slots, market_context, seed_style` |
-| N6.* | `slot_order, slot_plan, product_name, product_profile, identity_lock, fact_ledger, market_context, primary_asset_id, supporting_asset_ids, resolved_rule_directives, rule_refs, size, resolution, prompt_limits` |
+| N4 | `slot_order, role, product_name, product_profile, identity_lock, fact_ledger, primary_asset_id, supporting_asset_ids, target_appearances, resolved_rule_directives, rule_refs, size, resolution, prompt_limits` |
+| N5.* | `product_name, product_profile, identity_lock, fact_ledger, target_appearances, slots, market_context, seed_style` |
+| N6.* | `slot_order, slot_plan, product_name, product_profile, identity_lock, fact_ledger, market_context, primary_asset_id, supporting_asset_ids, target_appearances, appearance_ids, resolved_rule_directives, rule_refs, size, resolution, prompt_limits` |
 | N7.* | `slot_order, prompt, rule_snapshot, marketing_plan, reference_snapshot, structural_asset_id, prompt_node_template, image_request, lineage` |
 | N8 | `source_generation_id, current_prompt, identity_lock, fact_ledger, rule_snapshot, review` |
 | N9 | `failure_class, provider_message_sanitized, original_prompt, identity_lock, fact_ledger, rule_snapshot, max_simplification_attempts` |
@@ -77,6 +79,37 @@ N1/N2 不依赖市场配置，可以在项目首次配置前完成。N3/N4 共�
 - 虚假价格、促销、认证、疗效、减重、美容前后对比、站外导流、未授权 IP 等高风险内容不得通过推断生成。
 - 自动出图不等于自动审核。所有输出图必须人工审核后才能导出。
 - `Generation` 不是 Prompt 的占位容器。每个新任务在创建和供应商 POST 前都必须绑定当前商品版本、当前有效市场配置、N2 批准参考图、N4/N6 PromptVersion 和同槽 N7 通过快照；其中任一缺失或过期时拒绝，不得使用通用或历史兜底 Prompt。
+
+### 1.4 多图、多规格与创意 Prompt 变量
+
+一个商品卡是“一套图的生产单元”，卡内图片不强制等于同一颜色或同一规格。N2 必须输出两层结构：
+
+- `product_family` / `product_profile.shared_structure` / `identity_lock.family_invariants`：商品家族共有身份、结构、功能关系和不可改变项。
+- `target_appearances`：每个目标外观，可能是同外观多角度、不同颜色、不同规格、不同款式或包装/配件证据。相同外观的角度归并，不同颜色/规格/款式保留为独立目标外观。
+
+后续节点不得重新猜图片关系，只消费这些变量：
+
+```text
+product_family
+target_appearances
+shared_identity_lock
+primary_asset_id
+supporting_asset_ids
+slot_appearance_ids
+appearance_coverage_plan
+seed_style
+style_fidelity_anchors
+source_content_to_avoid
+composition / typography / color_palette / photographic_direction
+localized_visible_copy
+final_english_image_prompt
+```
+
+白底图和款式总览必须覆盖全部 `target_appearances`；其他营销槽可以选择外观子集，但整套 1+8 必须覆盖所有目标外观。用户点击缩略图只切换大图预览；只有拖动排序到第一位才改变 `primary_asset_id` 并使旧准备结果失效。
+
+Prompt 创意结构借鉴公开生产方法：OpenAI 的 GPT Image 2 指南强调明确主体、场景、约束和迭代；Adobe Firefly 产品摄影教程把参考图、姿态/动作、构图、光线与质感拆开控制；Shopify 媒体生成把背景、场景和灯光写成自然语言 Brief。生产模板采用这些“结构化创意 Brief”方法，并吸收用户提供的 Style DNA 示例结构：风格锚点、源内容排除、构图、字体、色彩、摄影方向、设计规则、正向/反向约束。不得复制第三方商品、品牌、人物、原文案、可识别版式或源故事。
+
+N1/N2 的失败边界必须偏业务而非技术字段：只在全部图片均无法确认有效商品、文件不可读或核心图文冲突不可消解时阻断。`image_role`、Schema、JSON、占位字符串、枚举差异等模型结构化问题优先内部归一化或一次修复；仍失败时对员工显示“系统识别异常，请重试预备生成”，不得把内部字段原样展示。
 
 ## 2. 公共数据契约
 

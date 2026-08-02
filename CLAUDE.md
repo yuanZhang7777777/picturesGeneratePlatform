@@ -52,6 +52,9 @@
 - 当前产品设计：`docs/superpowers/specs/2026-07-30-dual-speed-product-platform-design.md`
 - 当前唯一推进计划：`docs/superpowers/plans/2026-07-31-phased-delivery-roadmap.md`
 - Prompt OS v3 九节点契约：`docs/superpowers/specs/节点prompt设定初稿.md`
+- Prompt OS 3.1 营销文案设计：`docs/superpowers/specs/2026-08-02-prompt-os-3.1-marketing-copy-design.md`
+- Prompt OS 3.1 实施计划：`docs/superpowers/plans/2026-08-02-prompt-os-3.1-marketing-copy-implementation.md`
+- GPT-5.5 执行任务书：`docs/project/LEADER-GOAL-PROMPT-OS-3.1.md`
 - 主 Agent 任务书：`docs/project/LEADER-GOAL-DUAL-SPEED-PLATFORM.md`
 - 产品方向与调研：`docs/research/2026-07-29-top-image-platform-redesign-research.md`
 - Agent 协作与交付设计：`docs/superpowers/specs/2026-07-29-agent-orchestrated-delivery-design.md`
