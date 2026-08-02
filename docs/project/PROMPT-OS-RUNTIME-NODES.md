@@ -17,6 +17,14 @@
 
 所以 A 图、B 图不会因为谁先返回而串图；返回顺序不参与定位。
 
+## OSS 与模型识别的关系
+
+OSS 只负责私有存储，不等于模型能直接读取图片。N1 识别的实际链路是：
+
+`OSS storage_path → 后端临时文件 → APIMart /v1/uploads/images → APIMart /v1/responses input_image → gpt-5-nano-2025-08-07 文本 JSON`
+
+如果 N1 返回空文本或坏 JSON，系统使用已上传图片作为商品参考继续，不把 `image_role`、`visible product identity`、`JSON`、`Schema` 等内部错误展示给普通员工。2026-08-02 线上 smoke：同一张“餐具套装”图片通过当前链路在约 12 秒返回了 `Wooden Cutlery Set with Spoon and Chopsticks in Case`，确认 nano 能识别已上传参考图。
+
 ## 多图同卡的真实规则
 
 - 每张上传图默认一个商品卡。
@@ -61,6 +69,8 @@
 - `preparing` 超过 120 秒会回到待处理，下一轮 Prompt Worker 继续预备。
 - 正式生成只复用当前配置下已通过 N7 的 `PromptVersion`，不再在创建 `Generation` 时二次跑 N7。
 - `submitting` 且没有 `provider_task_id` 超过 600 秒会回到队列重新提交，用于恢复部署中断或网络提交中断。
+- 生成提交前只锁业务表本行和必要依赖，不使用 Postgres 不支持的 nullable outer join `FOR UPDATE`；否则 worker 会崩溃并把任务留在 `submitting`。
+- 同一 worker 进程内按 OSS `storage_path` 复用 APIMart 上传后的 image_url，避免 1+8 槽位重复上传同一参考图。
 - `gpt-image-2` 单张图 80–120 秒属于正常后台生成区间；265–358 秒属于偏慢但不是必然失败。系统必须显示进度和可刷新状态，不能让用户误以为按钮没反应。
 
 ## 失败边界
