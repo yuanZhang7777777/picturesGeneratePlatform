@@ -2661,6 +2661,49 @@ def test_uncertain_n1_continues_with_visible_image_reference(tmp_path, settings)
     assert cluster.analysis_snapshot["identity"]["decision"] == "continue"
 
 
+def test_empty_prompt_node_responses_fall_back_to_usable_prompts(tmp_path, settings):
+    from django.core.management import call_command
+
+    from platform_app.models import Asset, Batch, Cluster, PromptVersion
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    call_command("seed_platform_templates")
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Empty node response")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="c" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    cluster.product_name = "餐具套装"
+    cluster.save(update_fields=["product_name"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class EmptyNodeClient(FakeAPIMartClient):
+        def observe_images(self, instruction, image_paths):
+            return {"output_text": "", "raw": {}}
+
+        def optimize_prompt(self, payload):
+            return {"output_text": "", "raw": {}}
+
+    assert process_prompt_once(EmptyNodeClient(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
+    assert cluster.preparation_error == ""
+    assert cluster.analysis_snapshot["identity"]["decision"] == "continue"
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 9
+
+
 def test_n2_continue_requires_nonempty_identity_lock_and_product_profile():
     from platform_app.services import _normalize_n2_identity
 

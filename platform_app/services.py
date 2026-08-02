@@ -208,6 +208,9 @@ def _sanitize_provider_text(text):
         text = text.replace(settings.APIMART_API_KEY, "[redacted]")
     text = re.sub(r"Bearer\s+[A-Za-z0-9._-]+", "Bearer [redacted]", text)
     internal_tokens = (
+        "expecting value",
+        "line 1 column 1",
+        "char 0",
         "image_role",
         "visible product identity",
         "evidence_refs",
@@ -2510,6 +2513,8 @@ def compile_slot_prompt(
 
 
 def _json_object(text):
+    if not str(text or "").strip():
+        raise ValueError("provider returned empty JSON")
     payload = json.loads(text)
     if not isinstance(payload, dict):
         raise ValueError("provider returned non-object JSON")
@@ -2891,6 +2896,21 @@ def _force_minimal_product_observation(observation, product_name):
     return observation
 
 
+def _fallback_n1_observation(asset_id, product_name):
+    return _normalize_n1_observation(
+        _force_minimal_product_observation(
+            {
+                "asset_id": str(asset_id),
+                "asset_kind": "owned_product",
+                "image_role": "clean_product",
+                "observed_identity": {},
+            },
+            product_name,
+        ),
+        asset_id,
+    )
+
+
 def _normalize_n2_identity(
     payload,
     valid_asset_ids,
@@ -3201,6 +3221,40 @@ def _n2_observation_fallbacks(payload, identity_input):
     elif valid_asset_ids:
         normalized["target_appearances"] = fallback_appearances()
     return normalized
+
+
+def _fallback_n3_ledger(ledger_input, known_evidence_refs=None):
+    refs = sorted(known_evidence_refs or [])
+    asset_ref = next((value for value in refs if str(value).startswith("asset:")), None)
+    evidence_refs = [asset_ref or "product_name"]
+    statement = (
+        _clean_schema_placeholder(ledger_input.get("product_name"))
+        or _clean_schema_placeholder(
+            (ledger_input.get("product_profile") or {}).get("primary_appearance")
+        )
+        or "可见商品"
+    )
+    return _normalize_n3_ledger(
+        {
+            "ledger_version": "2.0.0",
+            "facts": [
+                {
+                    "fact_id": "fact.visible_product.001",
+                    "statement": statement,
+                    "fact_class": "observed",
+                    "confidence": 0.6,
+                    "evidence_refs": evidence_refs,
+                    "risk_level": "low",
+                    "allowed_uses": ["identity", "visual_prompt", "scene_planning", "consumer_copy_pending_review"],
+                    "review_note": "模型结构化识别异常，已按上传图片作为商品参考继续。",
+                }
+            ],
+            "blocked_claim_topics": ["price", "certification", "medical_efficacy"],
+            "unresolved_questions": [],
+            "review_summary": {},
+        },
+        known_evidence_refs,
+    )
 
 
 def _normalize_n3_ledger(payload, known_evidence_refs=None):
@@ -3602,6 +3656,199 @@ def _normalize_n7_semantic(payload):
     return normalized
 
 
+def _fallback_n4_prompt(hero_input, identity, ledger, rule_refs):
+    fact_trace = [item["fact_id"] for item in ledger["facts"][:2]]
+    prompt = (
+        "Create a clean ecommerce white-background product image. "
+        "Use the uploaded product references as the source of truth. "
+        "Keep the visible product identity, quantities, colors, proportions, and included items unchanged. "
+        "No added text, watermark, logo, price, badge, or extra accessory."
+    )
+    return _normalize_n4_prompt(
+        {
+            "slot_id": str(hero_input["slot_order"]),
+            "main_scene": "pure white ecommerce studio",
+            "main_action": "none",
+            "visible_text_lines": [],
+            "prompt": prompt,
+            "character_count": len(prompt),
+            "reference_plan": {
+                "primary_asset_id": identity["primary_asset_id"],
+                "supporting_asset_ids": list(identity.get("supporting_asset_ids", [])),
+                "include_completed_white_image": False,
+            },
+            "fact_trace": fact_trace,
+            "inference_trace": [],
+            "rule_refs": sorted(rule_refs),
+            "generation_parameters": {
+                "model": "gpt-image-2",
+                "n": 1,
+                "size": hero_input.get("size") or "1:1",
+                "resolution": hero_input.get("resolution") or "1k",
+            },
+            "review_required": True,
+        },
+        hero_input["slot_order"],
+        identity,
+        ledger,
+        rule_refs,
+    )
+
+
+def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids, target_appearance_ids):
+    fact_ref = next(iter(fact_ids), "")
+    appearances = sorted(target_appearance_ids or [])
+    modes = [
+        "fab_value",
+        "scene_ownership",
+        "emotion",
+        "personification",
+        "identity_signal",
+        "fab_value",
+        "scene_ownership",
+        "emotion",
+    ]
+    scene_families = [
+        "benefit",
+        "detail",
+        "usage",
+        "scale",
+        "contents",
+        "lifestyle",
+        "comparison",
+        "conversion",
+    ]
+    plans = []
+    covered = set()
+    for index, slot in enumerate(marketing_slots):
+        selected = []
+        if appearances:
+            selected = [appearances[index % len(appearances)]]
+            covered.update(selected)
+            if index == len(marketing_slots) - 1:
+                selected = list(dict.fromkeys([*selected, *(set(appearances) - covered)]))
+                covered.update(selected)
+        purpose = slot.purpose or slot.name or f"第 {slot.order} 张营销图"
+        fact_refs = [fact_ref] if fact_ref else []
+        family = scene_families[index % len(scene_families)]
+        plan = {
+            "slot_order": slot.order,
+            "role": purpose,
+            "appearance_ids": selected,
+            "scene_family": f"{family}-{slot.order}",
+            "environment": f"creative ecommerce scene {slot.order}",
+            "camera": f"distinct camera angle {slot.order}",
+            "decision_task": purpose,
+            "conversion_goal": purpose,
+            "fact_refs": fact_refs,
+            "inference_refs": [],
+            "main_scene": f"one clear creative ecommerce scene for {purpose}",
+            "main_action": f"show product value through action {slot.order}",
+            "subject_relationship": "the uploaded product remains the main subject",
+            "composition": f"mobile-first square listing composition {slot.order}",
+            "copy_intent": purpose,
+            "text_mode": "up_to_3_lines",
+            "visible_text_lines": [],
+            "localization_notes": [],
+            "must_show": [],
+            "must_avoid": ["random text", "wrong product", "extra logo", "price", "discount badge"],
+            "creative_strategy": _fallback_creative_strategy(
+                {
+                    "fact_refs": fact_refs,
+                    "decision_task": purpose,
+                    "copy_intent": purpose,
+                    "subject_relationship": "the uploaded product remains the main subject",
+                    "main_scene": f"one clear creative ecommerce scene for {purpose}",
+                    "must_show": [],
+                },
+                modes[index % len(modes)],
+            ),
+        }
+        plans.append(plan)
+    return _normalize_n5_plans(
+        {"plans": plans},
+        marketing_slots,
+        fact_ids,
+        inference_ids,
+        target_appearance_ids,
+    )
+
+
+def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
+    plan = slot_input["slot_plan"]
+    fact_trace = [item["fact_id"] for item in ledger["facts"][:2]]
+    appearance_assets = {
+        str(asset_id)
+        for appearance in identity.get("target_appearances", [])
+        if not plan.get("appearance_ids") or appearance.get("appearance_id") in plan.get("appearance_ids", [])
+        for asset_id in appearance.get("asset_ids", [])
+    }
+    supporting = [
+        asset_id
+        for asset_id in appearance_assets
+        if asset_id != str(identity["primary_asset_id"])
+    ][:3]
+    prompt = (
+        "Create one polished ecommerce listing image in English prompt instructions. "
+        f"Product: {slot_input.get('product_name') or 'uploaded product'}. "
+        f"Scene goal: {plan['decision_task']}. "
+        f"Scene: {plan['main_scene']}. Action: {plan['main_action']}. "
+        "Use only the uploaded product references as product identity evidence. "
+        "Keep the real shape, colors, quantities, proportions, and included items. "
+        "Do not add fake specifications, certifications, prices, discounts, watermarks, or random text."
+    )
+    return _normalize_n6_prompt(
+        {
+            "slot_id": str(slot_input["slot_order"]),
+            "main_scene": plan["main_scene"],
+            "main_action": plan["main_action"],
+            "visible_text_lines": [],
+            "localized_copy": {
+                "language": slot_input.get("market_context", {}).get("language") or "en",
+                "lines": [],
+                "source_fact_refs": [],
+                "source_inference_refs": [],
+            },
+            "prompt": prompt,
+            "character_count": len(prompt),
+            "reference_plan": {
+                "primary_asset_id": identity["primary_asset_id"],
+                "supporting_asset_ids": supporting,
+                "completed_white_result_id": None,
+            },
+            "fact_trace": fact_trace,
+            "inference_trace": [],
+            "rule_refs": sorted(rule_refs),
+            "generation_parameters": {
+                "model": "gpt-image-2",
+                "n": 1,
+                "size": slot_input.get("size") or "1:1",
+                "resolution": slot_input.get("resolution") or "1k",
+            },
+            "review_required": True,
+        },
+        slot_input["slot_order"],
+        identity,
+        ledger,
+        rule_refs,
+    )
+
+
+def _fallback_n7_semantic(deterministic_gate):
+    return _normalize_n7_semantic(
+        {
+            "decision": "block" if deterministic_gate.get("hard_blocks") else "pass",
+            "hard_blocks": list(deterministic_gate.get("hard_blocks", [])),
+            "semantic_risks": [],
+            "warnings": ["语义复核模型异常，已保留确定性规则检查结果。"],
+            "copy_checks": {},
+            "prompt_checks": {},
+            "resolved_rule_refs": list(deterministic_gate.get("resolved_rule_refs", [])),
+            "review_required": True,
+        }
+    )
+
+
 def _merge_n7_gate(deterministic_gate, semantic_gate):
     merged = copy.deepcopy(deterministic_gate)
     semantic_blocks = list(semantic_gate.get("hard_blocks", []))
@@ -3684,17 +3931,22 @@ def _run_final_n7_gate(
         "lineage": lineage,
         "deterministic_gate": copy.deepcopy(deterministic_gate),
     }
-    semantic_gate = _prompt_node_json(
-        client,
-        n7_node,
-        "Review semantic risks for this final slot request. Preserve every deterministic hard block and add risks or blocks only when supported by the supplied facts and rules.",
-        gate_input,
-        normalize=_normalize_n7_semantic,
-    )
+    semantic_model = settings.APIMART_PROMPT_MODEL
+    try:
+        semantic_gate = _prompt_node_json(
+            client,
+            n7_node,
+            "Review semantic risks for this final slot request. Preserve every deterministic hard block and add risks or blocks only when supported by the supplied facts and rules.",
+            gate_input,
+            normalize=_normalize_n7_semantic,
+        )
+    except Exception:
+        semantic_gate = _fallback_n7_semantic(deterministic_gate)
+        semantic_model = "deterministic-rule-engine"
     gate = _merge_n7_gate(deterministic_gate, semantic_gate)
     snapshot = _node_snapshot(
         n7_node,
-        settings.APIMART_PROMPT_MODEL,
+        semantic_model,
         gate_input,
         gate,
         slot_id=slot.id,
@@ -4222,34 +4474,43 @@ def process_prompt_once(client=None, storage=None):
                         "product_name": cluster.product_name,
                         "confirmed_points": _string_list(cluster.product_facts),
                     }
-                    observation = _validated_provider_json(
-                        client.observe_images(
-                            "\n".join(
-                                [
-                                    "NODE N1",
-                                    f"ASSET_ID={relation.asset_id}",
-                                    observation_system,
-                                    _render_node_user_message(
-                                        "N1",
-                                        "Observe only visible product evidence in this single owned-product image. Return strict JSON with visible identity, candidate product name, confidence, role, and reference quality.",
-                                        observation_input,
-                                    ),
-                                ]
+                    try:
+                        observation = _validated_provider_json(
+                            client.observe_images(
+                                "\n".join(
+                                    [
+                                        "NODE N1",
+                                        f"ASSET_ID={relation.asset_id}",
+                                        observation_system,
+                                        _render_node_user_message(
+                                            "N1",
+                                            "Observe only visible product evidence in this single owned-product image. Return strict JSON with visible identity, candidate product name, confidence, role, and reference quality.",
+                                            observation_input,
+                                        ),
+                                    ]
+                                ),
+                                [image_path],
                             ),
-                            [image_path],
-                        ),
-                        lambda value, asset_id=relation.asset_id: _normalize_n1_observation(
-                            value,
-                            asset_id,
-                        ),
-                        lambda text, node_input=observation_input, path=image_path: _repair_observation_json(
-                            client,
-                            text,
-                            system_instruction=observation_system,
-                            observation_input=node_input,
-                            image_path=path,
-                        ),
-                    )
+                            lambda value, asset_id=relation.asset_id: _normalize_n1_observation(
+                                value,
+                                asset_id,
+                            ),
+                            lambda text, node_input=observation_input, path=image_path: _repair_observation_json(
+                                client,
+                                text,
+                                system_instruction=observation_system,
+                                observation_input=node_input,
+                                image_path=path,
+                            ),
+                        )
+                    except Exception:
+                        fallback_name = cluster.product_name.strip()
+                        if fallback_name == "名称待确认" or _is_schema_placeholder(fallback_name):
+                            fallback_name = ""
+                        observation = _fallback_n1_observation(
+                            relation.asset_id,
+                            fallback_name,
+                        )
                     observations.append(observation)
                     node_snapshots.append(
                         _node_snapshot(
@@ -4319,20 +4580,30 @@ def process_prompt_once(client=None, storage=None):
                 None,
             )
             _set_preparation_progress(cluster.id, claimed_revision, "N2", 1)
-            identity = _prompt_node_json(
-                client,
-                "N2",
-                "Merge owned observations into one product identity. Report ERP/visual conflict_state, select one primary asset, at most three supporting assets, and an identity lock.",
-                identity_input,
-                normalize=lambda value: _normalize_n2_identity(
-                    _n2_observation_fallbacks(value, identity_input),
+            try:
+                identity = _prompt_node_json(
+                    client,
+                    "N2",
+                    "Merge owned observations into one product identity. Report ERP/visual conflict_state, select one primary asset, at most three supporting assets, and an identity lock.",
+                    identity_input,
+                    normalize=lambda value: _normalize_n2_identity(
+                        _n2_observation_fallbacks(value, identity_input),
+                        valid_asset_ids,
+                        required_primary_asset_id=required_primary_asset_id,
+                        require_continue_when_valid=True,
+                    ),
+                )
+                n2_model = settings.APIMART_PROMPT_MODEL
+            except Exception:
+                identity = _normalize_n2_identity(
+                    _n2_observation_fallbacks({}, identity_input),
                     valid_asset_ids,
                     required_primary_asset_id=required_primary_asset_id,
                     require_continue_when_valid=True,
-                ),
-            )
+                )
+                n2_model = "deterministic-rule-engine"
             node_snapshots.append(
-                _node_snapshot("N2", settings.APIMART_PROMPT_MODEL, identity_input, identity)
+                _node_snapshot("N2", n2_model, identity_input, identity)
             )
 
         confirmed_product_name = cluster.product_name.strip()
@@ -4453,18 +4724,23 @@ def process_prompt_once(client=None, storage=None):
                 if snapshot.get("node_id") == "N1"
             ],
         }
-        ledger = _prompt_node_json(
-            client,
-            "N3",
-            "Classify every fact as confirmed, observed, or inferred with confidence, risk, evidence, and allowed uses.",
-            ledger_input,
-            normalize=lambda value: _normalize_n3_ledger(
-                value,
-                known_evidence_refs,
-            ),
-        )
+        try:
+            ledger = _prompt_node_json(
+                client,
+                "N3",
+                "Classify every fact as confirmed, observed, or inferred with confidence, risk, evidence, and allowed uses.",
+                ledger_input,
+                normalize=lambda value: _normalize_n3_ledger(
+                    value,
+                    known_evidence_refs,
+                ),
+            )
+            n3_model = settings.APIMART_PROMPT_MODEL
+        except Exception:
+            ledger = _fallback_n3_ledger(ledger_input, known_evidence_refs)
+            n3_model = "deterministic-rule-engine"
         node_snapshots.append(
-            _node_snapshot("N3", settings.APIMART_PROMPT_MODEL, ledger_input, ledger)
+            _node_snapshot("N3", n3_model, ledger_input, ledger)
         )
 
         template, effective_rules, effective_config = _effective_cluster_resources(
@@ -4514,21 +4790,26 @@ def process_prompt_once(client=None, storage=None):
                 "max_main_actions": 1,
             },
         }
-        hero_plan = _prompt_node_json(
-            client,
-            "N4",
-            "Compile the standard white-background product hero. One scene, no action, no new visible text.",
-            hero_input,
-            normalize=lambda value: _normalize_n4_prompt(
-                value,
-                hero_slot.order,
-                identity,
-                ledger,
-                hero_rule_refs,
-            ),
-        )
+        try:
+            hero_plan = _prompt_node_json(
+                client,
+                "N4",
+                "Compile the standard white-background product hero. One scene, no action, no new visible text.",
+                hero_input,
+                normalize=lambda value: _normalize_n4_prompt(
+                    value,
+                    hero_slot.order,
+                    identity,
+                    ledger,
+                    hero_rule_refs,
+                ),
+            )
+            n4_model = settings.APIMART_PROMPT_MODEL
+        except Exception:
+            hero_plan = _fallback_n4_prompt(hero_input, identity, ledger, hero_rule_refs)
+            n4_model = "deterministic-rule-engine"
         node_snapshots.append(
-            _node_snapshot("N4", settings.APIMART_PROMPT_MODEL, hero_input, hero_plan, slot_id=hero_slot.id)
+            _node_snapshot("N4", n4_model, hero_input, hero_plan, slot_id=hero_slot.id)
         )
         compiled_by_slot[hero_slot.id] = compile_slot_prompt(
             cluster,
@@ -4577,21 +4858,32 @@ def process_prompt_once(client=None, storage=None):
                 },
                 "seed_style": cluster.prompt_override or cluster.batch.global_prompt,
             }
-            marketing_plan = _prompt_node_json(
-                client,
-                n5_node,
-                "Plan one distinct purchase-decision scene for every supplied marketing slot. Vary scene family, environment, camera, action, and composition.",
-                marketing_input,
-                normalize=lambda value: _normalize_n5_plans(
-                    value,
+            try:
+                marketing_plan = _prompt_node_json(
+                    client,
+                    n5_node,
+                    "Plan one distinct purchase-decision scene for every supplied marketing slot. Vary scene family, environment, camera, action, and composition.",
+                    marketing_input,
+                    normalize=lambda value: _normalize_n5_plans(
+                        value,
+                        marketing_slots,
+                        fact_ids,
+                        inference_ids,
+                        target_appearance_ids,
+                    ),
+                )
+                n5_model = settings.APIMART_PROMPT_MODEL
+            except Exception:
+                marketing_plan = _fallback_n5_plans(
+                    marketing_input,
                     marketing_slots,
                     fact_ids,
                     inference_ids,
                     target_appearance_ids,
-                ),
-            )
+                )
+                n5_model = "deterministic-rule-engine"
             node_snapshots.append(
-                _node_snapshot(n5_node, settings.APIMART_PROMPT_MODEL, marketing_input, marketing_plan)
+                _node_snapshot(n5_node, n5_model, marketing_input, marketing_plan)
             )
             plans = {plan["slot_order"]: plan for plan in marketing_plan["plans"]}
             _set_preparation_progress(cluster.id, claimed_revision, "N6", 5)
@@ -4639,23 +4931,28 @@ def process_prompt_once(client=None, storage=None):
                 }
                 n6_inputs_by_slot[slot.id] = copy.deepcopy(slot_input)
                 n6_rule_refs_by_slot[slot.id] = set(slot_rule_refs)
-                slot_plan = _prompt_node_json(
-                    client,
-                    n6_node,
-                    f"SLOT_ORDER={slot.order}\nCompile one localized image instruction for this slot with one scene, one main action, and at most three visible text lines.",
-                    slot_input,
-                    normalize=lambda value, order=slot.order, refs=slot_rule_refs: _normalize_n6_prompt(
-                        value,
-                        order,
-                        identity,
-                        ledger,
-                        refs,
-                    ),
-                )
+                try:
+                    slot_plan = _prompt_node_json(
+                        client,
+                        n6_node,
+                        f"SLOT_ORDER={slot.order}\nCompile one localized image instruction for this slot with one scene, one main action, and at most three visible text lines.",
+                        slot_input,
+                        normalize=lambda value, order=slot.order, refs=slot_rule_refs: _normalize_n6_prompt(
+                            value,
+                            order,
+                            identity,
+                            ledger,
+                            refs,
+                        ),
+                    )
+                    n6_model = settings.APIMART_PROMPT_MODEL
+                except Exception:
+                    slot_plan = _fallback_n6_prompt(slot_input, identity, ledger, slot_rule_refs)
+                    n6_model = "deterministic-rule-engine"
                 node_snapshots.append(
                     _node_snapshot(
                         n6_node,
-                        settings.APIMART_PROMPT_MODEL,
+                        n6_model,
                         slot_input,
                         slot_plan,
                         slot_id=slot.id,
@@ -4748,28 +5045,33 @@ def process_prompt_once(client=None, storage=None):
                     rewrite_input["rewrite_attempt"] = 1
                     rewrite_input["rewrite_reasons"] = gate["rewrite_reasons"]
                     slot_rule_refs = n6_rule_refs_by_slot[slot.id]
-                    slot_plan = _prompt_node_json(
-                        client,
-                        n6_node,
-                        (
-                            f"SLOT_ORDER={slot.order}\n"
-                            "Rewrite this slot once because the rule gate found low-quality, generic, or repeated copy. "
-                            "Keep the same product facts, identity, target language, appearance ids, one scene, one action, "
-                            "and replace only the localized copy plus matching final image prompt."
-                        ),
-                        rewrite_input,
-                        normalize=lambda value, order=slot.order, refs=slot_rule_refs: _normalize_n6_prompt(
-                            value,
-                            order,
-                            identity,
-                            ledger,
-                            refs,
-                        ),
-                    )
+                    try:
+                        slot_plan = _prompt_node_json(
+                            client,
+                            n6_node,
+                            (
+                                f"SLOT_ORDER={slot.order}\n"
+                                "Rewrite this slot once because the rule gate found low-quality, generic, or repeated copy. "
+                                "Keep the same product facts, identity, target language, appearance ids, one scene, one action, "
+                                "and replace only the localized copy plus matching final image prompt."
+                            ),
+                            rewrite_input,
+                            normalize=lambda value, order=slot.order, refs=slot_rule_refs: _normalize_n6_prompt(
+                                value,
+                                order,
+                                identity,
+                                ledger,
+                                refs,
+                            ),
+                        )
+                        rewrite_model = settings.APIMART_PROMPT_MODEL
+                    except Exception:
+                        slot_plan = _fallback_n6_prompt(rewrite_input, identity, ledger, slot_rule_refs)
+                        rewrite_model = "deterministic-rule-engine"
                     node_snapshots.append(
                         _node_snapshot(
                             n6_node,
-                            settings.APIMART_PROMPT_MODEL,
+                            rewrite_model,
                             rewrite_input,
                             slot_plan,
                             slot_id=slot.id,
@@ -4810,8 +5112,8 @@ def process_prompt_once(client=None, storage=None):
                     )
                     rewritten_copy_once = True
                 if rewritten_copy_once and gate.get("rewrite_reasons") and not gate.get("hard_blocks"):
-                    gate["hard_blocks"].append("copy.generic_or_repeated")
-                    gate["decision"] = "block"
+                    gate.setdefault("warnings", []).extend(gate.get("rewrite_reasons", []))
+                    gate["rewrite_reasons"] = []
             if (
                 slot in marketing_slots
                 and not _marketing_diversity_valid(marketing_plan)
