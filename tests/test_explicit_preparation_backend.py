@@ -303,7 +303,7 @@ def test_formal_gated_prompt_runs_platform_n7_and_preserves_all_blocks(monkeypat
     }
     cluster.save(update_fields=["analysis_snapshot"])
     slot = template.slots.get(order=1)
-    n4 = PromptNodeTemplate.objects.get(node_name="N4", version="3.0.0")
+    n4 = PromptNodeTemplate.objects.get(node_name="N4", version="3.1.0")
 
     class GateClient:
         def __init__(self, block=None):
@@ -326,6 +326,13 @@ def test_formal_gated_prompt_runs_platform_n7_and_preserves_all_blocks(monkeypat
                             "main_scene_count": 1,
                             "main_action_count": 1,
                             "reference_assets_valid": True,
+                        },
+                        "copy_checks": {
+                            "lines_match_visible_text": True,
+                            "each_line_present_once": True,
+                            "language_match": True,
+                            "fact_refs_valid": True,
+                            "generic_phrase_hits": [],
                         },
                         "resolved_rule_refs": [],
                         "review_required": True,

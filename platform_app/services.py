@@ -3049,6 +3049,14 @@ def _n2_observation_fallbacks(payload, identity_input):
     fallback_shape = _clean_schema_placeholder(observed_identity.get("overall_shape")) or "; ".join(
         _string_list(first_observation.get("product_facts"))
     )
+    valid_asset_ids = [str(item["asset_id"]) for item in observations if item.get("asset_id")]
+    if valid_asset_ids and normalized.get("decision") != "continue":
+        normalized["decision"] = "continue"
+        normalized["needs_input_reason"] = ""
+        normalized["primary_asset_id"] = valid_asset_ids[0]
+        normalized["supporting_asset_ids"] = valid_asset_ids[1:4]
+        normalized["confidence"] = normalized.get("confidence") or first_observation.get("candidate_product_name_confidence") or 0.5
+        normalized["conflict_state"] = normalized.get("conflict_state") if normalized.get("conflict_state") in {"match", "unknown", "conflict"} else "unknown"
     if fallback_name and not _clean_schema_placeholder(normalized.get("product_name")):
         normalized["product_name"] = fallback_name
     profile = normalized.get("product_profile")
@@ -3066,6 +3074,19 @@ def _n2_observation_fallbacks(payload, identity_input):
         if not must_not_change:
             lock["must_not_change"] = _string_list([fallback_shape, fallback_category, fallback_name])
         normalized["identity_lock"] = lock
+    appearances = normalized.get("target_appearances")
+    if valid_asset_ids and not appearances:
+        normalized["target_appearances"] = [
+            {
+                "appearance_id": f"appearance.{index + 1}",
+                "label": _clean_schema_placeholder(item.get("candidate_product_name")) or fallback_category or fallback_name or f"Appearance {index + 1}",
+                "variant_attributes": _string_list((item.get("observed_identity") or {}).get("dominant_colors")),
+                "asset_ids": [str(item["asset_id"])],
+                "primary_asset_id": str(item["asset_id"]),
+            }
+            for index, item in enumerate(observations)
+            if item.get("asset_id")
+        ]
     appearances = normalized.get("target_appearances")
     if isinstance(appearances, list):
         cleaned = []
@@ -4325,6 +4346,7 @@ def process_prompt_once(client=None, storage=None):
         compiled_by_slot = {}
         n6_inputs_by_slot = {}
         n6_rule_refs_by_slot = {}
+        fact_ids = {item["fact_id"] for item in ledger["facts"]}
 
         _set_preparation_progress(cluster.id, claimed_revision, "N4", 3)
         hero_rules = _applicable_rules(
@@ -4394,7 +4416,6 @@ def process_prompt_once(client=None, storage=None):
         plans = {}
         if marketing_slots:
             _set_preparation_progress(cluster.id, claimed_revision, "N5", 4)
-            fact_ids = {item["fact_id"] for item in ledger["facts"]}
             inference_ids = {
                 item["fact_id"]
                 for item in ledger["facts"]

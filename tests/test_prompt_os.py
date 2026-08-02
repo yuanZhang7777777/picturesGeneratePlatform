@@ -1002,6 +1002,13 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                     "review_required": True,
                 }
             elif "NODE N5" in text:
+                modes = [
+                    "fab_value",
+                    "scene_ownership",
+                    "emotion",
+                    "personification",
+                    "identity_signal",
+                ]
                 output = {
                     "plans": [
                         {
@@ -1025,6 +1032,10 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                             "must_show": [],
                             "must_avoid": [],
                             "visible_text_lines": [],
+                            "creative_strategy": creative_strategy(
+                                modes[(order - 2) % len(modes)],
+                                ("fact.name.001",),
+                            ),
                         }
                         for order in range(2, 10)
                     ]
@@ -1040,8 +1051,19 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                     "localized_copy": {
                         "language": "en",
                         "lines": [],
+                        "back_translation": "",
+                        "strategy_mode": "fab_value",
                         "source_fact_refs": [],
                         "source_inference_refs": [],
+                        "quality": {
+                            "relevance": 90,
+                            "specificity": 90,
+                            "imagery": 90,
+                            "naturalness": 90,
+                            "truthfulness": 90,
+                            "mobile_readability": 90,
+                            "generic_phrase_hits": [],
+                        },
                     },
                     "prompt": prompt,
                     "character_count": len(prompt),
@@ -1065,18 +1087,25 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                 self.n7_calls.append(text.splitlines()[0])
                 output = {
                     "decision": "pass",
-                        "hard_blocks": [],
-                        "semantic_risks": [],
-                        "warnings": [],
-                        "prompt_checks": {
-                            "character_count": 32,
-                            "text_line_count": 0,
-                            "main_scene_count": 1,
-                            "main_action_count": 1,
-                            "reference_assets_valid": True,
-                        },
-                        "resolved_rule_refs": [],
-                        "review_required": True,
+                    "hard_blocks": [],
+                    "semantic_risks": [],
+                    "warnings": [],
+                    "prompt_checks": {
+                        "character_count": 32,
+                        "text_line_count": 0,
+                        "main_scene_count": 1,
+                        "main_action_count": 1,
+                        "reference_assets_valid": True,
+                    },
+                    "copy_checks": {
+                        "lines_match_visible_text": True,
+                        "each_line_present_once": True,
+                        "language_match": True,
+                        "fact_refs_valid": True,
+                        "generic_phrase_hits": [],
+                    },
+                    "resolved_rule_refs": [],
+                    "review_required": True,
                 }
             else:
                 raise AssertionError(text)
@@ -2123,6 +2152,13 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
                     "resolved_rule_refs": [],
                     "inference_disclosures": [],
                     "prompt_checks": {},
+                    "copy_checks": {
+                        "lines_match_visible_text": True,
+                        "each_line_present_once": True,
+                        "language_match": True,
+                        "fact_refs_valid": True,
+                        "generic_phrase_hits": [],
+                    },
                     "review_required": True,
                 }
             else:
@@ -2865,8 +2901,8 @@ def test_n2_explicit_target_appearances_must_assign_every_valid_product_image():
         _normalize_n2_identity(payload, {first, second}, required_primary_asset_id=first)
 
 
-def test_n2_cannot_block_when_n1_found_a_valid_product_image():
-    from platform_app.services import _normalize_n2_identity
+def test_n2_fallback_continues_when_n1_found_a_valid_product_image():
+    from platform_app.services import _n2_observation_fallbacks, _normalize_n2_identity
 
     asset_id = "11111111-1111-1111-1111-111111111111"
     payload = strict_n2({
@@ -2883,9 +2919,45 @@ def test_n2_cannot_block_when_n1_found_a_valid_product_image():
         "standardization_mode": "reuse",
         "standardization_reason": "",
     })
+    identity_input = {
+        "product_name": "",
+        "confirmed_points": [],
+        "relation_type": "single_product",
+        "observations": [
+            strict_n1({
+                "asset_id": asset_id,
+                "asset_kind": "owned_product",
+                "image_role": "owned_product_reference",
+                "contains_target_product": True,
+                "target_is_physical_product": True,
+                "target_visibility": 92,
+                "target_complete": True,
+                "background_complexity": "low",
+                "observed_identity": {
+                    "category_candidates": ["chopsticks set"],
+                    "dominant_colors": ["wood brown"],
+                    "overall_shape": "two chopsticks and a spoon in slim trays",
+                },
+                "reference_quality": 90,
+                "recommended_use": "reuse",
+                "candidate_product_name": "Chopsticks set",
+                "candidate_product_name_confidence": 0.9,
+            })
+        ],
+        "max_supporting_images": 3,
+    }
 
-    with pytest.raises(ValueError, match="only block when all product images are invalid"):
-        _normalize_n2_identity(payload, {asset_id}, require_continue_when_valid=True)
+    normalized = _normalize_n2_identity(
+        _n2_observation_fallbacks(payload, identity_input),
+        {asset_id},
+        required_primary_asset_id=asset_id,
+        require_continue_when_valid=True,
+    )
+
+    assert normalized["decision"] == "continue"
+    assert normalized["primary_asset_id"] == asset_id
+    assert normalized["product_name"] == "Chopsticks set"
+    assert normalized["target_appearances"][0]["asset_ids"] == [asset_id]
 
 
 def test_prompt_worker_observes_every_image_and_continues_with_the_first_valid_one(
