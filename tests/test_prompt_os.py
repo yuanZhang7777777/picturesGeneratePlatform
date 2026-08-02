@@ -3239,6 +3239,158 @@ def test_n5_diversity_rejects_one_repeated_dimension_even_when_tuples_differ():
         _normalize_n5_plans({"plans": plans}, slots, set(), set())
 
 
+def test_six_category_marketing_benchmark_satisfies_prompt_os_31_gate():
+    from types import SimpleNamespace
+
+    from platform_app.models import Batch, OutputTemplate
+    from platform_app.services import _normalize_n5_plans, evaluate_prompt_rule_gate
+
+    user = make_user()
+    categories = [
+        ("home_kitchen", "家居厨卫", "餐具收纳套装", "Bữa trưa gọn hơn"),
+        ("pet", "宠物用品", "宠物玩具收纳", "Chơi xong vẫn gọn"),
+        ("baby", "婴幼儿", "婴儿外出用品", "Ra ngoài nhẹ hơn"),
+        ("wearable", "穿戴", "通勤穿戴配件", "Mặc đẹp không vội"),
+        ("beauty", "美妆", "随身补妆工具", "Chạm nhẹ là tươi"),
+        ("tool", "工具/电器", "家用小工具", "Sửa nhanh trong tay"),
+    ]
+    modes = [
+        "fab_value",
+        "scene_ownership",
+        "emotion",
+        "identity_signal",
+        "fab_value",
+        "scene_ownership",
+        "emotion",
+        "personification",
+    ]
+    generic_hits = []
+    repeated_signatures = []
+    invalid_fact_refs = []
+    copy_lock_errors = []
+    high_quality_slots = 0
+    total_slots = 0
+
+    for slug, category_name, product_name, copy_seed in categories:
+        template = OutputTemplate.objects.create(
+            seed_key=f"benchmark-{slug}",
+            platform="global",
+            site="",
+            name=f"{category_name} benchmark",
+            version="2026.08",
+        )
+        slots = [
+            template.slots.create(
+                order=order,
+                name=f"{category_name}槽位{order}",
+                purpose=f"{category_name} buying decision {order}",
+            )
+            for order in range(2, 10)
+        ]
+        batch = Batch.objects.create(owner=user, name=f"{category_name} benchmark")
+        fact_ids = {"fact.name.001", f"fact.{slug}.visible"}
+        plans = []
+        for index, slot in enumerate(slots):
+            plan = n5_plan(slot.order, mode=modes[index], fact_refs=("fact.name.001",))
+            plan.update(
+                {
+                    "role": f"{category_name}营销图{slot.order}",
+                    "decision_task": f"让用户理解{product_name}在真实购买前解决的问题 {slot.order}",
+                    "conversion_goal": f"把{product_name}的可见事实转成具体使用结果 {slot.order}",
+                    "main_scene": f"{category_name}差异化生活片段 {slot.order}",
+                    "main_action": f"{category_name}明确使用动作 {slot.order}",
+                    "subject_relationship": f"{product_name}始终是画面主角 {slot.order}",
+                    "composition": f"{category_name}独立构图 {slot.order}",
+                    "copy_intent": f"让消费者想到{product_name}带来的具体省心结果 {slot.order}",
+                    "scene_family": f"{slug}-scene-{slot.order}",
+                    "environment": f"{slug}-environment-{slot.order}",
+                    "camera": f"{slug}-camera-{slot.order}",
+                    "appearance_ids": [f"appearance.{slug}.main"],
+                    "creative_strategy": creative_strategy(
+                        modes[index],
+                        ("fact.name.001", f"fact.{slug}.visible"),
+                    ),
+                }
+            )
+            plans.append(plan)
+
+        normalized = _normalize_n5_plans(
+            {"plans": plans},
+            [SimpleNamespace(order=slot.order, name=slot.name) for slot in slots],
+            fact_ids,
+            set(),
+            {f"appearance.{slug}.main"},
+        )["plans"]
+        strategy_modes = [plan["creative_strategy"]["mode"] for plan in normalized]
+        assert len(set(strategy_modes)) >= 4
+        assert "fab_value" in strategy_modes
+        assert strategy_modes.count("personification") <= 1
+
+        seen_signatures = set()
+        for slot, plan in zip(slots, normalized):
+            signature = (
+                plan["scene_family"],
+                plan["environment"],
+                plan["camera"],
+                plan["main_action"],
+                plan["composition"],
+            )
+            if signature in seen_signatures:
+                repeated_signatures.append((slug, slot.order))
+            seen_signatures.add(signature)
+
+            line = f"{copy_seed} {slot.order}"
+            prompt = (
+                "Create one ecommerce listing image. "
+                f'Visible text: render exactly "{line}" once, no extra words.'
+            )
+            localized_copy = {
+                "language": "vi",
+                "lines": [line],
+                "back_translation": [f"{category_name}用户得到具体使用结果 {slot.order}"],
+                "source_fact_refs": ["fact.name.001"],
+                "source_inference_refs": [],
+                "quality": {
+                    "relevance": 90,
+                    "specificity": 90,
+                    "naturalness": 90,
+                    "truthfulness": 100,
+                    "credibility": 90,
+                    "generic_phrase_hits": [],
+                },
+            }
+            gate = evaluate_prompt_rule_gate(
+                batch,
+                slot,
+                prompt,
+                visible_text_lines=[line],
+                localized_copy=localized_copy,
+                fact_ids=fact_ids,
+            )
+            if gate["copy_checks"]["generic_phrase_hits"]:
+                generic_hits.append((slug, slot.order))
+            if not gate["copy_checks"]["fact_refs_valid"]:
+                invalid_fact_refs.append((slug, slot.order))
+            if not gate["copy_checks"]["lines_match_visible_text"] or not gate["copy_checks"]["each_line_present_once"]:
+                copy_lock_errors.append((slug, slot.order))
+            assert gate["decision"] == "pass", gate
+            assert gate["hard_blocks"] == []
+            quality = localized_copy["quality"]
+            if all(
+                quality[field] >= 85
+                for field in ("relevance", "specificity", "naturalness", "truthfulness", "credibility")
+            ):
+                high_quality_slots += 1
+            total_slots += 1
+
+    assert total_slots == 48
+    assert high_quality_slots >= 42
+    assert repeated_signatures == []
+    assert invalid_fact_refs == []
+    assert copy_lock_errors == []
+    assert generic_hits == []
+
+
 def test_real_prompt_node_call_fails_closed_without_published_template(settings):
     from platform_app.services import _prompt_node_json
 

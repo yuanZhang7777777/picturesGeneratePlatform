@@ -17,3 +17,5 @@
 - 2026-08-02 Prompt OS 3.1 Task 5：无新增阻塞。节点温度与快照测试已通过；同文件早前 N2 fallback 未提交改动仍需保持不混入本任务提交。
 
 - 2026-08-02 Prompt OS 3.1 Task 6：无新增阻塞。PromptEditor 策略/文案展示、前端构建和 Django check 已通过；仍未执行真实付费生图或部署。
+
+- 2026-08-02 Prompt OS 3.1 Task 7：无新增阻塞。本地六类 48 槽 benchmark 已通过；真实付费 1+8、Hermes 部署、ERP/OSS smoke 仍需主 Agent 签核后执行。

@@ -243,3 +243,11 @@
 - Change: PromptVersion structured output now carries the slot marketing plan into project snapshots; `sku.prompts` exposes decision task, creative strategy and localized copy; PromptEditor shows a compact strategy/copy/back-translation block above the editable final Prompt.
 - Verification: `npm --prefix frontend test -- --run src/__tests__/prompt-os-v2.test.tsx` passed 6; `npm --prefix frontend run build` passed; `manage.py check` passed.
 - Next: Task 7 adds the six-category benchmark and publish/release gate.
+
+# Prompt OS 3.1 Task 7 six-category local benchmark
+
+- Status: local benchmark slice added; no APIMart paid call, ERP/OSS smoke, Hermes deploy, or production code change was needed for this step.
+- Evidence: added `test_six_category_marketing_benchmark_satisfies_prompt_os_31_gate`, covering 家居厨卫、宠物、婴幼儿、穿戴、美妆、工具/电器 × 8 slots = 48 marketing slots.
+- Gate: each set asserts at least four strategy modes, at least one FAB, personification at most one, repeated scene/environment/camera/action/composition signatures 0, invalid fact refs 0, copy-lock errors 0, generic phrase hits 0, and at least 42 high-quality slots.
+- Verification: `pytest tests/test_prompt_os.py -k "six_category_marketing_benchmark" -q` passed 1.
+- Remaining: full Task 7 release gate still needs full backend/frontend verification, template seed publish check, and separately signed-off real paid 1+8 / Hermes deployment.
