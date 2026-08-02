@@ -251,3 +251,32 @@
 - Gate: each set asserts at least four strategy modes, at least one FAB, personification at most one, repeated scene/environment/camera/action/composition signatures 0, invalid fact refs 0, copy-lock errors 0, generic phrase hits 0, and at least 42 high-quality slots.
 - Verification: `pytest tests/test_prompt_os.py -k "six_category_marketing_benchmark" -q` passed 1.
 - Remaining: full Task 7 release gate still needs full backend/frontend verification, template seed publish check, and separately signed-off real paid 1+8 / Hermes deployment.
+
+# Prompt OS 4.1 GPT-5.5 design handoff finalization
+
+- Status: design-only handoff tightened on 2026-08-02; no runtime code, paid APIMart call, ERP/OSS smoke, browser test or Hermes deploy was performed.
+- Change: kept 4.1 as the only GPT-5.5 execution baseline and added one missing contract: every node now uses the same runtime snapshot shape `node/model/temperature/input_fingerprint/system_prompt_version/input/expected_schema/output/normalized_output/quality`.
+- Deliverables: updated `docs/superpowers/specs/2026-08-02-prompt-os-4.1-node-marketing-design.md`, `docs/superpowers/plans/2026-08-02-prompt-os-4.1-gpt55-implementation.md`, `docs/project/PROMPT-OS-4.1-EXECUTION-INDEX.md`, `docs/project/LEADER-GOAL-PROMPT-OS-4.1.md`, and `docs/project/STATUS.md`.
+- Next: GPT-5.5 should execute the 4.1 Task 0–9 plan directly; it should not create 4.2/4.3 or reinterpret the workflow.
+
+# Prompt OS 3.1 preview deploy
+
+- Status: deployed committed HEAD `548bb5a` to `hermes-remote:/opt/independent-image-platform` on 2026-08-02 after user explicitly requested preview deployment; uncommitted local dirty files were not included.
+- Local caveat: current dirty worktree full backend run failed 3 tests before deploy: one legacy `3.0.0` template lookup, one old fixture missing `creative_strategy`, and one existing N2/config path `fact_ids` error. Targeted 3.1 benchmark and broader 3.1 marketing/copy tests passed.
+- Remote verification: Docker Compose build, migrate, `seed_platform_templates`, `manage.py check`, service status, local `/health/ready`, and public `http://8.217.60.244:18083/health/ready` passed.
+- Backup: `/opt/independent-image-platform-backups/20260802_190137-548bb5a`.
+- Remaining: full clean-tree backend/frontend release gate, migration drift, diff check, real paid 1+8 and ERP/OSS smoke are still not signed off as completed.
+
+# Prompt OS 3.1 full local gate repair
+
+- Status: fixed the three dirty-worktree backend failures found after preview deploy.
+- Change: updated old 3.0 test fixtures to the 3.1 N5/N6/N7 contract and moved `fact_ids` initialization outside the marketing-only branch so hero-only templates can pass N7.
+- Verification: targeted 4 tests passed; full backend pytest passed; Django check passed; makemigrations dry-run returned `No changes detected`; frontend Vitest passed 90; Vite build passed; `git diff --check` reported no whitespace errors, only CRLF conversion warnings.
+- Remaining: real paid 1+8, ERP/OSS smoke and a new preview deploy of these uncommitted fixes are not completed.
+
+# Workbench image interaction and N3 gate preview deploy
+
+- Status: deployed committed HEAD `6a917ac` to `hermes-remote:/opt/independent-image-platform` on 2026-08-02 under `global.lock`.
+- Change: card drag is limited to the thumbnail strip; clicking a thumbnail switches the large preview without changing primary order; cross-card/same-card asset moves update optimistically; project/workspace snapshots and media previews use short private cache; N3 unknown `evidence_refs` are normalized to known asset evidence instead of blocking the whole product.
+- Verification: targeted N3 and UI tests passed; workbench review/v3 frontend tests passed 22; Vite build passed; Django check passed; media permission/storage tests passed; remote Compose build/up, migrate, template seed, Django check, five services, local `/health/ready`, public `/health/ready`, release marker and static bundle readback passed.
+- Backup: `/opt/independent-image-platform-backups/20260802_193552-6a917ac`; deployment lock released. Real paid 1+8, ERP/OSS employee-browser smoke and 50-product scenario remain pending.
