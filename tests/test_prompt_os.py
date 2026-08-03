@@ -108,6 +108,10 @@ def n5_plan(slot_order, *, mode="fab_value", fact_refs=("fact.name.001",), appea
     return {
         "slot_order": slot_order,
         "role": f"marketing role {slot_order}",
+        "visual_theme": f"visual theme {slot_order}",
+        "specific_moment": f"specific moment {slot_order}",
+        "aesthetic_point_of_view": f"aesthetic point of view {slot_order}",
+        "typography_direction": f"typography direction {slot_order}",
         "decision_task": f"decision task {slot_order}",
         "conversion_goal": f"conversion goal {slot_order}",
         "fact_refs": list(fact_refs),
@@ -128,6 +132,38 @@ def n5_plan(slot_order, *, mode="fab_value", fact_refs=("fact.name.001",), appea
         "appearance_ids": list(appearance_ids or []),
         "creative_strategy": creative_strategy(mode, fact_refs),
     }
+
+
+def test_fallback_display_prompt_uses_concrete_visual_design_brief():
+    from platform_app.services import _fallback_display_prompt
+
+    prompt = _fallback_display_prompt(
+        {
+            "slot_order": 4,
+            "visual_theme": "通勤前一秒的轻松陪伴",
+            "specific_moment": "年轻通勤者弯腰系鞋带时顺手扶正黄色毛绒玩偶",
+            "aesthetic_point_of_view": "低饱和玄关生活摄影，暖白侧窗光，玩偶绒毛清晰",
+            "typography_direction": "左上角两行泰文标题，第一行 34px 粗体无衬线，第二行 22px 常规无衬线，深墨绿色，宽度约画面 38%",
+            "composition": "玩偶占右前景 58%，帆布包和钥匙盘在左后方形成通勤语境",
+            "camera": "平视略低机位，中近景浅景深",
+            "main_scene": "浅木玄关换鞋凳旁",
+            "main_action": "扶正毛绒玩偶",
+        },
+        ["ใช้ได้พอดีกับจังหวะชีวิต", "เรื่องเล็กง่ายขึ้น"],
+    )
+
+    assert "通勤前一秒的轻松陪伴" in prompt
+    assert "年轻通勤者弯腰系鞋带时顺手扶正黄色毛绒玩偶" in prompt
+    assert "34px" in prompt
+    assert "22px" in prompt
+    assert "左上角" in prompt
+    assert "占右前景 58%" in prompt
+    assert "浅木玄关换鞋凳旁" in prompt
+    assert "ใช้ได้พอดีกับจังหวะชีวิต" in prompt
+    assert "เรื่องเล็กง่ายขึ้น" in prompt
+    assert "画面围绕参考图" not in prompt
+    assert "生活里的小任务" not in prompt
+    assert "不做技术图" not in prompt
 
 
 def test_confirm_generation_snapshots_selected_market_template_rule_and_prompt_asset():
@@ -2098,6 +2134,9 @@ def test_prompt_worker_rewrites_generic_copy_once_before_saving_prompt(tmp_path,
                     "slot_id": "2",
                     "main_scene": "office lunch table",
                     "main_action": "box opened neatly",
+                    "visual_theme": "office lunch tidy moment",
+                    "typography_plan": "top-left one-line English title, 32px bold sans-serif, dark green text, about 34% image width",
+                    "display_prompt": "生成一张 1:1 Shopee 商品营销图，办公室午餐盒打开的一秒，左上角一行英文标题，暖白桌面光线清楚呈现餐盒结构。",
                     "visible_text_lines": [line],
                     "localized_copy": {
                         "language": "en",
@@ -2852,8 +2891,9 @@ def test_empty_prompt_node_responses_fall_back_to_usable_prompts(tmp_path, setti
     marketing_text = "\n".join(prompt.prompt_text for prompt in prompts[2:])
     assert "show product value through action" not in marketing_text
     assert "one clear creative ecommerce scene" not in marketing_text
-    assert "Product facts:" not in marketing_text
-    assert "realistic everyday use scene" in marketing_text
+    assert "Product identity:" in marketing_text
+    assert "Visual theme:" in marketing_text
+    assert "Specific moment:" in marketing_text
 
 
 def test_n2_continue_requires_nonempty_identity_lock_and_product_profile():
@@ -3723,11 +3763,11 @@ def test_fallback_n6_usage_set_does_not_force_holder_into_every_scene():
     compiled = _fallback_n6_prompt(slot_input, identity, ledger, set())
 
     assert compiled["visible_text_lines"]
-    assert "functional product component" in compiled["prompt"]
-    assert "multiple co-primary usable pieces" in compiled["prompt"]
-    assert "natural co-use subset" in compiled["prompt"]
-    assert "commercial lighting chosen to match the scene" in compiled["prompt"]
-    assert "Storage cases, trays, boxes" in compiled["prompt"]
+    assert "Visual theme:" in compiled["prompt"]
+    assert "Specific moment:" in compiled["prompt"]
+    assert "Aesthetic direction:" in compiled["prompt"]
+    assert "Typography plan:" in compiled["prompt"]
+    assert "Use the references only for product identity" in compiled["prompt"]
     assert "arrange them naturally as a set" not in compiled["prompt"]
     assert "visible product set match" not in compiled["prompt"]
 

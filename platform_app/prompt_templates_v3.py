@@ -252,6 +252,10 @@ SLOT_PLAN_SCHEMA = _object(
         "scene_family": STRING,
         "environment": STRING,
         "camera": STRING,
+        "visual_theme": STRING,
+        "specific_moment": STRING,
+        "aesthetic_point_of_view": STRING,
+        "typography_direction": STRING,
         "decision_task": STRING,
         "conversion_goal": STRING,
         "fact_refs": STRING_ARRAY,
@@ -291,6 +295,8 @@ N6_SCHEMA = _object(
         "slot_id": STRING,
         "main_scene": STRING,
         "main_action": STRING,
+        "visual_theme": STRING,
+        "typography_plan": STRING,
         "display_prompt": STRING,
         "visible_text_lines": STRING_ARRAY,
         "localized_copy": _object(
@@ -513,6 +519,13 @@ N5_CORE = """
 # 五种转化文案策略
 每槽必须从 creative_strategy.mode 的五种候选中选一个主策略：fab_value、scene_ownership、emotion、personification、identity_signal。先做 Feature→Advantage→Benefit：把商品可验证 feature 翻译成 advantage，再翻译成 consumer_benefit；再用 scene_ownership 的 mental simulation 做“买家脑中正在使用它”的画面，用 emotion 写使用前后的情绪变化，用 personification 让商品以轻口吻说一个价值点，用 identity_signal 让商品代表审美、品位、送礼眼光或自我表达。八图至少覆盖四种 mode，至少一张 fab_value，personification 默认最多一张。执行 cross-slot diversity：不同槽位不能只换形容词复用同一购买问题、同一场景、同一动作、同一光线或同一构图。
 
+# 视觉主题、具体瞬间与文字版式方向
+每槽必须输出 N6 可直接执行的设计骨架，而不是抽象指导。
+1. visual_theme 写成一个有审美判断的中文主题名，例如“通勤前一秒的轻松陪伴”“微距质感实验室”“礼物开箱感”“暖白晨间餐桌”。主题必须贴合当前商品事实、购买任务和目标买家情绪，不允许只是“核心卖点图”“使用场景图”。
+2. specific_moment 写清画面发生的那一秒：谁或什么在场、商品哪个部件正在参与什么动作、动作解决哪个购买疑虑。不能写“选择一个使用瞬间”“根据品类决定场景”。
+3. aesthetic_point_of_view 写清图片设计师自己的风格取向：色彩气质、光线、材质重点、景别和空间情绪。它可以有品味和创意，但不能改商品事实。
+4. typography_direction 写清营销文字如何服务主题：语言方向、标题/副标题层级、字体气质、字号关系、位置、占画面比例、颜色、是否有轻阴影或半透明柔光。营销文字必须贴合当前 visual_theme 和 specific_moment，不能八张图共用一组泛用短句；不要规划大块实心色块或笨重标签背景。
+
 # 场景、人物和宠物动态规则
 1. 每槽只有一个 main_scene 和一个 main_action；静态展示使用 none。人物、手、儿童或宠物不是默认装饰，也不是一律禁止，必须由 verified_use_relationships、目标消费者和规则共同决定。
 2. 商品需要佩戴、手持、携带、接触身体、涂抹、操作、安装或借人物/宠物尺度才能理解时，安排正确的真人、手部或宠物使用关系；主体接触点、朝向、受力和动作必须可执行，商品仍是主角且关键结构可见。
@@ -530,7 +543,7 @@ N5_CORE = """
 每槽 copy_intent 只描述一个短标题、一个可选副标题或短标注的事实意图，不直接创作最终文案。营销图默认 text_mode=up_to_3_lines；只有白底图、原图直通、规则明确禁止文字或员工关闭文字时才为 none。localization_notes 说明目标市场语气、禁用词和移动端短文案要求，不允许价格、折扣、最高级、认证、疗效、减重、美容前后对比、站外导流或保证性承诺，除非确认事实和已验证规则同时允许。
 
 # 严格输出
-只输出符合 output_schema 的单个 JSON 对象，顶层唯一字段为 plans，不输出 Markdown、解释、代码围栏或额外字段。plans 的数量、slot_order 和顺序必须与输入 slots 完全一致；每个计划必须包含 scene_family、environment、camera、decision_task、main_scene、main_action、subject_relationship、composition 以及 Schema 规定的其余字段。格式、缺槽或差异化失败只允许同输入修复一次。
+只输出符合 output_schema 的单个 JSON 对象，顶层唯一字段为 plans，不输出 Markdown、解释、代码围栏或额外字段。plans 的数量、slot_order 和顺序必须与输入 slots 完全一致；每个计划必须包含 scene_family、environment、camera、visual_theme、specific_moment、aesthetic_point_of_view、typography_direction、decision_task、main_scene、main_action、subject_relationship、composition 以及 Schema 规定的其余字段。格式、缺槽或差异化失败只允许同输入修复一次。
 """.strip()
 
 
@@ -555,7 +568,8 @@ N5_PLATFORM = {
 N6_CORE = """
 # 角色与任务
 你是本地化单槽图片 Prompt 编译器。一次只编译一个营销槽位，将 N5 的中文营销策划、商品身份、事实台账、市场上下文、规则指令与参考图计划压缩为严格 JSON。display_prompt 是给中国运营看的中文画面策划稿，可直接在前端编辑；prompt 是在 display_prompt 确认后编译出的英文 gpt-image-2 生图指令。你不重新策划八图、不创建事实、不改变槽位职责。
-display_prompt 必须是给中国运营和图片模型都能直接使用的“中文广告图导演稿”，不是策略说明、字段摘要或防错清单。用自然段写成最终画面提示词，覆盖画面内容、商品呈现、人物/空间关系、镜头构图、光线、材质、色彩、版式文字和购买情绪。不要用“主体：”“动作：”“构图：”“本图防错：”“购买任务：”“用户价值：”“场景代入：”这类字段标签；不要写英文字段名、模型内部说明、英文生图指令、负向清单或“文字不遮挡/预留安全区”。
+display_prompt 必须是给中国运营和图片模型都能直接使用的“中文广告图导演稿”，不是策略说明、字段摘要或防错清单。用自然段写成最终画面提示词，覆盖画面内容、商品呈现、人物/空间关系、镜头构图、光线、材质、色彩、版式文字和购买情绪。必须吸收 slot_plan.visual_theme、specific_moment、aesthetic_point_of_view 和 typography_direction；图片设计师可以在不改商品事实的前提下形成自己的风格主题、色彩品味和版式节奏。不要用“主体：”“动作：”“构图：”“本图防错：”“购买任务：”“用户价值：”“场景代入：”这类字段标签；不要写英文字段名、模型内部说明、英文生图指令、负向清单或“文字不遮挡/预留安全区”。
+typography_plan 必须精确到可执行版式：可见文字的语言、每行内容、位置、字体气质、字号层级、行距、颜色、占画面比例以及背景处理方式。允许轻微阴影、半透明柔光或自然浅色区域增强可读性；不要把文字放进大块实心矩形色块。display_prompt 中的营销文字必须贴合当前 visual_theme 和 specific_moment。
 
 # 输入优先级与冲突修正
 优先级依次为：系统安全与硬规则；identity_lock；confirmed 事实与已验证真实使用关系；当前 slot_plan 的购买决策；允许用途匹配的 observed/inferred；抽象风格。当前计划若与更高优先级冲突，静默纠正并在 trace 中保留使用的真实 ID，不得保留错误摆法、错误数量或虚构卖点。

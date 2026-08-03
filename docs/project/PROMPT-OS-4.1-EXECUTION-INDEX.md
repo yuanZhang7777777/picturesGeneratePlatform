@@ -48,8 +48,8 @@ N1 owned_observations / valid_asset_ids
 | N2 身份归并 | 把一卡多图整理成商品家族和目标外观 | 商品名、身份锁、`target_appearances` | 全部无商品；人工名称与实物核心冲突 |
 | N3 事实台账 | 区分 confirmed/observed/inferred | 可引用事实、风险、用途 | 高风险事实无法移除 |
 | N4 白底编译 | 写标准白底图 Prompt | 白底 Prompt、参考图计划 | 无我方参考图或白底硬规则无法满足 |
-| N5 营销导演 | 把事实翻译成八张购买任务 | `slot_plans`、`copywriting_chain` | 重复/低质先重写；仍不能覆盖外观才阻断 |
-| N6 单槽编译 | 写目标语言文案和英文生图 Prompt | 三候选文案、选中文案、最终英文 Prompt | 语言错、事实错、文字锁错 |
+| N5 营销导演 | 把事实翻译成八张购买任务 | `slot_plans`、视觉主题、具体瞬间、版式方向、`copywriting_chain` | 重复/低质先重写；仍不能覆盖外观才阻断 |
+| N6 单槽编译 | 写目标语言文案和英文生图 Prompt | 三候选文案、选中文案、中文导演稿、版式计划、最终英文 Prompt | 语言错、事实错、文字锁错 |
 | N7 规则闸门 | 付费前最后门禁 | pass 快照或中文阻断原因 | 付费风险、商品错误、文案错误 |
 | N8 修改导演 | 圈选意见变成最小差量 | 差量 Prompt | 会破坏身份锁或硬规则 |
 | N9 失败简化 | 只处理可安全简化的 Prompt | 更短等价 Prompt | 网络、余额、限流、未知提交不处理 |
@@ -71,12 +71,16 @@ N5 不写最终图中文字，先设计购买冲动。每套至少覆盖四种�
 → 用户任务 user_job
 → 用户结果 value_translation
 → 使用画面 scene_brief
+→ 视觉主题 visual_theme
+→ 具体瞬间 specific_moment
+→ 审美取向 aesthetic_point_of_view
+→ 版式方向 typography_direction
 → 情绪触发 emotional_trigger
 → 文案意图 copy_intent
 → 画面签名 composition_signature
 ```
 
-N6 再直接用目标语言写图片文字，生成 3 个候选并自评。最终给 GPT Image 2 的画面控制必须是英文，目标语言文字逐行锁死：不翻译、不改写、不增删。
+N6 再直接用目标语言写图片文字，生成 3 个候选并自评。运营可编辑的中文 `display_prompt` 必须写成完整广告图导演稿，继承 N5 的视觉主题、具体瞬间、审美取向和版式方向，并把文字计划精确到语言、行数、位置、字体气质、字号层级、行距、颜色、占画面比例和背景处理方式。最终给 GPT Image 2 的画面控制必须是英文，目标语言文字逐行锁死：不翻译、不改写、不增删。
 
 ## 6. 员工错误边界
 

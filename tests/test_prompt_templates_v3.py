@@ -254,7 +254,7 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
         },
         "N5.generic": {"plans"},
         "N6.generic": {
-            "slot_id", "main_scene", "main_action", "display_prompt", "visible_text_lines", "localized_copy",
+            "slot_id", "main_scene", "main_action", "visual_theme", "typography_plan", "display_prompt", "visible_text_lines", "localized_copy",
             "prompt", "character_count", "reference_plan", "fact_trace", "inference_trace",
             "rule_refs", "generation_parameters", "review_required",
         },
@@ -285,6 +285,10 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
         "scene_family",
         "environment",
         "camera",
+        "visual_theme",
+        "specific_moment",
+        "aesthetic_point_of_view",
+        "typography_direction",
         "decision_task",
         "main_scene",
         "main_action",
@@ -483,5 +487,27 @@ def test_marketing_nodes_include_style_dna_framework():
         "color_palette",
         "photographic_direction",
         "negative_prompt",
+    ):
+        assert marker in combined
+
+
+def test_marketing_designer_contract_requires_concrete_theme_moment_and_typography():
+    from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
+
+    n5 = PROMPT_TEMPLATES["N5.shopee"]["instruction"]
+    n6 = PROMPT_TEMPLATES["N6.shopee"]["instruction"]
+    combined = f"{n5}\n{n6}"
+
+    for marker in (
+        "visual_theme",
+        "specific_moment",
+        "aesthetic_point_of_view",
+        "typography_direction",
+        "typography_plan",
+        "字体",
+        "字号",
+        "位置",
+        "占画面",
+        "营销文字必须贴合当前 visual_theme",
     ):
         assert marker in combined

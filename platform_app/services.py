@@ -2641,6 +2641,7 @@ def compile_slot_prompt(
     if slot_directive:
         prompt_lines = [
             str(slot_directive).strip(),
+            f"Product identity: {product_name}. Product facts: {product_facts}. Identity lock: {identity_lock}.",
             "Use the supplied product reference images to understand product identity, usable components, included parts, variants, proportions, and material cues.",
             "Create a new ecommerce composition with a fresh camera angle, background, lighting, scene, and product arrangement.",
             "For lifestyle/use scenes, make the functional product component(s) needed for the action the hero.",
@@ -3556,10 +3557,10 @@ def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs,
     main_action = _required_string(payload, "main_action")
     display_prompt = str(payload.get("display_prompt") or "").strip()
     if not display_prompt:
-        display_prompt = (
-            "生成一张 1:1 Shopee 商品营销图。画面围绕参考图中的商品展开，"
-            "用真实商业摄影的镜头、光线、材质层次和版式文字服务当前购买理由。"
-        )
+        if hero:
+            display_prompt = "生成一张 1:1 标准白底商品图。商品完整居中呈现，结构、颜色、材质和数量清楚，使用均匀棚拍柔光和干净白色背景。"
+        else:
+            display_prompt = "生成一张 1:1 Shopee 商品营销图。用一个具体可见的购买瞬间呈现商品作用，写清镜头、光线、材质、色彩层次和目标语言文字版式。"
     visible_text_lines = _required_string_list(payload, "visible_text_lines")
     if len(visible_text_lines) > 3 or (hero and visible_text_lines):
         raise ValueError("visible_text_lines violate the slot limit")
@@ -3746,6 +3747,10 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
         "scene_family",
         "environment",
         "camera",
+        "visual_theme",
+        "specific_moment",
+        "aesthetic_point_of_view",
+        "typography_direction",
     )
     required_lists = (
         "fact_refs",
@@ -3759,6 +3764,10 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
     covered_appearance_ids = set()
     for index, slot in enumerate(marketing_slots):
         plan = copy.deepcopy(plans[slot.order])
+        plan.setdefault("visual_theme", plan.get("role") or plan.get("decision_task") or f"第 {slot.order} 张营销主题")
+        plan.setdefault("specific_moment", plan.get("main_action") or plan.get("main_scene") or f"第 {slot.order} 张商品画面瞬间")
+        plan.setdefault("aesthetic_point_of_view", "真实商业摄影，光线、色彩、材质和空间层次服务当前购买理由")
+        plan.setdefault("typography_direction", "左上角两行目标语言标题，第一行 32px 粗体无衬线，第二行 21px 常规无衬线，深色文字，宽度约画面 36%")
         for field in required_strings:
             plan[field] = _required_string(plan, field)
         if not isinstance(plan.get("copy_intent"), str):
@@ -3799,6 +3808,12 @@ def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
         rule_refs,
         hero=False,
     )
+    if not str(payload.get("visual_theme") or "").strip():
+        payload["visual_theme"] = payload.get("main_scene") or "当前商品营销主题"
+    if not str(payload.get("typography_plan") or "").strip():
+        payload["typography_plan"] = "左上角两行目标语言标题，第一行 32px 粗体无衬线，第二行 21px 常规无衬线，深色文字，宽度约画面 36%"
+    normalized["visual_theme"] = _required_string(payload, "visual_theme")
+    normalized["typography_plan"] = _required_string(payload, "typography_plan")
     localized_copy = payload.get("localized_copy")
     if not isinstance(localized_copy, dict):
         raise ValueError("localized_copy must be an object")
@@ -3921,78 +3936,111 @@ def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids
     fact_ref = next(iter(fact_ids), "")
     appearances = sorted(target_appearance_ids or [])
     seed_style = str(marketing_input.get("seed_style") or "").strip()
+    product_label = _chinese_product_phrase(str(marketing_input.get("product_name") or "").strip()) or "商品"
     recipes = [
         {
             "mode": "fab_value",
             "family": "core-benefit",
             "task": "用 FAB 把一个可见特征翻译成买家能立刻理解的日常好处",
-            "scene": "a benefit-first advertising scene chosen from the product category, showing the product solving one concrete buyer problem",
-            "action": "show the functional product component delivering one clear everyday benefit",
-            "camera": "slightly elevated three-quarter product angle",
-            "composition": "large centered product, generous negative space, mobile-first square crop",
+            "theme": f"{product_label}第一眼好处",
+            "moment": f"买家刚看到{product_label}时，画面用一个核心部件和一个日常结果把用途说清",
+            "aesthetic": "明亮商业摄影，干净背景，主体轮廓利落，色彩克制但有点击感",
+            "typography": "左上角两行目标语言标题，第一行 34px 粗体无衬线，第二行 22px 常规无衬线，颜色取自商品主色的深色版本，文字宽度约画面 38%",
+            "scene": f"{product_label}处在一个能立刻解释核心收益的简洁广告场景",
+            "action": f"突出{product_label}的一个可见功能部件正在完成当前购买任务",
+            "camera": "轻俯三分之四中近景",
+            "composition": "商品占画面中心 62%，主体前景清晰，背景只保留一个服务购买理由的环境线索",
         },
         {
             "mode": "scene_ownership",
             "family": "detail-trust",
             "task": "让买家代入拥有后的触感、便利或收纳细节",
-            "scene": "a close-up ownership scene where one visible detail answers a practical hesitation",
-            "action": "turn one tactile or practical detail into a believable reason to choose it",
-            "camera": "macro close-up with shallow depth of field",
-            "composition": "detail fills most of the frame while the full product remains recognizable",
+            "theme": f"{product_label}细节信任",
+            "moment": f"手指或光线停在{product_label}最能建立信任的纹理、边缘或连接处",
+            "aesthetic": "微距商业质感，侧光拉出纹理阴影，背景柔化成低饱和层次",
+            "typography": "右上角两行目标语言短句，第一行 30px 半粗无衬线，第二行 20px 常规无衬线，深灰文字，行距 1.15，文字宽度约画面 34%",
+            "scene": f"{product_label}关键细节的近景拥有感画面",
+            "action": f"用一个可见细节证明{product_label}值得被选择",
+            "camera": "近景微距，浅景深",
+            "composition": "细节占画面 55%，完整商品轮廓在中景仍可识别，背景形成柔和斜向层次",
         },
         {
             "mode": "emotion",
             "family": "real-use",
             "task": "制造真实使用画面，让买家想到自己或收礼人正在用它",
-            "scene": "a real use scene selected from the product category and buyer motivation, not a fixed home flatlay",
-            "action": "show a person, hand, pet, or environment actively using the functional product component when that helps explain value",
-            "camera": "human-eye lifestyle angle",
-            "composition": "hands or user action support the product, product remains unobstructed and dominant",
+            "theme": f"{product_label}刚好用上的一秒",
+            "moment": f"人物手部或环境正在把{product_label}带入一个明确动作，买家能看懂它此刻为什么有用",
+            "aesthetic": "真实生活商业摄影，暖白自然光，场景有温度但不拥挤",
+            "typography": "左侧自然留白排两行目标语言文案，第一行 32px 粗体圆角无衬线，第二行 21px 常规无衬线，文字占画面宽度约 36%，只加轻微柔光阴影",
+            "scene": f"{product_label}被真实使用的生活瞬间",
+            "action": f"让{product_label}的功能部件参与一个单一、清楚、可执行的动作",
+            "camera": "平视中近景，人眼高度",
+            "composition": "商品占画面 58%，手部或使用关系在旁辅助说明，前中后景层次清楚",
         },
         {
             "mode": "personification",
             "family": "function-explain",
             "task": "用轻拟人或商品口吻讲清一个不会夸大的价值点",
-            "scene": "a memorable product-led scene that gives the item personality while keeping the use value clear",
-            "action": "make the product feel like it is speaking one simple buyer benefit",
-            "camera": "top-down organized layout",
-            "composition": "clear spacing between parts, structured but not like a technical diagram",
+            "theme": f"{product_label}小角色剧场",
+            "moment": f"{product_label}像画面主角一样被布置在一个轻巧有记忆点的场面里，表达一个简单购买理由",
+            "aesthetic": "轻广告剧场感，背景干净，色彩有一点幽默但商品质感真实",
+            "typography": "画面上方居中一行 32px 粗体目标语言标题，下面一行 20px 短副标题，文字总高约画面 8%，颜色与主题道具形成对比",
+            "scene": f"{product_label}主导的轻拟人广告场景",
+            "action": f"让{product_label}用姿态和周围道具表达一个不会夸大的价值点",
+            "camera": "有秩序的俯视或轻俯视",
+            "composition": "商品位于中心偏下 56% 区域，道具呈弧线或对角线辅助，画面清楚但不做说明书版式",
         },
         {
             "mode": "identity_signal",
             "family": "scale-context",
             "task": "让商品代表一种审美、身份或送礼选择",
-            "scene": "an aspirational product scene that signals taste, fit, or gifting value without fake claims",
-            "action": "make the buyer feel the product matches their taste or the recipient",
-            "camera": "medium close product angle",
-            "composition": "product in foreground, scale cue secondary and not distracting",
+            "theme": f"{product_label}审美选择",
+            "moment": f"{product_label}被放进一个有品味的空间或送礼语境，买家能感到它适合自己或收礼人",
+            "aesthetic": "低饱和编辑感商业摄影，材质干净，空间留白有呼吸感",
+            "typography": "右侧竖向或右上角两行目标语言文字，第一行 31px 中粗无衬线，第二行 20px 常规无衬线，文字宽度约画面 30%",
+            "scene": f"{product_label}传递审美和适配感的商品场景",
+            "action": f"用{product_label}与一个尺度或品味线索形成搭配关系",
+            "camera": "中近景商品角度",
+            "composition": "商品在前景占 60%，尺度或礼物线索在后景 25%，背景简洁不抢主体",
         },
         {
             "mode": "fab_value",
             "family": "variant-overview",
             "task": "如果有多色多款就做总览；没有多款就补一个新的购买疑虑",
-            "scene": "a clean comparison or question-answer scene using target appearances only when this slot needs a real overview",
-            "action": "help the buyer compare appearances or understand one remaining practical buying reason",
-            "camera": "flat lay catalog angle",
-            "composition": "target appearances or product angles arranged clearly with consistent spacing",
+            "theme": f"{product_label}下单前看清楚",
+            "moment": f"{product_label}的外观、角度或必要组成被整齐摊开，让买家快速确认收到什么",
+            "aesthetic": "清爽目录摄影，均匀柔光，边缘清晰，信息层级像高级商品清单",
+            "typography": "左下角小标题组，第一行 28px 粗体无衬线，第二行 19px 常规无衬线，深色文字，宽度约画面 32%",
+            "scene": f"{product_label}的清楚对照或内容确认画面",
+            "action": f"把{product_label}需要比较或确认的外观信息整理出来",
+            "camera": "俯视目录角度",
+            "composition": "目标外观或商品角度按网格/对角线排列，占画面 65%，文字层级靠边轻量呈现",
         },
         {
             "mode": "scene_ownership",
             "family": "lifestyle-desire",
             "task": "制造想拥有的生活方式画面",
-            "scene": "an aspirational but realistic lifestyle moment invented from the product's use case, buyer motivation, and seed style",
-            "action": "make the buyer imagine the product improving one moment in their own routine",
-            "camera": "soft editorial ecommerce angle",
-            "composition": "the functional product component is active in the scene; context supports desire without taking over",
+            "theme": f"{product_label}放进日常之后",
+            "moment": f"{product_label}已经出现在一个完整但不过度装饰的生活片段里，买家能想象自己正在拥有它",
+            "aesthetic": "柔和编辑感电商摄影，浅景深，背景光斑克制，色彩与商品主色呼应",
+            "typography": "顶部留白放两行目标语言标题，第一行 33px 粗体无衬线，第二行 21px 常规无衬线，颜色为暖深灰，文字宽度约画面 40%",
+            "scene": f"{product_label}融入日常节奏的生活方式场景",
+            "action": f"让{product_label}正在改善一个具体日常片段",
+            "camera": "柔和编辑式电商角度",
+            "composition": "商品功能部件在画面中景占 55%，生活背景只提供情绪和尺度",
         },
         {
             "mode": "emotion",
             "family": "conversion-final",
             "task": "补上最后一个转化理由，让买家觉得现在就可以下单",
-            "scene": "a polished final listing scene that combines product clarity, practical context, and a tidy marketplace-ready look",
-            "action": "combine one practical value and one emotional reason to make the product feel easy to choose",
-            "camera": "balanced commercial product angle",
-            "composition": "clean square listing layout with strong product focus and no clutter",
+            "theme": f"{product_label}今天就能用上",
+            "moment": f"{product_label}以完整、清楚、有吸引力的状态收束整套图，让买家感到选择已经很简单",
+            "aesthetic": "更精致的收尾广告摄影，主光略强，背景干净，商品边缘有清楚高光",
+            "typography": "画面左上或上方居中放两行目标语言收尾文案，第一行 35px 粗体无衬线，第二行 22px 常规无衬线，文字占画面宽度 36%-42%",
+            "scene": f"{product_label}兼具清晰和情绪触发的转化收尾画面",
+            "action": f"把{product_label}的一个实用价值和一个情绪理由合在同一个清楚画面里",
+            "camera": "平衡商业商品角度",
+            "composition": "商品占画面 62%，背景干净但有生活线索，文字与商品形成斜向视觉流",
         },
     ]
     plans = []
@@ -4015,6 +4063,10 @@ def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids
             "scene_family": f"{recipe['family']}-{slot.order}",
             "environment": recipe["scene"],
             "camera": recipe["camera"],
+            "visual_theme": recipe["theme"],
+            "specific_moment": recipe["moment"],
+            "aesthetic_point_of_view": recipe["aesthetic"],
+            "typography_direction": recipe["typography"],
             "decision_task": recipe["task"],
             "conversion_goal": recipe["task"],
             "fact_refs": fact_refs,
@@ -4147,48 +4199,26 @@ def _fallback_marketing_copy_lines(plan, product_name, language):
 
 def _fallback_display_prompt(plan, visible_text_lines):
     slot_order = int(plan.get("slot_order") or 2)
-    concepts = {
-        2: "把商品放在第一眼能理解用途和收益的购买瞬间，画面有明确的视觉钩子。",
-        3: "用近景展示最能建立信任的材质纹理、边缘细节或结构触点。",
-        4: "用一个清楚的使用瞬间说明商品怎么参与生活里的小任务。",
-        5: "把商品放进买家容易代入的生活场景，氛围有温度但商品仍是视觉中心。",
-        6: "通过人物、手部、空间或日常物件建立尺度感和使用关系。",
-        7: "把套装、尺寸、包含物或下单所得整理成清楚的商业摄影画面。",
-        8: "用更有点击欲的广告化场景收束核心购买理由，画面节奏更鲜明。",
-        9: "补上一张带情绪触发的收尾转化图，让买家感到今天就能用上。",
-    }
-    camera = {
-        2: "中近景三分之四视角",
-        3: "近景微距视角",
-        4: "平视中近景",
-        5: "略带环境层次的中景",
-        6: "带尺度参照的平视或轻俯视角",
-        7: "清爽俯视或三分之四陈列视角",
-        8: "更有张力的低机位或斜向构图",
-        9: "带留白呼吸感的生活方式镜头",
-    }
-    lighting = {
-        2: "柔和主光突出轮廓，边缘保留干净高光",
-        3: "侧光打出材质纹理和细节阴影",
-        4: "自然窗光呈现真实使用触感",
-        5: "柔和环境光营造真实生活氛围",
-        6: "均匀柔光让商品比例和接触关系清楚",
-        7: "顶光加轻微侧光让数量和边缘层次清楚",
-        8: "更鲜明的广告主光强化点击感和质感",
-        9: "温和自然光配合浅景深营造轻松收尾情绪",
-    }
+    visual_theme = str(plan.get("visual_theme") or f"第 {slot_order} 张营销主题").strip()
+    specific_moment = str(plan.get("specific_moment") or plan.get("main_scene") or "商品处在一个明确的购买决策瞬间").strip()
+    aesthetic = str(plan.get("aesthetic_point_of_view") or "真实商业摄影，光线、色彩和材质都服务当前购买理由").strip()
+    typography = str(plan.get("typography_direction") or "左上角两行目标语言标题，第一行 32px 粗体无衬线，第二行 21px 常规无衬线，深色文字，宽度约画面 36%").strip()
+    main_scene = str(plan.get("main_scene") or "简洁商业摄影场景").strip()
+    main_action = str(plan.get("main_action") or "none").strip()
+    composition = str(plan.get("composition") or "商品占画面主要视觉重量，前景、中景和背景形成清楚层次").strip()
+    camera = str(plan.get("camera") or "中近景三分之四视角").strip()
     copy = "、".join(f"“{line}”" for line in visible_text_lines)
     copy_sentence = (
-        f"图片文字作为轻巧标题融入背景层次，使用{copy}。"
+        f"画面文字使用{copy}，排版方案为：{typography}；文字直接落在自然浅色背景、空气感留白或柔焦空间里，只用轻微半透明阴影增强可读性。"
         if copy
-        else "画面依靠商品、场景和光影完成转化。"
+        else f"画面不放可见营销文字，仍按{typography}的版式节奏组织留白，让商品、动作和光影完成转化。"
     )
     return (
-        "生成一张 1:1 Shopee 商品营销图。"
-        "画面围绕参考图中的商品展开，保持可见外形、颜色比例、材质质感和关键结构。"
-        f"{concepts.get(slot_order, concepts[8])}"
-        f"镜头采用{camera.get(slot_order, camera[8])}，商品占据主要视觉重量，前景、中景和背景形成清楚层次。"
-        f"使用真实商业摄影风格，{lighting.get(slot_order, lighting[8])}，质感清晰、边缘锐利、色彩通透。"
+        f"生成一张 1:1 Shopee 商品营销图，视觉主题是“{visual_theme}”。"
+        f"画面瞬间：{specific_moment}。主场景为{main_scene}，主要动作是{main_action}。"
+        f"商品呈现保持参考图里的真实外形、颜色比例、材质质感和关键结构，并在这个瞬间里承担购买理由。"
+        f"镜头采用{camera}，构图为{composition}。"
+        f"视觉风格：{aesthetic}，光线要让材质清晰、边缘锐利、色彩通透。"
         f"{copy_sentence}"
     )
 
@@ -4227,34 +4257,38 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
     if not _language_allows_cjk(language) and _contains_cjk(product_label):
         product_label = "the uploaded product"
     visible_text_lines = _fallback_marketing_copy_lines(plan, product_label, language)
+    visual_theme = str(plan.get("visual_theme") or "focused ecommerce visual theme").strip()
+    specific_moment = str(plan.get("specific_moment") or plan["main_scene"]).strip()
+    aesthetic = str(plan.get("aesthetic_point_of_view") or "polished commercial photography with clear material detail").strip()
+    typography_plan = str(plan.get("typography_direction") or "top-left two-line sans-serif title, first line 32px bold, second line 21px regular, dark text, about 36% image width").strip()
     prompt_parts = [
         f"Create a polished 1:1 ecommerce listing image for {product_label}.",
+        f"Visual theme: {visual_theme}.",
+        f"Specific moment: {specific_moment}.",
         f"Scene: {plan['main_scene']}.",
         f"Main action: {plan['main_action']}.",
         f"Composition: {plan['composition']}. Camera: {plan['camera']}.",
-        "Lighting: photoreal commercial lighting chosen to match the scene, with clean shadows, realistic materials, and high detail.",
-        "Use the product references to understand the product, but create a new selling composition rather than copying the source photo.",
-        "For lifestyle/use scenes, make the functional product component(s) needed for the action the hero.",
-        "If the product is a functional set with multiple co-primary usable pieces, show the natural co-use subset for the action instead of isolating only the easiest piece.",
-        "Storage cases, trays, boxes, holders, packaging, and extra kit pieces are secondary context only when they help the buyer understand the scene.",
-        "For white-background, overview, or contents slots, show the complete set clearly. For detail slots, show the component or touchpoint that proves the current buying point.",
-        "Match the visible product type, main shape, proportions, color relationships, and real parts from the supplied references.",
-        "Only render the quoted localized copy if provided; do not translate, rewrite, add, omit, or render any other text.",
-        "Keep visible copy, branding, and claims limited to confirmed product evidence and the locked localized text.",
+        f"Aesthetic direction: {aesthetic}.",
+        "Use the references only for product identity, proportions, colors, material cues, real parts, and usable components.",
     ]
     if style:
         prompt_parts.insert(4, f"Creative style to blend in: {style}.")
     if visible_text_lines:
         prompt_parts.append(
+            f"Typography plan: {typography_plan}. Place the copy as a light design layer on natural negative space with subtle translucent shadow only. "
             "Only render the quoted localized copy exactly once: "
             f"{json.dumps(visible_text_lines, ensure_ascii=False)}."
         )
+    else:
+        prompt_parts.append("No visible marketing text; let the product, action, light, and composition carry the selling point.")
     prompt = _append_visible_copy_lock(" ".join(prompt_parts), visible_text_lines)
     return _normalize_n6_prompt(
         {
             "slot_id": str(slot_input["slot_order"]),
             "main_scene": plan["main_scene"],
             "main_action": plan["main_action"],
+            "visual_theme": visual_theme,
+            "typography_plan": typography_plan,
             "display_prompt": _fallback_display_prompt(plan, visible_text_lines),
             "visible_text_lines": visible_text_lines,
             "localized_copy": {
