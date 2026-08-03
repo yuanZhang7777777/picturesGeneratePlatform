@@ -368,7 +368,7 @@ test("renders product cards with inline identity and prompt editing", async () =
   expect(screen.getByLabelText("商品名称 桌面护眼灯")).toHaveValue("桌面护眼灯");
   fireEvent.click(screen.getByRole("button", { name: "桌面护眼灯 详情" }));
   expect(screen.queryByLabelText("多图关系")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("商品身份")).toHaveValue("深蓝色灯头");
+  expect(screen.getAllByLabelText("补充信息 桌面护眼灯").some((field) => (field as HTMLTextAreaElement).value.includes("深蓝色灯头"))).toBe(true);
   expect(screen.getByLabelText("01 标准白底产品图提示词")).toHaveValue("标准白底产品图 prompt");
 });
 
@@ -376,7 +376,7 @@ test("saves the editable product brief through the cluster endpoint", async () =
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");
 
-  const brief = await screen.findByLabelText("创意 Brief 桌面护眼灯");
+  const brief = await screen.findByLabelText("补充信息 桌面护眼灯");
   fireEvent.change(brief, { target: { value: "更明亮的书桌场景" } });
   fireEvent.blur(brief);
 
@@ -411,7 +411,8 @@ test("keeps product details collapsed until requested", async () => {
   await screen.findByRole("checkbox", { name: "选择 桌面护眼灯" });
   expect(screen.queryByLabelText("商品身份")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "桌面护眼灯 详情" }));
-  expect(screen.getByLabelText("商品身份")).toHaveValue("深蓝色灯头");
+  expect(screen.queryByLabelText("商品身份")).not.toBeInTheDocument();
+  expect(screen.getAllByLabelText("补充信息 桌面护眼灯").some((field) => (field as HTMLTextAreaElement).value.includes("深蓝色灯头"))).toBe(true);
 });
 
 test("keeps an unidentified product name empty instead of inserting status text", async () => {
@@ -529,6 +530,30 @@ test("requests a new version for a successful result", async () => {
     "/api/generations/generation-1/regenerate/",
     expect.objectContaining({ method: "POST" }),
   ));
+});
+
+test("pauses one active result from the result page", async () => {
+  const activeProject = {
+    ...project,
+    skus: [{
+      ...project.skus[0],
+      outputs: [{ ...outputs[0], id: "generation-running", status: "running", reviewStatus: "pending", imageUrl: undefined }],
+    }],
+  };
+  const fetchMock = stubFetch((url) => {
+    if (url.includes("/csrf/")) return Promise.resolve(response(200, { csrf_token: "csrf-for-test" }));
+    return Promise.resolve(response(200, url.includes("/workspace/") ? { projects: [activeProject] } : activeProject));
+  });
+  renderApp("/projects/project-demo/results");
+
+  fireEvent.click(await screen.findByRole("button", { name: "暂停 标准白底产品图" }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    "/api/projects/project-demo/pause/",
+    expect.objectContaining({ method: "POST" }),
+  ));
+  const call = fetchMock.mock.calls.find(([url]) => String(url) === "/api/projects/project-demo/pause/");
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ generation_ids: ["generation-running"] });
 });
 
 test("keeps revision submission disabled until a tag or description is present", async () => {

@@ -165,6 +165,57 @@ test("prepares only selected products through the explicit preparation endpoint"
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({ cluster_ids: ["one"] });
 });
 
+test("keeps preparation click responsive while a card save is pending", async () => {
+  let releaseSave: (() => void) | undefined;
+  const fetchMock = stubFetch({ projectSnapshot: project });
+  fetchMock.mockImplementation(async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf" });
+    if (url === "/api/projects/project-1/snapshot/") return response(200, project);
+    if (url === "/api/workspace/snapshot/") return response(200, { currentUser: { role: "operator" }, projects: [project] });
+    if (url === "/api/clusters/one/") {
+      return new Promise((resolve) => {
+        releaseSave = () => resolve(response(200, { id: "one", version: 2 }));
+      });
+    }
+    if (url === "/api/projects/project-1/prepare/") return response(200, { items: [] });
+    return response(200, project);
+  });
+  renderApp();
+
+  const supplement = await screen.findByLabelText("补充信息 桌面灯");
+  fireEvent.change(supplement, { target: { value: "新的补充信息" } });
+  fireEvent.blur(supplement);
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/clusters/one/")).toBe(true));
+
+  fireEvent.click(screen.getByRole("button", { name: "预备生成（2）" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/prepare/")).toBe(true));
+  releaseSave?.();
+});
+
+test("pauses selected products from the floating action bar", async () => {
+  const fetchMock = stubFetch();
+  renderApp();
+
+  fireEvent.click(await screen.findByRole("button", { name: "暂停所选（2）" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/pause/")).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url) === "/api/projects/project-1/pause/");
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ cluster_ids: ["one", "two"] });
+});
+
+test("pauses one product from its card", async () => {
+  const fetchMock = stubFetch();
+  renderApp();
+
+  fireEvent.click(await screen.findByRole("button", { name: "暂停 桌面灯" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/pause/")).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url) === "/api/projects/project-1/pause/");
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ cluster_ids: ["one"] });
+});
+
 test("shows the add-product panel inline with organize as the primary import action", async () => {
   renderApp();
 
@@ -186,20 +237,22 @@ test("shows editable compact card fields and exact preparation progress without 
   renderApp();
 
   expect(await screen.findByLabelText("商品名称 桌面灯")).toHaveValue("桌面灯");
-  expect(screen.getByLabelText("商品平台 桌面灯")).toHaveDisplayValue("通用电商");
-  expect(screen.getByLabelText("商品国家 桌面灯")).toHaveDisplayValue("东南亚通用");
-  expect(screen.getByLabelText("创意 Brief 桌面灯")).toHaveValue("适合明亮桌面场景");
-  expect(screen.getByLabelText("单品风格 桌面灯")).toHaveValue("柔和自然光");
+  expect((screen.getByLabelText("补充信息 桌面灯") as HTMLTextAreaElement).value).toContain("适合明亮桌面场景");
+  expect((screen.getByLabelText("补充信息 桌面灯") as HTMLTextAreaElement).value).toContain("保留蓝色外壳");
+  expect(screen.getByLabelText("项目国家")).toBeInTheDocument();
+  expect(screen.queryByLabelText("商品平台 桌面灯")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("商品国家 桌面灯")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("单品风格 桌面灯")).not.toBeInTheDocument();
   expect(screen.getAllByText("正在整理商品信息 · 3/7")).toHaveLength(2);
   expect(screen.getAllByRole("progressbar", { name: "预备生成进度" })).not.toHaveLength(0);
   expect(screen.getByLabelText("商品名称 桌面灯")).toHaveAttribute("placeholder", "可不填，预备生成时识别");
   expect(screen.getByRole("button", { name: "全选" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "取消全选" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "反选" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "暂停所选（2）" })).toBeInTheDocument();
   expect(screen.getByLabelText("滚动常驻生成动作")).toHaveTextContent("预备生成（2）");
   expect(screen.getByLabelText("滚动常驻生成动作")).toHaveTextContent("正式生成（2）");
-  expect(screen.getByLabelText("商品国家 桌面灯").tagName).toBe("SELECT");
-  expect(screen.getAllByText("单品风格（选填）")).not.toHaveLength(0);
+  expect(screen.queryByText("单品风格（选填）")).not.toBeInTheDocument();
   expect(screen.queryByText("one-secret.jpg")).not.toBeInTheDocument();
   expect(screen.queryByText("generic")).not.toBeInTheDocument();
   expect(screen.queryByText("SEA")).not.toBeInTheDocument();
@@ -226,7 +279,7 @@ test("shows product name source only for AI recognition and ERP", async () => {
   expect(within(screen.getByRole("group", { name: "空来源商品 商品卡片（可拖拽合并）" })).queryByText(/AI 识别|来自 ERP/)).not.toBeInTheDocument();
 });
 
-test("accepts an arbitrary per-product market and reports mixed generation failures", async () => {
+test("reports mixed generation failures without per-product market overrides", async () => {
   const failedProject = {
     ...project,
     skus: [{
@@ -239,15 +292,10 @@ test("accepts an arbitrary per-product market and reports mixed generation failu
   const fetchMock = stubFetch({ projectSnapshot: failedProject });
   renderApp();
 
-  const market = await screen.findByLabelText("商品国家 桌面灯");
-  fireEvent.change(market, { target: { value: "US" } });
-  fireEvent.blur(market);
-
-  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/clusters/one/")).toBe(true));
-  const call = fetchMock.mock.calls.find(([url]) => String(url) === "/api/clusters/one/");
-  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ market_override: "US" });
+  await screen.findByLabelText("商品名称 桌面灯");
   expect(screen.getByText(/有 2 张失败/)).toHaveTextContent("出图已结束 · 7/9 · 有 2 张失败");
   expect(screen.queryByText(/预备完成/)).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/clusters/one/")).toBe(false);
 });
 
 test("hides technical preparation errors from operators", async () => {
@@ -283,7 +331,7 @@ test("shows AI-recognized English product info as Chinese operator text", async 
 
   const card = await screen.findByRole("group", { name: /木柄餐具套装 商品卡片/ });
   expect(within(card).getByLabelText("商品名称 木柄餐具套装")).toHaveValue("木柄餐具套装");
-  expect(within(card).getByLabelText("创意 Brief 木柄餐具套装")).toHaveValue("木柄餐具套装");
+  expect((within(card).getByLabelText("补充信息 木柄餐具套装") as HTMLTextAreaElement).value).toContain("木柄餐具套装");
   expect(within(card).queryByDisplayValue(/Copper-bowl|visible wooden/i)).not.toBeInTheDocument();
 });
 
@@ -292,8 +340,9 @@ test("opens one product in a fixed side panel and consumes the first outside cli
 
   fireEvent.click(await screen.findByRole("button", { name: "桌面灯 详情" }));
   expect(screen.getByRole("dialog", { name: "桌面灯 商品详情" })).toBeInTheDocument();
-  expect(screen.getByLabelText("商品身份")).toHaveValue("保留蓝色外壳");
-  expect(screen.getByLabelText("主要外观")).toHaveValue("蓝色折叠结构");
+  expect((screen.getAllByLabelText("补充信息 桌面灯")[0] as HTMLTextAreaElement).value).toContain("适合明亮桌面场景");
+  expect(screen.queryByLabelText("商品身份")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("主要外观")).not.toBeInTheDocument();
   expect(screen.getByText("01 标准白底产品图提示词")).toBeInTheDocument();
   expect(screen.getByText("02 核心卖点图提示词")).toBeInTheDocument();
   expect(screen.queryByText(/第 1 张输出图提示词/)).not.toBeInTheDocument();

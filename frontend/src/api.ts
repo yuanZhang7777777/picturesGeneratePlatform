@@ -270,6 +270,16 @@ export function generateProject(projectId: string, input: { clusterIds: string[]
   });
 }
 
+export function pauseProject(projectId: string, input: { clusterIds?: string[]; generationIds?: string[] }) {
+  const body: { cluster_ids?: string[]; generation_ids?: string[] } = {};
+  if (input.clusterIds?.length) body.cluster_ids = input.clusterIds;
+  if (input.generationIds?.length) body.generation_ids = input.generationIds;
+  return jsonRequest(`/api/projects/${projectId}/pause/`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function preflightProject(projectId: string): Promise<PreflightResult> {
   const result = await jsonRequest<PreflightResult>(`/api/projects/${projectId}/preflight/`, { method: "POST", body: "{}" });
   return {

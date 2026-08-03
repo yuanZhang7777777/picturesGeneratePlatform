@@ -1,4 +1,4 @@
-"""Prompt OS v3 production system prompts and strict output schemas."""
+"""Prompt OS 4.1 production system prompts and strict output schemas."""
 
 
 def _object(properties, *, required=None):
@@ -27,7 +27,7 @@ MARKETING_STRATEGY_MODES = [
     "personification",
     "identity_signal",
 ]
-PROMPT_OS_VERSION = "3.1.0"
+PROMPT_OS_VERSION = "4.1.0"
 NODE_TEMPERATURES = {
     "N2": 0.3,
     "N3": 0.2,
@@ -243,12 +243,57 @@ CREATIVE_STRATEGY_SCHEMA = _object(
     }
 )
 
+SUBJECT_PLAN_SCHEMA = _object(
+    {
+        "product_scope": STRING,
+        "visible_unit_count": STRING,
+        "person_presence": STRING,
+        "usage_relationship": STRING,
+        "reason": STRING,
+    }
+)
+
+COMPOSITION_PLAN_SCHEMA = _object(
+    {
+        "canvas": STRING,
+        "camera": STRING,
+        "shot_scale": STRING,
+        "subject_share": STRING,
+        "text_area": STRING,
+        "diversity_signature": STRING,
+    }
+)
+
+STYLE_PLAN_SCHEMA = _object(
+    {
+        "lighting": STRING,
+        "material_focus": STRING,
+        "palette": STRING,
+        "props": STRING_ARRAY,
+    }
+)
+
+COPYWRITING_CHAIN_SCHEMA = _object(
+    {
+        "raw_fact": STRING,
+        "feature": STRING,
+        "advantage": STRING,
+        "user_result": STRING,
+        "use_scene": STRING,
+        "emotion_hook": STRING,
+        "copy_angle": STRING,
+        "source_fact_refs": STRING_ARRAY,
+        "risk_note": STRING,
+    }
+)
+
 SLOT_PLAN_SCHEMA = _object(
     {
         "slot_order": INTEGER,
         "role": STRING,
         "appearance_ids": STRING_ARRAY,
         "creative_strategy": CREATIVE_STRATEGY_SCHEMA,
+        "copywriting_chain": COPYWRITING_CHAIN_SCHEMA,
         "scene_family": STRING,
         "environment": STRING,
         "camera": STRING,
@@ -256,6 +301,10 @@ SLOT_PLAN_SCHEMA = _object(
         "specific_moment": STRING,
         "aesthetic_point_of_view": STRING,
         "typography_direction": STRING,
+        "text_layout_theme": STRING,
+        "subject_plan": SUBJECT_PLAN_SCHEMA,
+        "composition_plan": COMPOSITION_PLAN_SCHEMA,
+        "style_plan": STYLE_PLAN_SCHEMA,
         "decision_task": STRING,
         "conversion_goal": STRING,
         "fact_refs": STRING_ARRAY,
@@ -296,6 +345,7 @@ N6_SCHEMA = _object(
         "main_scene": STRING,
         "main_action": STRING,
         "visual_theme": STRING,
+        "text_layout_theme": STRING,
         "typography_plan": STRING,
         "display_prompt": STRING,
         "visible_text_lines": STRING_ARRAY,
@@ -525,6 +575,10 @@ N5_CORE = """
 2. specific_moment 写清画面发生的那一秒：谁或什么在场、商品哪个部件正在参与什么动作、动作解决哪个购买疑虑。不能写“选择一个使用瞬间”“根据品类决定场景”。
 3. aesthetic_point_of_view 写清图片设计师自己的风格取向：色彩气质、光线、材质重点、景别和空间情绪。它可以有品味和创意，但不能改商品事实。
 4. typography_direction 写清营销文字如何服务主题：语言方向、标题/副标题层级、字体气质、字号关系、位置、占画面比例、颜色、是否有轻阴影或半透明柔光。营销文字必须贴合当前 visual_theme 和 specific_moment，不能八张图共用一组泛用短句；不要规划大块实心色块或笨重标签背景。
+5. text_layout_theme 写一个图片设计师会执行的版式主题，可参考 premium_whisper、clean_benefit_stack、soft_family_label、tech_spec_edge、deal_pop_corner、lifestyle_caption_float、feature_callout_pin、youth_sticker_light，也可以按商品创造更合适的主题。它不是死模板，必须服务当前商品和画面瞬间。
+6. subject_plan 必须说明 product_scope、visible_unit_count、person_presence、usage_relationship 和 reason。参考图里有多个重复商品实例时，不等于每张图都要全部出现；白底、总览、包装/包含物确认图可展示完整数量，情绪、细节、使用和场景图应只展示当前槽位需要的商品实例。上传玩偶图里有三只，不代表每张营销图都必须三只；单体陪伴、细节或情绪图可以只规划一个代表性玩偶。
+7. composition_plan 必须把 canvas、camera、shot_scale、subject_share、text_area、diversity_signature 写清楚。文字区域一般占画面 8%–18%，标题高度约 6%–10%，副标题约 3%–5%，边距约 5%–7%；文字应以 transparent text overlay、轻阴影、空气感留白或自然浅色区域融入画面，no solid banner，不做大块方形底色。
+8. style_plan 必须说明 lighting、material_focus、palette 和 props，让 N6 能写出内容、灯光、质感和构图，而不是“真实使用瞬间”这类空话。copywriting_chain 必须从商品事实推到用户结果：raw_fact → feature → advantage → user_result → use_scene → emotion_hook → copy_angle，并写 source_fact_refs 与 risk_note。
 
 # 场景、人物和宠物动态规则
 1. 每槽只有一个 main_scene 和一个 main_action；静态展示使用 none。人物、手、儿童或宠物不是默认装饰，也不是一律禁止，必须由 verified_use_relationships、目标消费者和规则共同决定。
@@ -570,6 +624,7 @@ N6_CORE = """
 你是本地化单槽图片 Prompt 编译器。一次只编译一个营销槽位，将 N5 的中文营销策划、商品身份、事实台账、市场上下文、规则指令与参考图计划压缩为严格 JSON。display_prompt 是给中国运营看的中文画面策划稿，可直接在前端编辑；prompt 是在 display_prompt 确认后编译出的英文 gpt-image-2 生图指令。你不重新策划八图、不创建事实、不改变槽位职责。
 display_prompt 必须是给中国运营和图片模型都能直接使用的“中文广告图导演稿”，不是策略说明、字段摘要或防错清单。用自然段写成最终画面提示词，覆盖画面内容、商品呈现、人物/空间关系、镜头构图、光线、材质、色彩、版式文字和购买情绪。必须吸收 slot_plan.visual_theme、specific_moment、aesthetic_point_of_view 和 typography_direction；图片设计师可以在不改商品事实的前提下形成自己的风格主题、色彩品味和版式节奏。不要用“主体：”“动作：”“构图：”“本图防错：”“购买任务：”“用户价值：”“场景代入：”这类字段标签；不要写英文字段名、模型内部说明、英文生图指令、负向清单或“文字不遮挡/预留安全区”。
 typography_plan 必须精确到可执行版式：可见文字的语言、每行内容、位置、字体气质、字号层级、行距、颜色、占画面比例以及背景处理方式。允许轻微阴影、半透明柔光或自然浅色区域增强可读性；不要把文字放进大块实心矩形色块。display_prompt 中的营销文字必须贴合当前 visual_theme 和 specific_moment。
+text_layout_theme 必须继承 slot_plan，可使用 premium_whisper、clean_benefit_stack、soft_family_label、tech_spec_edge、deal_pop_corner、lifestyle_caption_float、feature_callout_pin、youth_sticker_light 或更贴合商品的自创主题。最终英文 prompt 的文字段落要写明 transparent text overlay, no solid banner, mobile-readable typography，并给出位置、字号层级、颜色、行距和约占画面比例。
 
 # 输入优先级与冲突修正
 优先级依次为：系统安全与硬规则；identity_lock；confirmed 事实与已验证真实使用关系；当前 slot_plan 的购买决策；允许用途匹配的 observed/inferred；抽象风格。当前计划若与更高优先级冲突，静默纠正并在 trace 中保留使用的真实 ID，不得保留错误摆法、错误数量或虚构卖点。
@@ -581,6 +636,7 @@ typography_plan 必须精确到可执行版式：可见文字的语言、每行�
 4. 对围绕主体重复排列或容易被复制的数量关键部件，用正向方式描述一对一连接拓扑：Each visible component aligns with one visible attachment point on the main body, in a clean one-to-one layout. 主体连接位数量、对应部件数量和连接关系一致；不要把错误连接方式写进最终图像 Prompt。
 5. 当前画面需要完整核对数量时，采用部件彼此分离、便于计数的正面、俯视或三分之四机位，避免严重遮挡、重叠和极端透视。数量核对优先于强行显示每个端点；不得为了“全显”违反自然遮挡或补画结构。
 6. 对套装、组合、收纳盒、托盘、包装或配件：白底、总览和包含物槽位可展示完整套装；真实使用、生活方式、情绪和细节槽位应让当前动作需要的功能部件成为主角。若多个核心件共同完成一个自然用途，最终 Prompt 要正向写出这些核心件如何共同参与动作；若当前槽位只需要一个子集，也要保证它是合理使用子集，而不是只挑最显眼单件。收纳盒、托盘、包装和额外配件只在帮助理解使用、携带、收纳或下单内容时作为辅助上下文，不要让它们自动出现在每张营销图中。
+7. 若参考图里出现多个重复商品实例，按 slot_plan.subject_plan.visible_unit_count 执行：只展示当前槽位需要的商品实例；单体情绪、单体细节和单体使用图可以只展示一个代表性商品，只有总览、包含物和数量确认图才展示全部实例。
 
 # 真实使用关系、人物和宠物
 1. 第二段写 verified real-world usage relationship：商品与人物、身体部位、手、宠物、承载面、安装位置或配套物体之间已验证的佩戴、接触、握持、悬挂、收纳、放置、朝向、接触点和受力关系，并用正向方式写清正确摆放。

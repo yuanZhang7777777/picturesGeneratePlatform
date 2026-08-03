@@ -2561,6 +2561,20 @@ def _sanitize_image_prompt_language(prompt, language):
     return _CJK_RUN_RE.sub("the uploaded product", prompt)
 
 
+def _limit_generation_prompt(prompt, visible_text_lines, limit=3500):
+    prompt = str(prompt or "").strip()
+    if len(prompt) <= limit:
+        return prompt
+    tail = (
+        "Only render these exact quoted visible text lines once: "
+        f"{json.dumps(visible_text_lines, ensure_ascii=False)}"
+        if visible_text_lines
+        else "Do not render any new text, title, product name, label, caption, watermark, or random characters."
+    )
+    head_limit = max(0, limit - len(tail) - 1)
+    return f"{prompt[:head_limit].rstrip()} {tail}".strip()
+
+
 def compile_slot_prompt(
     cluster,
     slot,
@@ -2680,6 +2694,7 @@ def compile_slot_prompt(
     }
     prompt, input_snapshot = apply_standard_product_hero_policy(slot, "\n".join(prompt_lines), input_snapshot)
     prompt = _sanitize_image_prompt_language(prompt, language)
+    prompt = _limit_generation_prompt(prompt, visible_text_lines)
     gate = evaluate_prompt_rule_gate(
         batch,
         slot,
@@ -3715,6 +3730,119 @@ def _normalize_creative_strategy(plan, fact_ids, index):
     return normalized
 
 
+_TEXT_LAYOUT_THEMES = (
+    "premium_whisper",
+    "clean_benefit_stack",
+    "soft_family_label",
+    "tech_spec_edge",
+    "deal_pop_corner",
+    "lifestyle_caption_float",
+    "feature_callout_pin",
+    "youth_sticker_light",
+)
+
+_GENERIC_DISPLAY_PROMPT_MARKERS = (
+    "画面围绕参考图",
+    "生活里的小任务",
+    "选择一个使用瞬间",
+    "selected from the product category",
+    "one visible detail answers",
+    "用一个清楚的使用瞬间",
+)
+
+
+def _fallback_text_layout_theme(index):
+    return _TEXT_LAYOUT_THEMES[index % len(_TEXT_LAYOUT_THEMES)]
+
+
+def _display_prompt_is_generic(value):
+    text = str(value or "").strip()
+    folded = text.casefold()
+    return not text or len(text) < 100 or any(marker.casefold() in folded for marker in _GENERIC_DISPLAY_PROMPT_MARKERS)
+
+
+def _normalize_subject_plan(plan):
+    value = plan.get("subject_plan")
+    if not isinstance(value, dict):
+        value = {}
+    value = copy.deepcopy(value)
+    defaults = {
+        "product_scope": plan.get("subject_relationship") or "当前槽位需要的商品主体或合理子集",
+        "visible_unit_count": "按当前槽位购买问题展示商品数量；总览/包含物显示完整，单体情绪、使用或细节图可只展示一个代表性商品",
+        "person_presence": "按真实使用关系决定是否出现人物、手部或宠物",
+        "usage_relationship": plan.get("subject_relationship") or "商品按真实用途、接触点和支撑关系参与画面",
+        "reason": plan.get("decision_task") or "商品数量和人物关系服务当前购买决策",
+    }
+    for field, fallback in defaults.items():
+        value[field] = str(value.get(field) or fallback).strip()
+    return value
+
+
+def _normalize_composition_plan(plan):
+    value = plan.get("composition_plan")
+    if not isinstance(value, dict):
+        value = {}
+    value = copy.deepcopy(value)
+    defaults = {
+        "canvas": "1:1 方形",
+        "camera": plan.get("camera") or "清楚的商业摄影机位",
+        "shot_scale": plan.get("composition") or "商品占主要视觉重量",
+        "subject_share": "商品约占画面 50%–70%，按槽位信息层级调整",
+        "text_area": "文字约占画面 8%–18%，落在自然浅色区域、空气感留白或柔焦空间",
+        "diversity_signature": " / ".join(
+            str(plan.get(field) or "").strip()
+            for field in ("decision_task", "main_scene", "main_action", "camera")
+            if str(plan.get(field) or "").strip()
+        )
+        or "当前槽位独立构图签名",
+    }
+    for field, fallback in defaults.items():
+        value[field] = str(value.get(field) or fallback).strip()
+    return value
+
+
+def _normalize_style_plan(plan):
+    value = plan.get("style_plan")
+    if not isinstance(value, dict):
+        value = {}
+    value = copy.deepcopy(value)
+    defaults = {
+        "lighting": plan.get("aesthetic_point_of_view") or "真实商业摄影柔光",
+        "material_focus": plan.get("subject_relationship") or "商品可见材质与关键结构清楚",
+        "palette": plan.get("aesthetic_point_of_view") or "色彩服务当前购买情绪",
+    }
+    for field, fallback in defaults.items():
+        value[field] = str(value.get(field) or fallback).strip()
+    value["props"] = _string_list(value.get("props"))
+    return value
+
+
+def _normalize_copywriting_chain(plan, fact_ids):
+    value = plan.get("copywriting_chain")
+    if not isinstance(value, dict):
+        value = {}
+    value = copy.deepcopy(value)
+    strategy = plan.get("creative_strategy") if isinstance(plan.get("creative_strategy"), dict) else {}
+    defaults = {
+        "raw_fact": "; ".join(plan.get("fact_refs", [])) or plan.get("decision_task") or "商品事实",
+        "feature": strategy.get("feature") or plan.get("subject_relationship") or "商品可见特征",
+        "advantage": strategy.get("advantage") or plan.get("decision_task") or "购买理解更清楚",
+        "user_result": strategy.get("consumer_benefit") or plan.get("copy_intent") or plan.get("conversion_goal") or "买家更快理解商品价值",
+        "use_scene": strategy.get("mental_simulation") or plan.get("main_scene") or "当前画面场景",
+        "emotion_hook": strategy.get("emotional_shift") or plan.get("copy_intent") or "从犹豫到更有把握",
+        "copy_angle": plan.get("copy_intent") or strategy.get("selection_reason") or plan.get("decision_task") or "贴合当前主题的短标题角度",
+        "risk_note": "只使用已确认或允许的低风险商品事实",
+    }
+    for field, fallback in defaults.items():
+        value[field] = str(value.get(field) or fallback).strip()
+    refs = _required_string_list({"source_fact_refs": value.get("source_fact_refs") or plan.get("fact_refs", [])}, "source_fact_refs")
+    unknown_refs = [ref for ref in refs if ref not in fact_ids]
+    if unknown_refs:
+        raise ValueError("copywriting_chain source_fact_refs contains an unknown fact reference")
+    value["source_fact_refs"] = refs
+    return value
+
+
 def _validate_marketing_strategy_distribution(plans):
     if not plans:
         return
@@ -3751,6 +3879,7 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
         "specific_moment",
         "aesthetic_point_of_view",
         "typography_direction",
+        "text_layout_theme",
     )
     required_lists = (
         "fact_refs",
@@ -3768,6 +3897,7 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
         plan.setdefault("specific_moment", plan.get("main_action") or plan.get("main_scene") or f"第 {slot.order} 张商品画面瞬间")
         plan.setdefault("aesthetic_point_of_view", "真实商业摄影，光线、色彩、材质和空间层次服务当前购买理由")
         plan.setdefault("typography_direction", "左上角两行目标语言标题，第一行 32px 粗体无衬线，第二行 21px 常规无衬线，深色文字，宽度约画面 36%")
+        plan.setdefault("text_layout_theme", _fallback_text_layout_theme(index))
         for field in required_strings:
             plan[field] = _required_string(plan, field)
         if not isinstance(plan.get("copy_intent"), str):
@@ -3788,6 +3918,10 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
             set(fact_ids),
             index,
         )
+        plan["subject_plan"] = _normalize_subject_plan(plan)
+        plan["composition_plan"] = _normalize_composition_plan(plan)
+        plan["style_plan"] = _normalize_style_plan(plan)
+        plan["copywriting_chain"] = _normalize_copywriting_chain(plan, set(fact_ids))
         covered_appearance_ids.update(appearance_ids)
         normalized.append(plan)
     if target_appearance_ids - covered_appearance_ids:
@@ -3812,7 +3946,10 @@ def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
         payload["visual_theme"] = payload.get("main_scene") or "当前商品营销主题"
     if not str(payload.get("typography_plan") or "").strip():
         payload["typography_plan"] = "左上角两行目标语言标题，第一行 32px 粗体无衬线，第二行 21px 常规无衬线，深色文字，宽度约画面 36%"
+    if not str(payload.get("text_layout_theme") or "").strip():
+        payload["text_layout_theme"] = _fallback_text_layout_theme(max(0, int(slot_order) - 2))
     normalized["visual_theme"] = _required_string(payload, "visual_theme")
+    normalized["text_layout_theme"] = _required_string(payload, "text_layout_theme")
     normalized["typography_plan"] = _required_string(payload, "typography_plan")
     localized_copy = payload.get("localized_copy")
     if not isinstance(localized_copy, dict):
@@ -3864,6 +4001,16 @@ def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
             normalized["prompt"] = normalized["prompt"].replace(line, "")
     if localized_copy["lines"] != normalized["visible_text_lines"]:
         raise ValueError("localized_copy lines must match visible_text_lines")
+    if _display_prompt_is_generic(normalized["display_prompt"]):
+        prompt_plan = {
+            **payload,
+            "slot_order": slot_order,
+            "typography_direction": normalized["typography_plan"],
+        }
+        normalized["display_prompt"] = _fallback_display_prompt(
+            prompt_plan,
+            normalized["visible_text_lines"],
+        )
     normalized["prompt"] = _append_visible_copy_lock(
         normalized["prompt"],
         normalized["visible_text_lines"],
@@ -4198,27 +4345,33 @@ def _fallback_marketing_copy_lines(plan, product_name, language):
 
 
 def _fallback_display_prompt(plan, visible_text_lines):
-    slot_order = int(plan.get("slot_order") or 2)
+    slot_order = int(plan.get("slot_order") or plan.get("slot_id") or 2)
     visual_theme = str(plan.get("visual_theme") or f"第 {slot_order} 张营销主题").strip()
     specific_moment = str(plan.get("specific_moment") or plan.get("main_scene") or "商品处在一个明确的购买决策瞬间").strip()
     aesthetic = str(plan.get("aesthetic_point_of_view") or "真实商业摄影，光线、色彩和材质都服务当前购买理由").strip()
     typography = str(plan.get("typography_direction") or "左上角两行目标语言标题，第一行 32px 粗体无衬线，第二行 21px 常规无衬线，深色文字，宽度约画面 36%").strip()
     main_scene = str(plan.get("main_scene") or "简洁商业摄影场景").strip()
     main_action = str(plan.get("main_action") or "none").strip()
-    composition = str(plan.get("composition") or "商品占画面主要视觉重量，前景、中景和背景形成清楚层次").strip()
-    camera = str(plan.get("camera") or "中近景三分之四视角").strip()
+    subject_plan = _normalize_subject_plan(plan)
+    composition_plan = _normalize_composition_plan(plan)
+    style_plan = _normalize_style_plan(plan)
+    text_layout_theme = str(plan.get("text_layout_theme") or _fallback_text_layout_theme(max(0, slot_order - 2))).strip()
+    composition = str(plan.get("composition") or composition_plan["shot_scale"]).strip()
+    camera = str(plan.get("camera") or composition_plan["camera"]).strip()
+    props = "、".join(style_plan["props"])
+    props_sentence = f"道具只安排{props}来托住购买情境。" if props else "道具保持克制，只服务商品和购买情境。"
     copy = "、".join(f"“{line}”" for line in visible_text_lines)
     copy_sentence = (
-        f"画面文字使用{copy}，排版方案为：{typography}；文字直接落在自然浅色背景、空气感留白或柔焦空间里，只用轻微半透明阴影增强可读性。"
+        f"画面文字使用{copy}，版式主题为 {text_layout_theme}，排版方案为：{typography}；文字以透明叠字融入{composition_plan['text_area']}，用轻微半透明阴影增强可读性。"
         if copy
-        else f"画面不放可见营销文字，仍按{typography}的版式节奏组织留白，让商品、动作和光影完成转化。"
+        else f"画面不放可见营销文字，仍按 {text_layout_theme} 与{typography}的版式节奏组织留白，让商品、动作和光影完成转化。"
     )
     return (
         f"生成一张 1:1 Shopee 商品营销图，视觉主题是“{visual_theme}”。"
         f"画面瞬间：{specific_moment}。主场景为{main_scene}，主要动作是{main_action}。"
-        f"商品呈现保持参考图里的真实外形、颜色比例、材质质感和关键结构，并在这个瞬间里承担购买理由。"
-        f"镜头采用{camera}，构图为{composition}。"
-        f"视觉风格：{aesthetic}，光线要让材质清晰、边缘锐利、色彩通透。"
+        f"商品呈现为{subject_plan['product_scope']}，{subject_plan['visible_unit_count']}，{subject_plan['usage_relationship']}，这样做是因为{subject_plan['reason']}。"
+        f"人物或手部关系：{subject_plan['person_presence']}。镜头采用{camera}，{composition_plan['canvas']}，景别为{composition_plan['shot_scale']}，商品视觉占比为{composition_plan['subject_share']}，构图为{composition}。"
+        f"视觉风格：{aesthetic}；光线为{style_plan['lighting']}，材质重点是{style_plan['material_focus']}，配色为{style_plan['palette']}。{props_sentence}"
         f"{copy_sentence}"
     )
 
@@ -4261,13 +4414,20 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
     specific_moment = str(plan.get("specific_moment") or plan["main_scene"]).strip()
     aesthetic = str(plan.get("aesthetic_point_of_view") or "polished commercial photography with clear material detail").strip()
     typography_plan = str(plan.get("typography_direction") or "top-left two-line sans-serif title, first line 32px bold, second line 21px regular, dark text, about 36% image width").strip()
+    text_layout_theme = str(plan.get("text_layout_theme") or _fallback_text_layout_theme(max(0, int(slot_input["slot_order"]) - 2))).strip()
+    subject_plan = _normalize_subject_plan(plan)
+    composition_plan = _normalize_composition_plan(plan)
+    style_plan = _normalize_style_plan(plan)
+    props = ", ".join(style_plan["props"]) if style_plan["props"] else "only restrained props that support the buying moment"
     prompt_parts = [
         f"Create a polished 1:1 ecommerce listing image for {product_label}.",
         f"Visual theme: {visual_theme}.",
         f"Specific moment: {specific_moment}.",
+        f"Product scope for this slot: {subject_plan['product_scope']}. Visible unit count: {subject_plan['visible_unit_count']}. Usage/contact relationship: {subject_plan['usage_relationship']}.",
         f"Scene: {plan['main_scene']}.",
         f"Main action: {plan['main_action']}.",
-        f"Composition: {plan['composition']}. Camera: {plan['camera']}.",
+        f"Composition: {composition_plan['canvas']}; {composition_plan['camera']}; {composition_plan['shot_scale']}; subject share {composition_plan['subject_share']}; text area {composition_plan['text_area']}. Camera: {plan['camera']}.",
+        f"Lighting: {style_plan['lighting']}. Material focus: {style_plan['material_focus']}. Palette: {style_plan['palette']}. Props: {props}.",
         f"Aesthetic direction: {aesthetic}.",
         "Use the references only for product identity, proportions, colors, material cues, real parts, and usable components.",
     ]
@@ -4275,7 +4435,7 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
         prompt_parts.insert(4, f"Creative style to blend in: {style}.")
     if visible_text_lines:
         prompt_parts.append(
-            f"Typography plan: {typography_plan}. Place the copy as a light design layer on natural negative space with subtle translucent shadow only. "
+            f"Text layout theme: {text_layout_theme}. Typography plan: {typography_plan}. Use transparent text overlay, no solid banner, mobile-readable typography on natural negative space with subtle translucent shadow only. "
             "Only render the quoted localized copy exactly once: "
             f"{json.dumps(visible_text_lines, ensure_ascii=False)}."
         )
@@ -4288,6 +4448,7 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
             "main_scene": plan["main_scene"],
             "main_action": plan["main_action"],
             "visual_theme": visual_theme,
+            "text_layout_theme": text_layout_theme,
             "typography_plan": typography_plan,
             "display_prompt": _fallback_display_prompt(plan, visible_text_lines),
             "visible_text_lines": visible_text_lines,
@@ -4609,10 +4770,11 @@ def _n5_consumer_context(identity, observations, product_facts):
         "",
     )
     observed_facts = _target_observed_product_facts(observations, identity)
+    combined_facts = list(dict.fromkeys([*_fact_text_items(product_facts), *observed_facts]))
     return {
         "target_consumer": str(target_consumer or ""),
         "verified_use_relationships": _string_list(profile.get("verified_use_relationships")),
-        "product_facts": _fact_text_items(product_facts) or list(dict.fromkeys(observed_facts)),
+        "product_facts": combined_facts,
         "product_category": str(_clean_schema_placeholder(profile.get("category")) or ""),
         "primary_appearance": str(_clean_schema_placeholder(profile.get("primary_appearance")) or ""),
     }
@@ -7229,6 +7391,13 @@ def generation_worker_batch_size(requested):
     return min(requested, max(1, active_limit - active_count))
 
 
+def _generation_was_canceled(generation):
+    if not Generation.objects.filter(id=generation.id, status=Generation.Status.CANCELED).exists():
+        return False
+    generation.batch.recompute_status()
+    return True
+
+
 def _active_generation_user_counts():
     user_ids = Generation.objects.filter(
         status__in=PROVIDER_ACTIVE_GENERATION_STATUSES,
@@ -7281,10 +7450,14 @@ def process_generation_once(client=None, storage=None):
         try:
             queued = _seal_generation_submission(queued.id)
         except (TypeError, ValueError, PromptVersion.DoesNotExist) as exc:
+            if _generation_was_canceled(queued):
+                return 1
             queued.status = Generation.Status.FAILED
             queued.failure_reason = f"submission readiness: {_sanitize_provider_text(str(exc))}"
             queued.save(update_fields=["status", "failure_reason", "updated_at"])
             queued.batch.recompute_status()
+            return 1
+        if _generation_was_canceled(queued):
             return 1
         try:
             if isinstance(client, APIMartClient):
@@ -7304,16 +7477,22 @@ def process_generation_once(client=None, storage=None):
                         image_paths,
                     )
         except SubmitUnknown as exc:
+            if _generation_was_canceled(queued):
+                return 1
             queued.status = Generation.Status.SUBMIT_UNKNOWN
             queued.failure_reason = str(exc)
             queued.save(update_fields=["status", "failure_reason", "updated_at"])
             queued.batch.recompute_status()
             return 1
         except Exception as exc:
+            if _generation_was_canceled(queued):
+                return 1
             queued.status = Generation.Status.FAILED
             queued.failure_reason = str(exc)
             queued.save(update_fields=["status", "failure_reason", "updated_at"])
             queued.batch.recompute_status()
+            return 1
+        if _generation_was_canceled(queued):
             return 1
         queued.provider_task_id = task_id
         queued.status = Generation.Status.SUBMITTED
@@ -7336,6 +7515,8 @@ def process_generation_once(client=None, storage=None):
 
     payload = client.get_task(active.provider_task_id)
     provider_status = _normalize_provider_status(payload)
+    if _generation_was_canceled(active):
+        return 1
     if provider_status == Generation.Status.PROCESSING:
         active.status = Generation.Status.PROCESSING
         active.provider_payload = _provider_payload_with(
@@ -7371,6 +7552,8 @@ def process_generation_once(client=None, storage=None):
     active.save(update_fields=["status", "provider_payload", "updated_at"])
     urls = _image_urls(payload)
     if not urls:
+        if _generation_was_canceled(active):
+            return 1
         active.status = Generation.Status.FAILED
         active.failure_reason = "provider completed without image URL"
         active.save(update_fields=["status", "failure_reason", "updated_at"])
@@ -7378,6 +7561,8 @@ def process_generation_once(client=None, storage=None):
         return 1
     for url in urls:
         storage.archive_result(active, url, client.download_image(url))
+    if _generation_was_canceled(active):
+        return 1
     active.status = Generation.Status.COMPLETED
     active.completed_at = timezone.now()
     active.save(update_fields=["status", "completed_at", "updated_at"])
@@ -7598,11 +7783,98 @@ ACTIVE_GENERATION_STATUSES = {
     Generation.Status.ARCHIVING,
     Generation.Status.SUBMIT_UNKNOWN,
 }
+PAUSABLE_PREPARATION_STATUSES = {
+    Cluster.PreparationStatus.PENDING,
+    Cluster.PreparationStatus.PREPARING,
+}
+PAUSABLE_GENERATION_STATUSES = {
+    Generation.Status.QUEUED,
+    Generation.Status.PREPARING,
+    Generation.Status.SUBMITTING,
+    Generation.Status.SUBMITTED,
+    Generation.Status.PROCESSING,
+    Generation.Status.ARCHIVING,
+}
 FOLLOWUP_SOURCE_STATUSES = {
     Generation.Status.COMPLETED,
     Generation.Status.FAILED,
     Generation.Status.CANCELED,
 }
+
+
+@transaction.atomic
+def pause_project_work(batch, *, cluster_ids=None, generation_ids=None):
+    cluster_ids = [str(value) for value in (cluster_ids or [])]
+    generation_ids = [str(value) for value in (generation_ids or [])]
+    if not cluster_ids and not generation_ids:
+        raise ValueError("cluster_ids or generation_ids is required")
+
+    locked_batch = Batch.objects.select_for_update().get(id=batch.id)
+    unique_cluster_ids = list(dict.fromkeys(cluster_ids))
+    unique_generation_ids = list(dict.fromkeys(generation_ids))
+    clusters = list(
+        Cluster.objects.select_for_update().filter(
+            batch_id=locked_batch.id,
+            id__in=unique_cluster_ids,
+            archived_at__isnull=True,
+        )
+    )
+    clusters_by_id = {str(cluster.id): cluster for cluster in clusters}
+    cluster_items = []
+    for cluster_id in unique_cluster_ids:
+        cluster = clusters_by_id.get(cluster_id)
+        if cluster is None:
+            cluster_items.append({"cluster_id": cluster_id, "status": "not_found"})
+            continue
+        if cluster.preparation_status in PAUSABLE_PREPARATION_STATUSES:
+            snapshot = copy.deepcopy(cluster.analysis_snapshot) if isinstance(cluster.analysis_snapshot, dict) else {}
+            snapshot["_preparation_revision"] = _preparation_revision(snapshot) + 1
+            cluster.analysis_snapshot = snapshot
+            cluster.preparation_status = Cluster.PreparationStatus.DRAFT
+            cluster.preparation_error = ""
+            cluster.preparation_stage = "draft"
+            cluster.preparation_current = 0
+            cluster.preparation_total = 7
+            cluster.auto_generate = False
+            cluster.save(
+                update_fields=[
+                    "analysis_snapshot",
+                    "preparation_status",
+                    "preparation_error",
+                    "preparation_stage",
+                    "preparation_current",
+                    "preparation_total",
+                    "auto_generate",
+                    "updated_at",
+                ]
+            )
+            cluster_items.append({"cluster_id": cluster_id, "status": "paused"})
+        else:
+            cluster_items.append({"cluster_id": cluster_id, "status": "idle"})
+
+    generation_filter = Q()
+    if unique_cluster_ids:
+        generation_filter |= Q(cluster_id__in=unique_cluster_ids)
+    if unique_generation_ids:
+        generation_filter |= Q(id__in=unique_generation_ids)
+    generations = list(
+        Generation.objects.select_for_update().filter(
+            generation_filter,
+            batch_id=locked_batch.id,
+            cluster__archived_at__isnull=True,
+            status__in=PAUSABLE_GENERATION_STATUSES,
+        )
+    )
+    generation_items = []
+    for generation in generations:
+        generation.status = Generation.Status.CANCELED
+        generation.failure_reason = "Paused by operator"
+        generation.save(update_fields=["status", "failure_reason", "updated_at"])
+        generation_items.append({"generation_id": str(generation.id), "status": generation.status})
+
+    if generation_items:
+        locked_batch.recompute_status()
+    return {"clusters": cluster_items, "generations": generation_items}
 
 
 @transaction.atomic

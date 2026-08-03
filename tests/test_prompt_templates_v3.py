@@ -25,7 +25,7 @@ EXPECTED_NODE_NAMES = {
     "N7.tiktok",
 }
 
-PROMPT_OS_VERSION = "3.1.0"
+PROMPT_OS_VERSION = "4.1.0"
 MARKETING_MODES = {
     "fab_value",
     "scene_ownership",
@@ -128,11 +128,12 @@ def test_generic_sea_is_an_english_one_plus_eight_strategy_not_a_fallback():
 
 
 def test_v3_output_schemas_are_strict_and_match_seed_source_and_runtime():
-    from platform_app.prompt_templates_v3 import PROMPT_TEMPLATES
+    from platform_app.prompt_templates_v3 import PROMPT_OS_VERSION as SOURCE_VERSION, PROMPT_TEMPLATES
     from platform_app.services import _prompt_node_contract
 
     call_command("seed_platform_templates")
 
+    assert SOURCE_VERSION == PROMPT_OS_VERSION
     assert set(PROMPT_TEMPLATES) == EXPECTED_NODE_NAMES
     for node_name, source in PROMPT_TEMPLATES.items():
         seeded = PromptNodeTemplate.objects.get(node_name=node_name, version=PROMPT_OS_VERSION)
@@ -254,7 +255,7 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
         },
         "N5.generic": {"plans"},
         "N6.generic": {
-            "slot_id", "main_scene", "main_action", "visual_theme", "typography_plan", "display_prompt", "visible_text_lines", "localized_copy",
+            "slot_id", "main_scene", "main_action", "visual_theme", "text_layout_theme", "typography_plan", "display_prompt", "visible_text_lines", "localized_copy",
             "prompt", "character_count", "reference_plan", "fact_trace", "inference_trace",
             "rule_refs", "generation_parameters", "review_required",
         },
@@ -289,6 +290,11 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
         "specific_moment",
         "aesthetic_point_of_view",
         "typography_direction",
+        "text_layout_theme",
+        "subject_plan",
+        "composition_plan",
+        "style_plan",
+        "copywriting_chain",
         "decision_task",
         "main_scene",
         "main_action",
@@ -503,11 +509,19 @@ def test_marketing_designer_contract_requires_concrete_theme_moment_and_typograp
         "specific_moment",
         "aesthetic_point_of_view",
         "typography_direction",
+        "text_layout_theme",
+        "visible_unit_count",
+        "copywriting_chain",
         "typography_plan",
+        "premium_whisper",
+        "clean_benefit_stack",
+        "transparent text overlay",
+        "no solid banner",
         "字体",
         "字号",
         "位置",
         "占画面",
         "营销文字必须贴合当前 visual_theme",
+        "只展示当前槽位需要的商品实例",
     ):
         assert marker in combined

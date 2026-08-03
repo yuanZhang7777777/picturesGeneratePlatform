@@ -403,6 +403,94 @@ def test_project_generate_api_isolates_queued_waiting_and_blocked_products(
     assert batch.generations.count() == 1
 
 
+def test_project_pause_cancels_selected_preparation_and_active_generations(client, tmp_path, settings):
+    from platform_app.models import Cluster, Generation, OutputSlot, OutputTemplate
+    from platform_app.services import create_batch, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Pause template")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = create_batch(user, "Pause project")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    cluster = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png").clusters.get()
+    prompt = approve_view_prompt(cluster, user, slot, revision=5)
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        prompt_version=prompt,
+        created_by=user,
+        prompt_text=prompt.prompt_text,
+        status=Generation.Status.QUEUED,
+    )
+    Cluster.objects.filter(id=cluster.id).update(
+        preparation_status=Cluster.PreparationStatus.PREPARING,
+        preparation_stage="N4",
+        preparation_current=4,
+        auto_generate=True,
+        analysis_snapshot={"_preparation_revision": 5},
+    )
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_project_pause", args=[batch.id]),
+        data=__import__("json").dumps({"cluster_ids": [str(cluster.id)]}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    cluster.refresh_from_db()
+    generation.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.DRAFT
+    assert cluster.preparation_stage == "draft"
+    assert cluster.preparation_current == 0
+    assert cluster.auto_generate is False
+    assert cluster.analysis_snapshot["_preparation_revision"] == 6
+    assert generation.status == Generation.Status.CANCELED
+    assert "paused" in generation.failure_reason.lower()
+
+
+def test_project_pause_can_cancel_one_generation_by_id(client, tmp_path, settings):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
+    from platform_app.services import create_batch, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Pause one")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = create_batch(user, "Pause one project")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    cluster = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png").clusters.get()
+    prompt = approve_view_prompt(cluster, user, slot)
+    generation = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        prompt_version=prompt,
+        created_by=user,
+        prompt_text=prompt.prompt_text,
+        status=Generation.Status.SUBMITTED,
+        provider_task_id="provider-task-1",
+    )
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_project_pause", args=[batch.id]),
+        data=__import__("json").dumps({"generation_ids": [str(generation.id)]}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    generation.refresh_from_db()
+    assert generation.status == Generation.Status.CANCELED
+    assert response.json()["generations"] == [
+        {"generation_id": str(generation.id), "status": "canceled"}
+    ]
+
+
 def test_legacy_confirm_endpoint_cannot_bypass_prompt_preparation(
     client,
     tmp_path,

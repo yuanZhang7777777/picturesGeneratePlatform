@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { ApiError, deleteAsset, deleteCluster, generateProject, importSkus, mergeAsset, prepareProject, splitAsset, updateCluster, updateProjectSettings, uploadAssets, type UploadResult } from "../api";
+import { ApiError, deleteAsset, deleteCluster, generateProject, importSkus, mergeAsset, pauseProject, prepareProject, splitAsset, updateCluster, updateProjectSettings, uploadAssets, type UploadResult } from "../api";
 import { ImportPanel } from "../components/ImportPanel";
 import { ProductCard } from "../components/ProductCard";
 import { commonMarkets, extraMarkets, platforms } from "../labels";
@@ -57,8 +57,24 @@ export default function ProjectGrouping() {
       } : sku),
     } : current);
   };
+  const markClustersPaused = (clusterIds: string[]) => {
+    const ids = new Set(clusterIds);
+    queryClient.setQueryData<Project>(["project", projectId], (current) => current ? {
+      ...current,
+      skus: current.skus.map((sku) => ids.has(sku.id) ? {
+        ...sku,
+        preparationStatus: ["pending", "preparing"].includes(sku.preparation?.status ?? sku.preparationStatus ?? "") ? "draft" : sku.preparationStatus,
+        preparation: ["pending", "preparing"].includes(sku.preparation?.status ?? sku.preparationStatus ?? "")
+          ? { status: "draft", stage: "draft", current: 0, total: sku.preparation?.total ?? 7, error: "" }
+          : sku.preparation,
+        generationProgress: sku.generationProgress ? { ...sku.generationProgress, status: "failed", active: 0 } : sku.generationProgress,
+        outputs: sku.outputs.map((output) => ["queued", "running"].includes(output.status) ? { ...output, status: "failed", failureReason: "已暂停，可重新生成" } : output),
+      } : sku),
+    } : current);
+  };
   const prepare = useMutation({ mutationFn: () => prepareProject(projectId!, selectedClusters.map((sku) => sku.id)), onMutate: markSelectedPreparing, onSuccess: invalidate });
   const generate = useMutation({ mutationFn: () => generateProject(projectId!, { clusterIds: selectedClusters.map((sku) => sku.id), slotOrders }), onMutate: markSelectedGenerating, onSuccess: invalidate });
+  const pause = useMutation({ mutationFn: (clusterIds: string[]) => pauseProject(projectId!, { clusterIds }), onMutate: markClustersPaused, onSuccess: invalidate });
   const save = useMutation({ mutationFn: ({ skuId, expectedVersion, payload }: { skuId: string; expectedVersion: number; payload: ClusterUpdateInput }) => updateCluster(skuId, expectedVersion, payload), onSuccess: invalidate });
   const removeAsset = useMutation({ mutationFn: deleteAsset, onSuccess: invalidate });
   const removeCluster = useMutation({ mutationFn: deleteCluster, onSuccess: invalidate });
@@ -154,23 +170,23 @@ export default function ProjectGrouping() {
   const onDragEnd = (event: DragEndEvent) => {
     if (event.over) reorganize.mutate({ activeId: String(event.active.id), overId: String(event.over.id) });
   };
-  const errors = [upload.error, skuImport.error, prepare.error, generate.error, reorganize.error, save.error, removeAsset.error, removeCluster.error, saveSettings.error].filter(Boolean);
+  const errors = [upload.error, skuImport.error, prepare.error, generate.error, pause.error, reorganize.error, save.error, removeAsset.error, removeCluster.error, saveSettings.error].filter(Boolean);
   const localError = errors.find((error) => !isGlobalError(error));
   const globalError = errors.find(isGlobalError);
-  const busy = upload.isPending || skuImport.isPending || prepare.isPending || generate.isPending || reorganize.isPending || save.isPending || removeAsset.isPending || removeCluster.isPending;
+  const actionBusy = upload.isPending || skuImport.isPending || prepare.isPending || generate.isPending || pause.isPending || reorganize.isPending || removeAsset.isPending || removeCluster.isPending;
 
   return <Shell>
     <ProjectToolbar project={project} pending={saveSettings.isPending} onSave={(input) => saveSettings.mutateAsync(input)} />
-    <div className="mb-5"><ImportPanel disabled={busy} onUpload={(files, mode) => upload.mutateAsync({ files, mode })} onSkuImport={(skus, mode) => skuImport.mutateAsync({ skus, mode })} onImported={() => undefined} /></div>
+    <div className="mb-5"><ImportPanel disabled={actionBusy} onUpload={(files, mode) => upload.mutateAsync({ files, mode })} onSkuImport={(skus, mode) => skuImport.mutateAsync({ skus, mode })} onImported={() => undefined} /></div>
     {uploadResult && <div className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">成功导入 {uploadResult.asset_count} 个素材{uploadResult.rejected.length ? `，${uploadResult.rejected.length} 个未导入` : ""}。</div>}
     {localError instanceof ApiError && <p className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{userErrorMessage(localError)}</p>}
     {globalError && <div className="mb-5"><ErrorPanel error={globalError} /></div>}
     <DndContext sensors={sensors} onDragEnd={onDragEnd}><ProductGrid>{project.skus.map((sku) => {
       const assets = sku.assets ?? project.assets.filter((asset) => sku.assetIds.includes(asset.id));
-      return <ProductCard key={sku.id} sku={sku} assets={assets} selected={!deselectedIds.has(sku.id)} expanded={expandedId === sku.id} disabled={save.isPending || removeAsset.isPending || removeCluster.isPending} onOpen={() => setExpandedId(sku.id)} onClose={() => setExpandedId(null)} onSave={(payload, expectedVersion) => save.mutateAsync({ skuId: sku.id, expectedVersion, payload })} onReload={() => projectQuery.refetch()} onDeleteAsset={(assetId) => removeAsset.mutate(assetId)} onDelete={() => removeCluster.mutate(sku.id)} onSelect={(next) => setDeselectedIds((current) => { const copy = new Set(current); if (next) copy.delete(sku.id); else copy.add(sku.id); return copy; })} />;
+      return <ProductCard key={sku.id} sku={sku} assets={assets} selected={!deselectedIds.has(sku.id)} expanded={expandedId === sku.id} disabled={removeAsset.isPending || removeCluster.isPending} onOpen={() => setExpandedId(sku.id)} onClose={() => setExpandedId(null)} onSave={(payload, expectedVersion) => save.mutateAsync({ skuId: sku.id, expectedVersion, payload })} onReload={() => projectQuery.refetch()} onDeleteAsset={(assetId) => removeAsset.mutate(assetId)} onDelete={() => removeCluster.mutate(sku.id)} onPause={() => pause.mutate([sku.id])} onSelect={(next) => setDeselectedIds((current) => { const copy = new Set(current); if (next) copy.delete(sku.id); else copy.add(sku.id); return copy; })} />;
     })}</ProductGrid></DndContext>
     {!project.skus.length && <EmptyState title="还没有商品素材" description="在上方导入图片、文件夹或 ERP SKU。" />}
-    <FloatingActions projectId={project.id} selectedCount={selectedClusters.length} busy={busy} onSelectAll={() => setDeselectedIds(new Set())} onDeselectAll={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))} onInvert={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))} onPrepare={() => prepare.mutate()} onGenerate={() => generate.mutate()} />
+    <FloatingActions projectId={project.id} selectedCount={selectedClusters.length} busy={actionBusy} onSelectAll={() => setDeselectedIds(new Set())} onDeselectAll={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))} onInvert={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))} onPrepare={() => prepare.mutate()} onGenerate={() => generate.mutate()} onPause={() => pause.mutate(selectedClusters.map((sku) => sku.id))} />
   </Shell>;
 }
 
@@ -223,7 +239,7 @@ function ProjectToolbar({ project, pending, onSave }: { project: { id: string; n
   </section>;
 }
 
-function FloatingActions({ projectId, selectedCount, busy, onSelectAll, onDeselectAll, onInvert, onPrepare, onGenerate }: { projectId: string; selectedCount: number; busy: boolean; onSelectAll: () => void; onDeselectAll: () => void; onInvert: () => void; onPrepare: () => void; onGenerate: () => void }) {
+function FloatingActions({ projectId, selectedCount, busy, onSelectAll, onDeselectAll, onInvert, onPrepare, onGenerate, onPause }: { projectId: string; selectedCount: number; busy: boolean; onSelectAll: () => void; onDeselectAll: () => void; onInvert: () => void; onPrepare: () => void; onGenerate: () => void; onPause: () => void }) {
   return <div className="fixed bottom-5 right-5 z-50 flex max-w-[calc(100vw-2.5rem)] flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-2xl shadow-slate-300/70 backdrop-blur" aria-label="滚动常驻生成动作">
     <button className="toolbar-choice min-h-9 px-3" type="button" onClick={onSelectAll}>全选</button>
     <button className="toolbar-choice min-h-9 px-3" type="button" onClick={onDeselectAll}>取消全选</button>
@@ -231,6 +247,7 @@ function FloatingActions({ projectId, selectedCount, busy, onSelectAll, onDesele
     <span className="px-2 text-xs font-semibold text-slate-600">已选 {selectedCount}</span>
     <button className="secondary-button min-h-9 px-3" type="button" disabled={busy || !selectedCount} onClick={onPrepare}>预备生成（{selectedCount}）</button>
     <button className="primary-button min-h-9 px-3" type="button" disabled={busy || !selectedCount} onClick={onGenerate}>正式生成（{selectedCount}）</button>
+    <button className="secondary-button min-h-9 px-3" type="button" disabled={busy || !selectedCount} onClick={onPause}>暂停所选（{selectedCount}）</button>
     <Link className="secondary-button min-h-9 px-3" to={`/projects/${projectId}/results`}>生产结果</Link>
   </div>;
 }

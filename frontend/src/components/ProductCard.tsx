@@ -2,20 +2,12 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useEffect, useState } from "react";
 
 import { ApiError } from "../api";
-import { commonMarkets, extraMarkets, marketLabel, platformLabel, platforms } from "../labels";
-import type { ClusterUpdateInput, ClusterUpdateResult, ProductAsset, ProductSku, RelationType } from "../types";
+import type { ClusterUpdateInput, ClusterUpdateResult, ProductAsset, ProductSku } from "../types";
 import { PromptEditor } from "./PromptEditor";
 
 type Draft = {
   name: string;
   productFacts: string;
-  productStyle: string;
-  platform: string;
-  market: string;
-  relationType: RelationType;
-  mainAppearance: string;
-  variantAppearance: string;
-  identityLock: string;
 };
 
 const stageText: Record<string, string> = {
@@ -27,33 +19,6 @@ const stageText: Record<string, string> = {
   N6: "正在生成 1+8 提示词",
   N7: "正在做出图前检查",
 };
-
-function splitProductFacts(raw: string, sku: ProductSku) {
-  const lines = String(raw || "").split(/\r?\n/);
-  let mainAppearance = "";
-  let variantAppearance = "";
-  const rest: string[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("主要外观：")) mainAppearance = trimmed.slice(5).trim();
-    else if (trimmed.startsWith("款式/颜色：")) variantAppearance = trimmed.slice(6).trim();
-    else if (trimmed) rest.push(line);
-  }
-  const profile = sku.identity?.product_profile;
-  if (!mainAppearance) mainAppearance = profile?.primary_appearance ?? "";
-  if (!variantAppearance) {
-    variantAppearance = (sku.identity?.target_appearances ?? [])
-      .map((item) => item.label || item.variant_attributes?.join("、") || "")
-      .filter(Boolean)
-      .join("、");
-  }
-  const chineseOnly = (value: string) => cleanChineseProductText(value);
-  return {
-    productFacts: chineseOnly(rest.join("\n")),
-    mainAppearance: chineseOnly(mainAppearance),
-    variantAppearance: chineseOnly(variantAppearance),
-  };
-}
 
 function cleanChineseProductText(value: string) {
   const text = String(value || "").trim();
@@ -85,26 +50,42 @@ function chineseProductPhrase(value: string) {
   return text;
 }
 
-function composeProductFacts(draft: Draft) {
-  return [
-    draft.productFacts.trim(),
-    draft.mainAppearance.trim() ? `主要外观：${draft.mainAppearance.trim()}` : "",
-    draft.variantAppearance.trim() ? `款式/颜色：${draft.variantAppearance.trim()}` : "",
-  ].filter(Boolean).join("\n");
+function uniqueLines(lines: string[]) {
+  const seen = new Set<string>();
+  return lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => {
+      if (seen.has(line)) return false;
+      seen.add(line);
+      return true;
+    })
+    .join("\n");
+}
+
+function supplementFromSku(sku: ProductSku) {
+  const profile = sku.identity?.product_profile;
+  const appearances = (sku.identity?.target_appearances ?? [])
+    .map((item) => item.label || item.variant_attributes?.join("、") || "")
+    .filter(Boolean)
+    .join("、");
+  const sharedStructure = profile?.shared_structure?.join("；") ?? "";
+  const included = profile?.included_items?.join("；") ?? "";
+  return uniqueLines([
+    cleanChineseProductText(sku.productFacts ?? sku.facts ?? ""),
+    profile?.primary_appearance ? `主要外观：${cleanChineseProductText(profile.primary_appearance)}` : "",
+    appearances ? `款式/颜色：${cleanChineseProductText(appearances)}` : "",
+    sharedStructure ? `结构/材质：${cleanChineseProductText(sharedStructure)}` : "",
+    included ? `包含：${cleanChineseProductText(included)}` : "",
+    sku.productStyle || sku.brief ? `风格/要求：${cleanChineseProductText(sku.productStyle ?? sku.brief ?? "")}` : "",
+    sku.identityLock ? `身份保持：${cleanChineseProductText(sku.identityLock)}` : "",
+  ]);
 }
 
 function draftFromSku(sku: ProductSku): Draft {
-  const facts = splitProductFacts(sku.productFacts ?? sku.facts ?? "", sku);
   return {
     name: chineseProductPhrase(sku.name),
-    productFacts: facts.productFacts,
-    productStyle: sku.productStyle ?? sku.brief ?? "",
-    platform: sku.overrides?.platform ?? sku.effectiveConfig?.platform ?? "generic",
-    market: sku.overrides?.market ?? sku.effectiveConfig?.market ?? "SEA",
-    relationType: sku.relationType ?? "single_product",
-    mainAppearance: facts.mainAppearance,
-    variantAppearance: facts.variantAppearance,
-    identityLock: cleanChineseProductText(sku.identityLock),
+    productFacts: supplementFromSku(sku),
   };
 }
 
@@ -153,7 +134,7 @@ function progressMeta(sku: ProductSku) {
   return { text: progressText(sku), current: 0, total: 0, active: false };
 }
 
-export function ProductCard({ sku, assets, selected, expanded = false, onOpen = () => undefined, onClose = () => undefined, onSelect, onSave, onReload, onDeleteAsset, onDelete, disabled }: {
+export function ProductCard({ sku, assets, selected, expanded = false, onOpen = () => undefined, onClose = () => undefined, onSelect, onSave, onReload, onDeleteAsset, onDelete, onPause, disabled }: {
   sku: ProductSku;
   assets: ProductAsset[];
   mergeableAssets?: ProductAsset[];
@@ -167,6 +148,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
   onReload: () => Promise<unknown> | void;
   onDeleteAsset: (assetId: string) => void;
   onDelete: () => void;
+  onPause?: () => void;
   disabled?: boolean;
 }) {
   const droppable = useDroppable({ id: `cluster:${sku.id}`, data: { type: "cluster", clusterId: sku.id }, disabled });
@@ -178,8 +160,6 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
   const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
   const label = draft.name.trim() || "未命名商品";
-  const allMarkets = [...commonMarkets, ...extraMarkets];
-  const marketOptions = allMarkets.some(([code]) => code === draft.market) ? allMarkets : [[draft.market, marketLabel(draft.market)], ...allMarkets] as [string, string][];
   const nameSourceText = sku.productNameSource === "ai" ? "AI 识别，可修改" : sku.productNameSource === "erp" ? "来自 ERP" : "";
   const progress = progressMeta(sku);
   const previewAsset = assets.find((asset) => asset.id === previewAssetId) ?? assets[0];
@@ -194,21 +174,12 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       setDraft(next);
       setSavedDraft(next);
     }
-  }, [sku.id, sku.name, sku.productFacts, sku.facts, sku.productStyle, sku.brief, sku.identityLock, sku.identity, sku.relationType, sku.overrides?.platform, sku.overrides?.market, sku.effectiveConfig?.platform, sku.effectiveConfig?.market, dirty]);
+  }, [sku.id, sku.name, sku.productFacts, sku.facts, sku.productStyle, sku.brief, sku.identityLock, sku.identity, dirty]);
 
   const submit = async () => {
     const payload: ClusterUpdateInput = {};
     if (draft.name !== savedDraft.name) payload.name = draft.name;
-    if (
-      draft.productFacts !== savedDraft.productFacts ||
-      draft.mainAppearance !== savedDraft.mainAppearance ||
-      draft.variantAppearance !== savedDraft.variantAppearance
-    ) payload.product_facts = composeProductFacts(draft);
-    if (draft.identityLock !== savedDraft.identityLock) payload.identity_lock = draft.identityLock;
-    if (draft.productStyle !== savedDraft.productStyle) payload.prompt_override = draft.productStyle;
-    if (draft.platform !== savedDraft.platform) payload.platform_override = draft.platform;
-    if (draft.market !== savedDraft.market) payload.market_override = draft.market;
-    if (draft.relationType !== savedDraft.relationType) payload.relation_type = draft.relationType;
+    if (draft.productFacts !== savedDraft.productFacts) payload.product_facts = draft.productFacts;
     if (!Object.keys(payload).length) return;
     setSaving(true);
     setSaveError("");
@@ -249,50 +220,41 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       <div className="flex flex-col gap-2 p-3">
         <input aria-label={`商品名称 ${label}`} className="h-9 min-h-9 font-semibold" value={draft.name} placeholder="可不填，预备生成时识别" onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void submit()} />
         {nameSourceText && <p className="text-[11px] text-slate-500">{nameSourceText}</p>}
-        <div className="grid grid-cols-2 gap-1.5">
-          <select aria-label={`商品平台 ${label}`} className="h-9 min-h-9 py-1 text-xs" value={draft.platform} onChange={(event) => setDraft({ ...draft, platform: event.target.value })} onBlur={() => void submit()}>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select>
-          <select aria-label={`商品国家 ${label}`} className="h-9 min-h-9 py-1 text-xs" value={draft.market} onChange={(event) => setDraft({ ...draft, market: event.target.value })} onBlur={() => void submit()}>{marketOptions.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select>
-        </div>
-        <textarea aria-label={`创意 Brief ${label}`} className="min-h-16 resize-none py-1.5 text-xs" value={draft.productFacts} placeholder="补充材质、功能或使用要求" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void submit()} />
-        <details className="rounded-lg bg-slate-50 px-2 py-1">
-          <summary className="cursor-pointer text-xs font-medium text-slate-600">单品风格（选填）</summary>
-          <textarea aria-label={`单品风格 ${label}`} className="mt-1 min-h-12 resize-none py-1.5 text-xs" value={draft.productStyle} onChange={(event) => setDraft({ ...draft, productStyle: event.target.value })} onBlur={() => void submit()} />
-        </details>
+        <textarea aria-label={`补充信息 ${label}`} className="min-h-20 resize-none py-1.5 text-xs" value={draft.productFacts} placeholder="材质、颜色、款式、使用限制、风格要求都写在这里" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void submit()} />
         {saveError && <p className="text-xs text-amber-700">{saveError}</p>}
         <div className="mt-auto space-y-2 text-xs">
-          <div className="grid gap-1"><span className={`block max-w-full break-words leading-5 ${progress.active ? "rounded-lg bg-indigo-50 px-2 py-1 font-semibold text-indigo-700" : /失败|受阻|未完成|补充/.test(progress.text) ? "rounded-lg bg-rose-50 px-2 py-1 text-rose-700" : "text-slate-600"}`} title={progress.text}>{progress.active && <span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-indigo-600" />} {progress.text}</span><button aria-label={`${label} 详情`} className="w-fit font-semibold text-indigo-700" type="button" onClick={onOpen}>详情</button></div>
+          <div className="grid gap-1"><span className={`block max-w-full break-words leading-5 ${progress.active ? "rounded-lg bg-indigo-50 px-2 py-1 font-semibold text-indigo-700" : /失败|受阻|未完成|补充/.test(progress.text) ? "rounded-lg bg-rose-50 px-2 py-1 text-rose-700" : "text-slate-600"}`} title={progress.text}>{progress.active && <span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-indigo-600" />} {progress.text}</span><div className="flex flex-wrap gap-2"><button aria-label={`${label} 详情`} className="w-fit font-semibold text-indigo-700" type="button" onClick={onOpen}>详情</button>{progress.active && onPause && <button aria-label={`暂停 ${label}`} className="w-fit font-semibold text-amber-700" type="button" disabled={disabled} onClick={onPause}>暂停</button>}</div></div>
           {progress.active && <ProgressBar current={progress.current} total={progress.total} />}
         </div>
       </div>
     </article>
     {expanded && <section className="surface product-card-expanded-detail fixed inset-y-4 right-4 z-40 w-[min(720px,calc(100vw-2rem))] overflow-y-auto p-5 shadow-2xl" role="dialog" aria-modal="false" aria-label={`${label} 商品详情`}>
-      <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品身份、事实与 1+8 提示词</p><h2 className="mt-1 text-xl font-semibold">{label}</h2><p className="mt-1 text-sm text-slate-500">{platformLabel(draft.platform)} · {marketLabel(draft.market)}</p></div><button className="secondary-button" type="button" onClick={onClose}>收起</button></div>
-      <IdentitySummary draft={draft} setDraft={setDraft} onBlur={submit} saving={saving || !!disabled} />
+      <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品信息与 1+8 提示词</p><h2 className="mt-1 text-xl font-semibold">{label}</h2></div><button className="secondary-button" type="button" onClick={onClose}>收起</button></div>
+      <ProductInfoEditor label={label} draft={draft} setDraft={setDraft} onBlur={submit} saving={saving || !!disabled} />
       <PromptEditor sku={sku} onSave={savePrompt} disabled={saving || disabled} />
       <button className="mt-4 text-sm font-semibold text-rose-700" type="button" disabled={saving || disabled} onClick={() => { if (window.confirm(`删除“${label}”？有历史结果时只会归档。`)) onDelete(); }}>删除商品</button>
     </section>}
   </div>;
 }
 
-function IdentitySummary({
+function ProductInfoEditor({
+  label,
   draft,
   setDraft,
   onBlur,
   saving,
 }: {
+  label: string;
   draft: Draft;
   setDraft: (draft: Draft) => void;
   onBlur: () => Promise<void>;
   saving?: boolean;
 }) {
-  return <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4" role="region" aria-label="商品身份卡">
-    <h3 className="text-sm font-semibold text-slate-800">商品身份卡</h3>
-    <div className="mt-3 grid gap-3 sm:grid-cols-2">
-      <label className="text-xs font-medium text-slate-500">商品名称<input className="mt-1" value={draft.name} disabled={saving} onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void onBlur()} /></label>
-      <label className="text-xs font-medium text-slate-500">主要外观<input className="mt-1" value={draft.mainAppearance} disabled={saving} placeholder="例如：黄色毛绒玩偶、木柄餐具套装" onChange={(event) => setDraft({ ...draft, mainAppearance: event.target.value })} onBlur={() => void onBlur()} /></label>
-      <label className="text-xs font-medium text-slate-500 sm:col-span-2">商品一句话描述<textarea className="mt-1 min-h-16" value={draft.productFacts} disabled={saving} placeholder="用中文写清楚这是什么、适合谁、主要用途" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void onBlur()} /></label>
-      <label className="text-xs font-medium text-slate-500">款式/颜色<input className="mt-1" value={draft.variantAppearance} disabled={saving} placeholder="例如：黄色、三只同款、木色+黑色握柄" onChange={(event) => setDraft({ ...draft, variantAppearance: event.target.value })} onBlur={() => void onBlur()} /></label>
-      <label className="text-xs font-medium text-slate-500">需要保持的特征<textarea aria-label="商品身份" className="mt-1 min-h-16" value={draft.identityLock} disabled={saving} placeholder="例如：圆形黑眼睛、黄色毛绒质感；木柄、勺子和筷子组合" onChange={(event) => setDraft({ ...draft, identityLock: event.target.value })} onBlur={() => void onBlur()} /></label>
+  return <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4" role="region" aria-label="商品信息">
+    <h3 className="text-sm font-semibold text-slate-800">商品信息</h3>
+    <div className="mt-3 grid gap-3">
+      <label className="text-xs font-medium text-slate-500">商品名称<input aria-label={`商品名称 ${label}`} className="mt-1" value={draft.name} disabled={saving} onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void onBlur()} /></label>
+      <label className="text-xs font-medium text-slate-500">补充信息<textarea aria-label={`补充信息 ${label}`} className="mt-1 min-h-28" value={draft.productFacts} disabled={saving} placeholder="材质、颜色、款式、使用限制、风格要求都写在这里" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void onBlur()} /></label>
     </div>
   </section>;
 }

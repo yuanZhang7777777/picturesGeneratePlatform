@@ -41,6 +41,7 @@ from .services import (
     regenerate_generation,
     remove_asset_from_cluster,
     optimize_cluster_prompt,
+    pause_project_work,
     request_generation_revision,
     safe_storage_path,
     serialize_project,
@@ -284,6 +285,33 @@ def api_project_prepare(request, batch_id):
                 }
             )
     return JsonResponse({"items": items})
+
+
+@login_required
+@password_change_required
+@require_POST
+def api_project_pause(request, batch_id):
+    batch = _batch_for_user(request.user, batch_id)
+    try:
+        payload = json.loads(request.body or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be an object")
+        cluster_ids = payload.get("cluster_ids") or []
+        generation_ids = payload.get("generation_ids") or []
+        if not isinstance(cluster_ids, list) or not isinstance(generation_ids, list):
+            raise ValueError("cluster_ids and generation_ids must be arrays")
+        if any(not isinstance(cluster_id, str) for cluster_id in cluster_ids):
+            raise ValueError("cluster_ids must contain strings")
+        if any(not isinstance(generation_id, str) for generation_id in generation_ids):
+            raise ValueError("generation_ids must contain strings")
+        result = pause_project_work(
+            batch,
+            cluster_ids=cluster_ids,
+            generation_ids=generation_ids,
+        )
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(result)
 
 
 @login_required

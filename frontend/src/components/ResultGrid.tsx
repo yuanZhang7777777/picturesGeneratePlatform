@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { exportProject, regenerateGeneration, reviseGeneration, submitReview } from "../api";
+import { exportProject, pauseProject, regenerateGeneration, reviseGeneration, submitReview } from "../api";
 import { ErrorPanel } from "../layout";
 import { displaySlotName } from "../slotDisplay";
 import type { Project, ReviewAnnotation } from "../types";
@@ -92,6 +92,19 @@ export function ResultGrid({ project }: { project: Project }) {
     },
   });
   const regenerate = useMutation({ mutationFn: regenerateGeneration, onSuccess: invalidate });
+  const pause = useMutation({
+    mutationFn: (generationId: string) => pauseProject(project.id, { generationIds: [generationId] }),
+    onMutate: (generationId) => {
+      queryClient.setQueryData<Project>(["project", project.id], (current) => current ? {
+        ...current,
+        skus: current.skus.map((sku) => ({
+          ...sku,
+          outputs: sku.outputs.map((output) => output.id === generationId ? { ...output, status: "failed", failureReason: "已暂停，可重新生成" } : output),
+        })),
+      } : current);
+    },
+    onSuccess: invalidate,
+  });
   const accept = useMutation({
     mutationFn: (generationId: string) => submitReview(generationId, { decision: "accept", issue_tags: [], description: "", annotations: [] }),
     onSuccess: invalidate,
@@ -158,6 +171,7 @@ export function ResultGrid({ project }: { project: Project }) {
                     {output.status === "completed" && output.imageUrl && output.reviewStatus !== "accepted" && <p className="mt-3 text-sm text-amber-700">待审核通过后可导出</p>}
                     <div className="mt-3 flex flex-wrap gap-2">
                       {(output.status === "completed" || output.status === "failed") && <button className="text-sm font-semibold text-indigo-700" onClick={() => regenerate.mutate(output.id)}>再生成 {outputName}</button>}
+                      {["queued", "running"].includes(output.status) && <button className="text-sm font-semibold text-amber-700" onClick={() => pause.mutate(output.id)}>暂停 {outputName}</button>}
                       {history.map((item) => <button className="text-sm text-slate-500" key={item.id} onClick={() => setSelectedOutputId(item.id)}>历史版本 {displaySlotName(item)} v{item.attempt}</button>)}
                     </div>
                   </article>
@@ -172,6 +186,7 @@ export function ResultGrid({ project }: { project: Project }) {
         <p className="mt-2 text-sm text-slate-500">默认勾选每个槽位最新成功图。</p>
         {zip.isError && <ErrorPanel error={zip.error} retry={() => zip.mutate()} />}
         {regenerate.isError && <ErrorPanel error={regenerate.error} retry={() => { if (selectedOutput) regenerate.mutate(selectedOutput.id); }} />}
+        {pause.isError && <ErrorPanel error={pause.error} retry={() => { if (selectedOutput) pause.mutate(selectedOutput.id); }} />}
         {accept.isError && <ErrorPanel error={accept.error} retry={() => { if (selectedOutput) accept.mutate(selectedOutput.id); }} />}
         {revise.isError && <ErrorPanel error={revise.error} retry={() => revise.mutate()} />}
         <button className="primary-button mt-4 w-full" disabled={!selectedIds.size || zip.isPending} onClick={() => zip.mutate()}>

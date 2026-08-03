@@ -183,11 +183,11 @@ class Batch(models.Model):
         statuses = {generation.status for generation in generations}
         if statuses == {Generation.Status.COMPLETED}:
             self.status = self.Status.COMPLETED
-        elif Generation.Status.FAILED in statuses and any(
+        elif {Generation.Status.FAILED, Generation.Status.CANCELED} & statuses and any(
             status == Generation.Status.COMPLETED for status in statuses
         ):
             self.status = self.Status.PARTIAL
-        elif statuses <= {Generation.Status.FAILED}:
+        elif statuses <= {Generation.Status.FAILED, Generation.Status.CANCELED}:
             self.status = self.Status.FAILED
         else:
             self.status = self.Status.RUNNING

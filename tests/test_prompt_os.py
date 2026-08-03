@@ -166,6 +166,66 @@ def test_fallback_display_prompt_uses_concrete_visual_design_brief():
     assert "不做技术图" not in prompt
 
 
+def test_n6_normalization_rewrites_generic_operator_display_prompt():
+    from platform_app.services import _normalize_n6_prompt
+
+    identity = {"primary_asset_id": "asset-plush", "supporting_asset_ids": []}
+    ledger = {"facts": [{"fact_id": "fact.name.001", "fact_class": "confirmed"}]}
+    payload = {
+        "slot_id": "4",
+        "main_scene": "desk-side plush companion scene",
+        "main_action": "one plush toy sits beside a half-open tote before leaving home",
+        "visual_theme": "出门前一秒的轻松陪伴",
+        "text_layout_theme": "clean_benefit_stack",
+        "typography_plan": "左上角两行泰文标题，第一行约画面高度 8%，第二行约 4%，圆润无衬线，深咖色透明叠字，轻阴影",
+        "display_prompt": "画面围绕参考图中的商品展开，保持可见外形、颜色比例、材质质感和关键结构。用一个清楚的使用瞬间说明商品怎么参与生活里的小任务。",
+        "visible_text_lines": ["หยิบใช้แล้วรู้สึกสะดวก", "เก็บง่ายทุกวัน"],
+        "localized_copy": {
+            "language": "th-TH",
+            "lines": ["หยิบใช้แล้วรู้สึกสะดวก", "เก็บง่ายทุกวัน"],
+            "source_fact_refs": ["fact.name.001"],
+            "source_inference_refs": [],
+        },
+        "subject_plan": {
+            "product_scope": "黄色毛绒玩偶单体作为画面主角",
+            "visible_unit_count": "只展示 1 个代表性玩偶",
+            "person_presence": "无人物",
+            "usage_relationship": "玩偶靠在布包口，作为可带走的陪伴物",
+            "reason": "当前槽位表达随手带走，不需要展示参考图里的全部玩偶",
+        },
+        "composition_plan": {
+            "canvas": "1:1 方形",
+            "camera": "平视中近景",
+            "shot_scale": "玩偶占画面右侧 56%",
+            "subject_share": "商品视觉重量约 56%",
+            "text_area": "左上角自然浅墙区域承载文字，约占画面 14%",
+            "diversity_signature": "单体玩偶、玄关布包、平视中近景、出门前动作",
+        },
+        "style_plan": {
+            "lighting": "暖白晨光从左侧进入",
+            "material_focus": "绒毛边缘和眼睛高光清楚",
+            "palette": "奶油黄、浅木色、深咖文字",
+            "props": ["布包", "钥匙盘"],
+        },
+        "prompt": "Create a 1:1 listing image of one plush toy beside a tote. Only render the quoted Thai copy.",
+        "reference_plan": {"primary_asset_id": "asset-plush", "supporting_asset_ids": []},
+        "fact_trace": ["fact.name.001"],
+        "inference_trace": [],
+        "rule_refs": [],
+        "generation_parameters": {"model": "gpt-image-2", "n": 1, "size": "1:1", "resolution": "1k"},
+        "review_required": True,
+    }
+
+    normalized = _normalize_n6_prompt(payload, 4, identity, ledger, set())
+
+    assert "画面围绕参考图" not in normalized["display_prompt"]
+    assert "生活里的小任务" not in normalized["display_prompt"]
+    assert "只展示 1 个代表性玩偶" in normalized["display_prompt"]
+    assert "出门前一秒的轻松陪伴" in normalized["display_prompt"]
+    assert "clean_benefit_stack" in normalized["display_prompt"]
+    assert "透明叠字" in normalized["display_prompt"]
+
+
 def test_confirm_generation_snapshots_selected_market_template_rule_and_prompt_asset():
     """A generation must retain the selected configuration after it is later edited."""
     from platform_app.models import Batch, OutputSlot, OutputTemplate, RuleProfile
@@ -2135,6 +2195,7 @@ def test_prompt_worker_rewrites_generic_copy_once_before_saving_prompt(tmp_path,
                     "main_scene": "office lunch table",
                     "main_action": "box opened neatly",
                     "visual_theme": "office lunch tidy moment",
+                    "text_layout_theme": "clean_benefit_stack",
                     "typography_plan": "top-left one-line English title, 32px bold sans-serif, dark green text, about 34% image width",
                     "display_prompt": "生成一张 1:1 Shopee 商品营销图，办公室午餐盒打开的一秒，左上角一行英文标题，暖白桌面光线清楚呈现餐盒结构。",
                     "visible_text_lines": [line],
@@ -3770,6 +3831,48 @@ def test_fallback_n6_usage_set_does_not_force_holder_into_every_scene():
     assert "Use the references only for product identity" in compiled["prompt"]
     assert "arrange them naturally as a set" not in compiled["prompt"]
     assert "visible product set match" not in compiled["prompt"]
+
+
+def test_fallback_n6_uses_slot_visible_unit_count_instead_of_all_source_instances():
+    from platform_app.services import _fallback_n6_prompt
+
+    identity = {
+        "primary_asset_id": "asset-plush",
+        "supporting_asset_ids": [],
+        "target_appearances": [
+            {
+                "appearance_id": "appearance.1",
+                "asset_ids": ["asset-plush"],
+                "primary_asset_id": "asset-plush",
+            }
+        ],
+    }
+    ledger = {"facts": [{"fact_id": "fact.name.001", "fact_class": "observed"}]}
+    slot_input = {
+        "slot_order": 6,
+        "product_name": "Yellow plush toy",
+        "slot_plan": {
+            **n5_plan(6, mode="emotion", fact_refs=("fact.name.001",), appearance_ids=["appearance.1"]),
+            "main_scene": "soft bedroom shelf scene",
+            "main_action": "one plush toy becomes the small bedtime companion",
+            "composition": "single plush hero in the lower right, soft bedding and shelf depth behind",
+            "subject_plan": {
+                "product_scope": "one representative yellow plush toy",
+                "visible_unit_count": "exactly one plush toy",
+                "person_presence": "no person",
+                "usage_relationship": "the plush toy sits naturally against a cushion",
+                "reason": "the emotional scene needs one hero item, not every repeated source instance",
+            },
+        },
+        "market_context": {"language": "en", "market": "SG"},
+        "size": "1:1",
+        "resolution": "1k",
+    }
+
+    compiled = _fallback_n6_prompt(slot_input, identity, ledger, set())
+
+    assert "exactly one plush toy" in compiled["prompt"]
+    assert "one representative yellow plush toy" in compiled["display_prompt"]
 
 
 def test_n5_rejects_unknown_creative_strategy_fact_ref():

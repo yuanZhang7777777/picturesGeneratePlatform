@@ -30,6 +30,11 @@ urlpatterns = [
         name="api_project_prepare",
     ),
     path(
+        "api/projects/<uuid:batch_id>/pause/",
+        views.api_project_pause,
+        name="api_project_pause",
+    ),
+    path(
         "api/admin/prompt-nodes/",
         views.api_admin_prompt_nodes,
         name="api_admin_prompt_nodes",
