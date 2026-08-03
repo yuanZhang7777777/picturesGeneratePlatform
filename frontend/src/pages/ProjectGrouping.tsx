@@ -9,12 +9,17 @@ import { ProductCard } from "../components/ProductCard";
 import { commonMarkets, extraMarkets, platforms } from "../labels";
 import { EmptyState, ErrorPanel, Shell, userErrorMessage } from "../layout";
 import { useProjectSnapshot } from "../queries";
-import type { ClusterUpdateInput, ImportMode, ProductAsset, ProductConfiguration, Project } from "../types";
-
-const slotOrders = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+import type { ClusterUpdateInput, ImportMode, ProductAsset, ProductConfiguration, ProductSku, Project } from "../types";
 
 function isGlobalError(error: unknown) {
   return !(error instanceof ApiError) || error.authRequired || error.status === 401 || error.status === 403 || error.status >= 500;
+}
+
+function generationSlotOrders(skus: ProductSku[]) {
+  const orders = skus.flatMap((sku) => (sku.prompts ?? [])
+    .filter((prompt) => !prompt.readOnly)
+    .map((prompt) => prompt.slotOrder));
+  return Array.from(new Set(orders)).sort((a, b) => a - b);
 }
 
 export default function ProjectGrouping() {
@@ -74,7 +79,7 @@ export default function ProjectGrouping() {
     } : current);
   };
   const prepare = useMutation({ mutationFn: () => prepareProject(projectId!, selectedClusters.map((sku) => sku.id)), onMutate: markSelectedPreparing, onSuccess: invalidate });
-  const generate = useMutation({ mutationFn: () => generateProject(projectId!, { clusterIds: selectedClusters.map((sku) => sku.id), slotOrders }), onMutate: markSelectedGenerating, onSuccess: invalidate });
+  const generate = useMutation({ mutationFn: () => generateProject(projectId!, { clusterIds: selectedClusters.map((sku) => sku.id), slotOrders: generationSlotOrders(selectedClusters) }), onMutate: markSelectedGenerating, onSuccess: invalidate });
   const pause = useMutation({ mutationFn: (clusterIds: string[]) => pauseProject(projectId!, { clusterIds }), onMutate: markClustersPaused, onSuccess: invalidate });
   const save = useMutation({ mutationFn: ({ skuId, expectedVersion, payload }: { skuId: string; expectedVersion: number; payload: ClusterUpdateInput }) => updateCluster(skuId, expectedVersion, payload), onSuccess: invalidate });
   const removeAsset = useMutation({ mutationFn: deleteAsset, onSuccess: invalidate });

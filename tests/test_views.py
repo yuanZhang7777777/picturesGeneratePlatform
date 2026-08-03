@@ -291,7 +291,7 @@ def test_retry_endpoint_creates_new_attempt_for_failed_generation(client, tmp_pa
 
 
 def test_project_generate_api_is_cluster_scoped_and_idempotent(client, tmp_path, settings):
-    from platform_app.models import OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.models import Generation, OutputSlot, OutputTemplate, PromptVersion
     from platform_app.services import create_batch, register_uploaded_asset
 
     settings.MEDIA_ROOT = tmp_path
@@ -318,11 +318,21 @@ def test_project_generate_api_is_cluster_scoped_and_idempotent(client, tmp_path,
         data=__import__("json").dumps(payload),
         content_type="application/json",
     )
+    generation = first.generations.get()
+    generation.status = Generation.Status.COMPLETED
+    generation.save(update_fields=["status", "updated_at"])
+    third_response = client.post(
+        reverse("api_project_generate", args=[batch.id]),
+        data=__import__("json").dumps(payload),
+        content_type="application/json",
+    )
 
     assert first_response.status_code == 202
     assert second_response.status_code == 202
+    assert third_response.status_code == 202
     assert first_response.json()["generation_count"] == 1, first_response.json()
     assert second_response.json()["generation_count"] == 0
+    assert third_response.json()["generation_count"] == 0
     assert first_response.json()["items"] == [
         {"cluster_id": str(first.id), "status": "queued"}
     ]

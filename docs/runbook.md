@@ -25,7 +25,7 @@ Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worke
 
 `MAX_ACTIVE_GENERATIONS` 表示同时提交给供应商并处于运行中的图片任务数；供应商 API 上限为 **500**，有效值必须在 `1..500`，预览默认 `50`。`GENERATION_USER_ACTIVE_SOFT_LIMIT` 默认 `10`：同一用户达到软限制后，其他有排队任务的用户优先；如果没有其他用户排队，该用户继续借用空闲容量。
 
-`PROMPT_WORKER_CONCURRENCY` 只控制预备生成阶段的 N1–N7 商品并发，默认 `64`；`PROMPT_OS_SLOT_CONCURRENCY` 控制同一商品 N6 槽位内的 DeepSeek 并发，默认 `8`；`GENERATION_WORKER_CONCURRENCY` 控制本地提交、轮询和归档线程，默认 `32`。它们与 `MAX_ACTIVE_GENERATIONS` 分开：前者调用视觉/文本分析和 Prompt 编译，后者控制 `gpt-image-2` 付费生图活跃任务。Prompt Worker 使用数据库行锁/原子认领分发商品，多个线程不会反复抢同一个 `pending` 商品。
+`PROMPT_WORKER_CONCURRENCY` 只控制预备生成阶段的 N1–N7 商品并发，默认 `64`；`PROMPT_OS_SLOT_CONCURRENCY` 控制同一商品 N6 槽位内的 DeepSeek 并发，默认 `8`；`GENERATION_WORKER_CONCURRENCY` 控制本地提交、轮询和归档线程，默认 `32`。它们与 `MAX_ACTIVE_GENERATIONS` 分开：前者调用视觉/文本分析和 Prompt 编译，后者控制 `gpt-image-2` 付费生图活跃任务。Prompt Worker 使用数据库行锁/原子认领分发商品，多个线程不会反复抢同一个 `pending` 商品。正式生成 API 按“当前最新提示词 + 槽位”幂等提交：已有 active 任务或已完成且仍匹配最新 PromptVersion 的结果时复用，不重复入队；员工编辑提示词产生新的 PromptVersion 后，再次正式生成才创建新 attempt。
 
 登录使用 ERP：`ERP_LOGIN_URL` 接收用户输入的用户名和密码，平台只把返回的 Token 保存在服务端 session 中，不保存 ERP 密码。所有 ERP 登录成功用户都可进入平台；`PLATFORM_ADMIN_ERP_USERS` 用逗号分隔管理员 ERP 登录名，默认仅配置刘学城的登录名。
 

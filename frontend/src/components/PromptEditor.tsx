@@ -11,7 +11,6 @@ const defaultPrompts = [
   "模特/比例图",
   "尺寸/包装/包含物图",
   "平台转化营销图",
-  "补充转化图",
 ].map((slot, index) => ({ slotOrder: index + 1, slot, text: "" }));
 
 type PromptDraft = {
@@ -38,6 +37,7 @@ function fallbackChinesePrompt(order: number) {
 }
 
 function promptsFromSku(sku: ProductSku) {
+  if (sku.prompts?.length) return sku.prompts;
   const promptsByOrder = new Map((sku.prompts ?? []).map((prompt) => [prompt.slotOrder, prompt]));
   return defaultPrompts.map((fallback) => ({ ...fallback, ...promptsByOrder.get(fallback.slotOrder) }));
 }

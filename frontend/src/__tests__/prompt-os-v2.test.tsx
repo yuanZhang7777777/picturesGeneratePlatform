@@ -192,6 +192,8 @@ test("uses placeholders instead of editable fake prompt text before preparation"
   const field = screen.getByLabelText("02 核心卖点图提示词") as HTMLTextAreaElement;
   expect(field.value).toBe("");
   expect(field.placeholder).toContain("预备生成后显示");
+  expect(screen.getByText("8 张生成提示词")).toBeInTheDocument();
+  expect(screen.queryByLabelText("09 补充转化图提示词")).not.toBeInTheDocument();
 });
 
 test("autosaves edited prompts as a structured snake-case array", async () => {

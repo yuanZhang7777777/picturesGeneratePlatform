@@ -736,7 +736,6 @@ def api_project_generate(request, batch_id):
                     cluster,
                     request.user,
                     slot_orders=slot_orders,
-                    force_new=True,
                     include_created=True,
                 )
                 generation_count += len(created_ids)

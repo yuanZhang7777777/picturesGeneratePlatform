@@ -295,6 +295,42 @@ test("does not submit generation while selected products are still preparing", a
   expect(screen.getByRole("button", { name: "暂停所选（1）" })).not.toBeDisabled();
 });
 
+test("submits generation for the real editable prompt slots only", async () => {
+  const vnSlots = [
+    "Seller original product photo",
+    "Standard white background product hero",
+    "Product structure",
+    "Product detail",
+    "Usage",
+    "User or scale",
+    "Packaging or contents",
+    "Local lifestyle",
+    "Supplemental conversion",
+  ];
+  const readySku = {
+    ...product("vn", "越南商品"),
+    preparationStatus: "ready" as const,
+    preparation: { status: "ready", stage: "N7", current: 7, total: 7, error: "" },
+    prompts: vnSlots.map((slot, index) => ({ slotOrder: index + 1, slot, text: `Prompt ${index + 1}`, readOnly: index === 0 })),
+  };
+  const fetchMock = stubFetch({
+    projectSnapshot: {
+      ...project,
+      skus: [readySku],
+    },
+  });
+  renderApp();
+
+  fireEvent.click(await screen.findByRole("button", { name: "正式生成（1）" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/generate/")).toBe(true));
+  const generateCall = fetchMock.mock.calls.find(([url]) => String(url) === "/api/projects/project-1/generate/");
+  expect(JSON.parse(String(generateCall?.[1]?.body))).toMatchObject({
+    cluster_ids: ["vn"],
+    slot_orders: [2, 3, 4, 5, 6, 7, 8, 9],
+  });
+});
+
 test("does not load the full workspace snapshot on the new-project page", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/new");

@@ -3796,20 +3796,6 @@ _TEXT_LAYOUT_THEMES = (
     "youth_sticker_light",
 )
 
-_GENERIC_DISPLAY_PROMPT_MARKERS = (
-    "画面围绕参考图",
-    "生活里的小任务",
-    "选择一个使用瞬间",
-    "selected from the product category",
-    "one visible detail answers",
-    "用一个清楚的使用瞬间",
-    "一个核心部件",
-    "能立刻解释核心收益",
-    "当前购买任务",
-    "具体可见的购买瞬间",
-)
-
-
 def _fallback_text_layout_theme(index):
     return _TEXT_LAYOUT_THEMES[index % len(_TEXT_LAYOUT_THEMES)]
 
@@ -3825,18 +3811,6 @@ def _fallback_product_action_menu(product_label):
     if any(token in text for token in ("收纳", "盒", "架", "袋", "包", "篮")):
         return "放入、取出、整理、挂起或带走"
     return "拿起、放下、摆好、打开、收纳、携带或靠近使用位置"
-
-
-def _display_prompt_is_generic(value):
-    text = str(value or "").strip()
-    folded = text.casefold()
-    return not text or len(text) < 100 or any(marker.casefold() in folded for marker in _GENERIC_DISPLAY_PROMPT_MARKERS)
-
-
-def _display_prompt_needs_model_rewrite(value):
-    text = str(value or "").strip()
-    folded = text.casefold()
-    return not text or not _contains_cjk(text) or any(marker.casefold() in folded for marker in _GENERIC_DISPLAY_PROMPT_MARKERS)
 
 
 def _prompt_os_allow_fallback():
@@ -6078,30 +6052,6 @@ def process_prompt_once(client=None, storage=None):
                         ledger,
                         slot_rule_refs,
                     )
-                    if _display_prompt_needs_model_rewrite(slot_plan.get("display_prompt")):
-                        system_instruction, node_text, temperature, output_schema = n6_rendered
-                        rewrite_rendered = (
-                            system_instruction,
-                            (
-                                f"{node_text}\n\n"
-                                "上一次输出的 display_prompt 不是合格中文广告图导演稿。"
-                                "请重新输出完整 JSON：display_prompt 必须用中文自然段直接设计画面，写清商品呈现、人物或空间关系、镜头构图、光线、材质、色彩、文字版式和购买情绪；"
-                                "不要输出英文生图指令、字段标签、空泛句或策略说明。"
-                            ),
-                            temperature,
-                            output_schema,
-                        )
-                        slot_plan = _prompt_node_n6_plan_from_rendered(
-                            _parallel_prompt_client(client),
-                            n6_node,
-                            rewrite_rendered,
-                            slot_input,
-                            identity,
-                            ledger,
-                            slot_rule_refs,
-                        )
-                        if _display_prompt_needs_model_rewrite(slot_plan.get("display_prompt")):
-                            raise RuntimeError(PROMPT_GENERATION_FAILED_MESSAGE)
                     n6_model = settings.APIMART_PROMPT_MODEL
                 except Exception as exc:
                     if not _prompt_os_allow_fallback():
@@ -6372,8 +6322,7 @@ def process_prompt_once(client=None, storage=None):
             if slot.order in plans:
                 structured_output["marketing_plan"] = copy.deepcopy(plans[slot.order])
             if not is_source_product_photo_slot(slot):
-                display_prompt = compiled.get("node_output", {}).get("display_prompt") or compiled.get("display_prompt")
-                if not str(prompt_text or "").strip() or (slot in marketing_slots and _display_prompt_needs_model_rewrite(display_prompt)):
+                if not str(prompt_text or "").strip():
                     raise RuntimeError("提示词生成失败，请重试预备生成")
             prompt_values.append({
                 "output_slot": slot,
@@ -6844,6 +6793,125 @@ def _prompt_for_slot(cluster, slot):
     )
 
 
+def _expected_prompt_node_family(slot):
+    if is_source_product_photo_slot(slot):
+        return "source_passthrough"
+    if is_standard_product_hero_slot(slot):
+        return "N4"
+    return "N6"
+
+
+def _manual_prompt_node_name(slot, platform):
+    family = _expected_prompt_node_family(slot)
+    if family in {"source_passthrough", "N4"}:
+        return family
+    return _platform_prompt_node(family, platform)
+
+
+def _manual_prompt_references(cluster, slot):
+    relations = list(
+        cluster.cluster_assets.select_related("asset")
+        .filter(asset__kind=Asset.Kind.IMAGE, asset__archived_at__isnull=True)
+        .order_by("order", "id")
+    )
+    identity = (
+        cluster.analysis_snapshot.get("identity", {})
+        if isinstance(cluster.analysis_snapshot, dict)
+        else {}
+    )
+    references = _appearance_reference_paths(relations, identity) if identity else [
+        relation.asset.storage_path for relation in relations
+    ]
+    if not references:
+        raise ValueError("Current product reference is required before generation")
+    return references[:1] if is_source_product_photo_slot(slot) else references
+
+
+def _manual_prompt_payload(cluster, batch, slot, prompt):
+    parent_prompt = _prompt_for_slot(cluster, slot)
+    if parent_prompt is not None:
+        input_snapshot = copy.deepcopy(parent_prompt.input_snapshot)
+        input_snapshot["manual_edit"] = True
+        input_snapshot["parent_prompt_version_id"] = str(parent_prompt.id)
+        prompt, input_snapshot = apply_standard_product_hero_policy(
+            slot,
+            prompt,
+            input_snapshot,
+        )
+        return {
+            "slot": slot,
+            "prompt": prompt,
+            "input_snapshot": input_snapshot,
+            "structured_output": {
+                **copy.deepcopy(parent_prompt.structured_output),
+                "manual_edit": True,
+                "prompt": prompt,
+                "slot_order": slot.order,
+            },
+            "source_snapshot": copy.deepcopy(parent_prompt.source_snapshot),
+            "references": list(
+                parent_prompt.input_snapshot.get("reference_snapshot", [])
+            )
+            or _manual_prompt_references(cluster, slot),
+            "parent_prompt": parent_prompt,
+            "node_name": parent_prompt.node_name,
+            "template_version": parent_prompt.template_version,
+            "provider_model": parent_prompt.provider_model,
+        }
+
+    _, _, effective_config = _effective_cluster_resources(batch, cluster)
+    node_name = _manual_prompt_node_name(slot, effective_config["platform"])
+    _, template_version, _ = _prompt_node(node_name)
+    references = _manual_prompt_references(cluster, slot)
+    base_snapshot = {
+        "manual_edit": True,
+        "slot_order": slot.order,
+        "reference_snapshot": references,
+    }
+    prompt, input_snapshot = apply_standard_product_hero_policy(
+        slot,
+        prompt,
+        base_snapshot,
+    )
+    return {
+        "slot": slot,
+        "prompt": prompt,
+        "input_snapshot": input_snapshot,
+        "structured_output": {
+            **copy.deepcopy(input_snapshot),
+            "prompt": prompt,
+            "visible_text_lines": [],
+            "prompt_source": "manual",
+        },
+        "source_snapshot": copy.deepcopy(input_snapshot),
+        "references": references,
+        "parent_prompt": None,
+        "node_name": node_name,
+        "template_version": template_version,
+        "provider_model": settings.APIMART_PROMPT_MODEL,
+    }
+
+
+def _all_generation_prompts_ready(cluster, batch, template):
+    for slot in template.slots.order_by("order", "id"):
+        if is_source_product_photo_slot(slot):
+            continue
+        prompt_version = _prompt_for_slot(cluster, slot)
+        if prompt_version is None:
+            return False
+        try:
+            _validate_prompt_version_readiness(
+                prompt_version,
+                cluster,
+                batch,
+                slot,
+                allowed_nodes={_expected_prompt_node_family(slot)},
+            )
+        except ValueError:
+            return False
+    return True
+
+
 def _approved_prompt_for_slot(cluster, batch, slot):
     if cluster.preparation_status != Cluster.PreparationStatus.READY:
         raise ValueError("Product Prompt OS preparation is not ready")
@@ -6854,19 +6922,12 @@ def _approved_prompt_for_slot(cluster, batch, slot):
         if is_source_product_photo_slot(slot):
             raise ValueError("Current source PromptVersion is required before passthrough")
         raise ValueError("Current approved PromptVersion is required before generation")
-    expected_node = (
-        "source_passthrough"
-        if is_source_product_photo_slot(slot)
-        else "N4"
-        if is_standard_product_hero_slot(slot)
-        else "N6"
-    )
     _validate_prompt_version_readiness(
         prompt_version,
         cluster,
         batch,
         slot,
-        allowed_nodes={expected_node},
+        allowed_nodes={_expected_prompt_node_family(slot)},
     )
     return prompt_version
 
@@ -7057,8 +7118,10 @@ def ensure_cluster_generations(
         Generation.Status.SUBMITTED,
         Generation.Status.PROCESSING,
         Generation.Status.ARCHIVING,
+        Generation.Status.SUBMIT_UNKNOWN,
     ]
     existing_statuses = active_statuses if force_new else [*active_statuses, Generation.Status.COMPLETED]
+    current_prompts = {}
     existing = {}
     for generation in locked.generations.filter(
             output_slot__in=creatable,
@@ -7068,6 +7131,17 @@ def ensure_cluster_generations(
         ):
         if generation.output_slot_id in existing:
             continue
+        if generation.status == Generation.Status.COMPLETED:
+            prompt_version = current_prompts.get(generation.output_slot_id)
+            if prompt_version is None:
+                prompt_version = _approved_prompt_for_slot(
+                    locked,
+                    batch,
+                    generation.output_slot,
+                )
+                current_prompts[generation.output_slot_id] = prompt_version
+            if generation.prompt_version_id != prompt_version.id:
+                continue
         try:
             _validate_generation_readiness(generation, locked, batch)
         except ValueError:
@@ -8142,12 +8216,9 @@ def update_cluster_content(cluster, user, payload):
         prompt = str(item.get("prompt") or "").strip()
         if not prompt:
             raise ValueError(f"prompt for slot {order} cannot be empty")
-        parent_prompt = _approved_prompt_for_slot(locked, locked.batch, slot)
-        input_snapshot = copy.deepcopy(parent_prompt.input_snapshot)
-        input_snapshot["manual_edit"] = True
-        input_snapshot["parent_prompt_version_id"] = str(parent_prompt.id)
-        prompt, input_snapshot = apply_standard_product_hero_policy(slot, prompt, input_snapshot)
-        prepared_prompts.append((slot, prompt, input_snapshot, parent_prompt))
+        prepared_prompts.append(
+            _manual_prompt_payload(locked, locked.batch, slot, prompt)
+        )
 
     configuration_fields = {"platform_override", "market_override", "seller_tier_override"}
     effective_before = (
@@ -8207,55 +8278,66 @@ def update_cluster_content(cluster, user, payload):
         effective_before is not None
         and effective_before != _configuration_signature(locked.batch, locked)
     )
-    if prepared_prompts and (configuration_changed or content_changed):
+    if prepared_prompts and (configuration_changed or content_changed or assets_changed):
         raise ValueError("prepare the updated product before editing slot prompts")
     if configuration_changed or assets_changed or (content_changed and not prepared_prompts):
         _invalidate_preparation(locked)
-    locked.version += 1
-    locked.save(
-        update_fields=[
-            "name",
-            "product_name",
-            "product_facts",
-            "identity_lock",
-            "prompt_override",
-            "platform_override",
-            "market_override",
-            "seller_tier_override",
-            "relation_type",
-            "preparation_status",
-            "preparation_error",
-            "preparation_stage",
-            "preparation_current",
-            "preparation_total",
-            "analysis_snapshot",
-            "auto_generate",
-            "version",
-            "updated_at",
-        ]
-    )
-    for slot, prompt, input_snapshot, parent_prompt in prepared_prompts:
-        references = list(parent_prompt.input_snapshot.get("reference_snapshot", []))
+    if configuration_changed or assets_changed or content_changed:
+        locked.version += 1
+        locked.save(
+            update_fields=[
+                "name",
+                "product_name",
+                "product_facts",
+                "identity_lock",
+                "prompt_override",
+                "platform_override",
+                "market_override",
+                "seller_tier_override",
+                "relation_type",
+                "preparation_status",
+                "preparation_error",
+                "preparation_stage",
+                "preparation_current",
+                "preparation_total",
+                "analysis_snapshot",
+                "auto_generate",
+                "version",
+                "updated_at",
+            ]
+        )
+    created_manual_prompts = []
+    for item in prepared_prompts:
         _create_gated_prompt_version(
             cluster=locked,
             batch=locked.batch,
-            slot=slot,
+            slot=item["slot"],
             user=user,
-            node_name=parent_prompt.node_name,
-            template_version=parent_prompt.template_version,
-            provider_model=parent_prompt.provider_model,
-            prompt_text=prompt,
-            input_snapshot=input_snapshot,
-            structured_output={
-                **copy.deepcopy(parent_prompt.structured_output),
-                "manual_edit": True,
-                "prompt": prompt,
-                "slot_order": slot.order,
-            },
-            source_snapshot=copy.deepcopy(parent_prompt.source_snapshot),
-            references=references,
-            parent_prompt_version=parent_prompt,
+            node_name=item["node_name"],
+            template_version=item["template_version"],
+            provider_model=item["provider_model"],
+            prompt_text=item["prompt"],
+            input_snapshot=item["input_snapshot"],
+            structured_output=item["structured_output"],
+            source_snapshot=item["source_snapshot"],
+            references=item["references"],
+            parent_prompt_version=item["parent_prompt"],
             fact_policy="human-reviewed",
+        )
+        created_manual_prompts.append(item)
+    if created_manual_prompts and _all_generation_prompts_ready(locked, locked.batch, template):
+        locked.preparation_status = Cluster.PreparationStatus.READY
+        locked.preparation_error = ""
+        locked.preparation_stage = "N7"
+        locked.preparation_current = locked.preparation_total or 7
+        locked.save(
+            update_fields=[
+                "preparation_status",
+                "preparation_error",
+                "preparation_stage",
+                "preparation_current",
+                "updated_at",
+            ]
         )
     return locked
 

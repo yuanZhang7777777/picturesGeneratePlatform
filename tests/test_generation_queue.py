@@ -213,6 +213,59 @@ def test_ensure_cluster_generations_cannot_compile_a_missing_prompt_version(
     assert Generation.objects.filter(cluster=cluster).count() == 0
 
 
+def test_manual_prompt_fill_recovers_failed_preparation_and_allows_generation(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import Cluster, OutputSlot, OutputTemplate, PromptVersion
+    from platform_app.services import ensure_cluster_generations, update_cluster_content
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    OutputSlot.objects.create(template=template, name="Detail", order=2)
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    primary = cluster.cluster_assets.select_related("asset").order_by("order", "id").first()
+    cluster.analysis_snapshot = {
+        "_preparation_revision": 1,
+        "identity": {
+            "primary_asset_id": str(primary.asset_id),
+            "supporting_asset_ids": [],
+            "target_appearances": [{
+                "appearance_id": "appearance.primary",
+                "asset_ids": [str(primary.asset_id)],
+                "primary_asset_id": str(primary.asset_id),
+            }],
+        },
+    }
+    cluster.save(update_fields=["analysis_snapshot"])
+    approve_prompt(cluster, user, template.slots.get(order=1), revision=1)
+    cluster.refresh_from_db()
+    cluster.preparation_status = Cluster.PreparationStatus.FAILED
+    cluster.preparation_error = "提示词生成失败，请重试预备生成"
+    cluster.save(update_fields=["preparation_status", "preparation_error"])
+
+    update_cluster_content(
+        cluster,
+        user,
+        {
+            "expected_version": cluster.version,
+            "prompts": [{
+                "slot_order": 2,
+                "prompt": "Manual product detail image prompt with clear composition.",
+            }],
+        },
+    )
+
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY
+    assert cluster.preparation_error == ""
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 2
+    generations = ensure_cluster_generations(cluster, user, slot_orders=[1, 2])
+    assert list(generation.output_slot.order for generation in generations) == [1, 2]
+
+
 def test_generation_gate_rejects_fallback_prompt_source_when_fallback_disabled(
     tmp_path,
     settings,
@@ -1337,6 +1390,47 @@ def test_generation_creation_reports_only_ids_created_by_that_call(
     assert first_created_ids == [first_items[0].id]
     assert second_created_ids == []
     assert [item.id for item in second_items] == [item.id for item in first_items]
+
+
+def test_completed_generation_is_replaced_after_latest_prompt_changes(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import Generation, OutputTemplate
+    from platform_app.services import ensure_cluster_generations, update_cluster_content
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    slot = template.slots.get(order=1)
+    approve_prompt(cluster, user, slot)
+    first = ensure_cluster_generations(cluster, user)[0]
+    first.status = Generation.Status.COMPLETED
+    first.save(update_fields=["status", "updated_at"])
+    cluster.refresh_from_db()
+
+    update_cluster_content(
+        cluster,
+        user,
+        {
+            "expected_version": cluster.version,
+            "prompts": [{
+                "slot_order": 1,
+                "prompt": "Updated white-background prompt after operator edit.",
+            }],
+        },
+    )
+    _, created_ids = ensure_cluster_generations(
+        cluster,
+        user,
+        include_created=True,
+    )
+
+    second = Generation.objects.get(id=created_ids[0])
+    assert second.attempt == first.attempt + 1
+    assert second.prompt_version_id != first.prompt_version_id
 
 
 def test_force_new_generation_requeues_completed_but_not_active_attempts(
