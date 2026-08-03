@@ -330,6 +330,37 @@ def test_n5_non_json_text_reaches_n6_without_fallback(tmp_path, settings, monkey
     assert prompt.structured_output["marketing_plan"]["prompt_source"] == "deepseek"
 
 
+def test_n5_validation_exception_keeps_returned_deepseek_text(monkeypatch):
+    from types import SimpleNamespace
+
+    import platform_app.services as services
+
+    class LooseClient:
+        def optimize_prompt(self, payload):
+            return {"output_text": '{"unexpected":"DeepSeek 已经写出可用营销导演稿"}', "raw": {}}
+
+    def fail_validation(*args, **kwargs):
+        raise RuntimeError("schema layer failed")
+
+    monkeypatch.setattr(services, "_validate_prompt_node_schema", fail_validation)
+
+    slot = SimpleNamespace(order=2, name="核心卖点图", purpose="benefit")
+    result = services._prompt_node_n5_plan(
+        LooseClient(),
+        "N5.generic",
+        "instruction",
+        {},
+        [slot],
+        {"fact-1"},
+        set(),
+        set(),
+    )
+
+    assert result["prompt_source"] == "deepseek"
+    assert "DeepSeek 已经写出可用营销导演稿" in result["raw_model_text"]
+    assert result["plans"][0]["prompt_source"] == "deepseek"
+
+
 def test_n6_non_json_text_creates_deepseek_prompt_version_without_fallback(tmp_path, settings, monkeypatch):
     from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
     import platform_app.services as services
@@ -380,6 +411,44 @@ def test_n6_non_json_text_creates_deepseek_prompt_version_without_fallback(tmp_p
     assert raw_prompt in prompt.prompt_text
     assert prompt.structured_output["prompt_source"] == "deepseek"
     assert prompt.structured_output["node_output"]["raw_model_text"] == raw_prompt
+
+
+def test_n6_validation_exception_keeps_returned_deepseek_text(monkeypatch):
+    import platform_app.services as services
+
+    class LooseClient:
+        def optimize_prompt(self, payload):
+            return {"output_text": '{"unexpected":"生成一张 1:1 Shopee 商品营销图：手部拿起商品，暖白自然光，左上角两行细标题。"}', "raw": {}}
+
+    def fail_validation(*args, **kwargs):
+        raise RuntimeError("schema layer failed")
+
+    monkeypatch.setattr(services, "_validate_prompt_node_schema", fail_validation)
+
+    identity = {
+        "primary_asset_id": "asset-1",
+        "supporting_asset_ids": [],
+    }
+    ledger = {"facts": [{"fact_id": "fact-1", "fact_class": "observed"}]}
+    result = services._prompt_node_n6_plan(
+        LooseClient(),
+        "N6.generic",
+        "instruction",
+        {
+            "slot_order": 2,
+            "slot_plan": {"main_scene": "桌面", "main_action": "拿起商品"},
+            "market_context": {"language": "vi"},
+            "size": "1:1",
+            "resolution": "1k",
+        },
+        identity,
+        ledger,
+        set(),
+    )
+
+    assert result["prompt_source"] == "deepseek"
+    assert "手部拿起商品" in result["prompt"]
+    assert "生成一张 1:1 Shopee 商品营销图" in result["raw_model_text"]
 
 
 def test_prompt_os_fallback_requires_explicit_configuration(settings):

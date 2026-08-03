@@ -220,7 +220,7 @@ export function PromptEditor({
         </div>
         {preparing && <ProgressBar current={progressCurrent} total={progressTotal} />}
         <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {draft.prompts.map((prompt) => {
+          {draft.prompts.filter((prompt) => !prompt.readOnly).map((prompt) => {
             const label = `${String(prompt.slotOrder).padStart(2, "0")} ${slotLabel(prompt.slot, prompt.slotOrder)}提示词`;
             return (
             <label className="block text-sm font-medium text-slate-700" key={prompt.slotOrder}>

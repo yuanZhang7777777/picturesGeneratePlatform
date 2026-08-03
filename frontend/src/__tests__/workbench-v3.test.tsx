@@ -425,6 +425,41 @@ test("opens one product in a fixed side panel and consumes the first outside cli
   expect(screen.getByRole("dialog", { name: "折叠椅 商品详情" })).toBeInTheDocument();
 });
 
+test("labels Shopee VN source-photo slots without a duplicate white-background title", async () => {
+  const vnSlots = [
+    "Seller original product photo",
+    "Standard white background product hero",
+    "Product structure",
+    "Product detail",
+    "Usage",
+    "User or scale",
+    "Packaging or contents",
+    "Local lifestyle",
+    "Supplemental conversion",
+  ];
+  stubFetch({
+    projectSnapshot: {
+      ...project,
+      platform: "shopee",
+      market: "VN",
+      defaultConfig: { platform: "shopee", market: "VN", sellerTier: "general", size: "1:1", resolution: "1k", globalPrompt: "" },
+      skus: [{
+        ...product("vn", "越南商品"),
+        prompts: vnSlots.map((slot, index) => ({ slotOrder: index + 1, slot, text: "", readOnly: index === 0 })),
+      }],
+    },
+  });
+  renderApp();
+
+  fireEvent.click(await screen.findByRole("button", { name: "越南商品 详情" }));
+
+  expect(screen.queryByText("01 原始商品图提示词")).not.toBeInTheDocument();
+  expect(screen.getByText("02 标准白底产品图提示词")).toBeInTheDocument();
+  expect(screen.getByText("03 商品结构图提示词")).toBeInTheDocument();
+  expect(screen.getByText("08 本地生活方式图提示词")).toBeInTheDocument();
+  expect(screen.queryByText("01 标准白底产品图提示词")).not.toBeInTheDocument();
+});
+
 test("hides Prompt Center from operators and exposes the Chinese administrator page", async () => {
   renderApp("/");
   expect(await screen.findByRole("heading", { name: "工作台" })).toBeInTheDocument();

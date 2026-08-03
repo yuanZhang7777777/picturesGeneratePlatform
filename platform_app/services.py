@@ -4951,7 +4951,7 @@ def _prompt_node_n5_plan(client, node_id, instruction, payload, marketing_slots,
             inference_ids,
             target_appearance_ids,
         )
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except Exception:
         result = _deepseek_text_n5_plans(
             text,
             payload,
@@ -4974,7 +4974,7 @@ def _prompt_node_n6_plan(client, node_id, instruction, payload, identity, ledger
         value = _json_object(text)
         _validate_prompt_node_schema(node_id, value)
         result = _normalize_n6_prompt(value, payload["slot_order"], identity, ledger, rule_refs)
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except Exception:
         result = _deepseek_text_n6_prompt(text, payload, identity, ledger, rule_refs)
     result["prompt_source"] = "deepseek"
     result.setdefault("raw_model_text", text)
