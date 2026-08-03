@@ -27,6 +27,7 @@
 ## 3. 节点变量线
 
 不允许用 `string`、空对象、旧 Prompt、`builtin-v1` 或通用兜底补洞。
+N5/N6 的 DeepSeek 输出可以是宽松文本：只要模型调用返回了非空文本，即使不是合法 JSON，也要以 `prompt_source="deepseek"` 包进下游 `raw_model_text`，让后续节点继续接收原始营销/生图设计。JSON 格式、字段缺失、普通空泛表达不触发 deterministic fallback；只有模型调用异常或空响应才进入失败/显式 fallback 分支。
 
 ```text
 N1 owned_observations / valid_asset_ids
@@ -102,6 +103,8 @@ Usage、使用、功能、操作、穿戴、佩戴、手持类槽位必须在 N5
 - `系统识别异常，请重试预备生成`
 
 字段别名、大小写差异、示例值 `string` 先内部归一化；同一卡有一张有效商品图就继续。
+
+N5/N6 的 deterministic fallback 只允许测试、demo 或开发无模型环境通过 `PROMPT_OS_ALLOW_FALLBACK=true` 显式启用；生产默认关闭。`PromptVersion.structured_output.prompt_source="fallback"` 在 fallback 关闭时不能进入正式生图。N5/N6 模型调用失败或空响应时，员工只看：`提示词生成失败，请重试预备生成`。
 
 ## 7. 工作台边界
 

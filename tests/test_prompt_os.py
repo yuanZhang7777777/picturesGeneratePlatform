@@ -166,7 +166,7 @@ def test_fallback_display_prompt_uses_concrete_visual_design_brief():
     assert "不做技术图" not in prompt
 
 
-def test_n6_normalization_rewrites_generic_operator_display_prompt():
+def test_n6_normalization_keeps_generic_model_text_as_deepseek_output():
     from platform_app.services import _normalize_n6_prompt
 
     identity = {"primary_asset_id": "asset-plush", "supporting_asset_ids": []}
@@ -218,19 +218,194 @@ def test_n6_normalization_rewrites_generic_operator_display_prompt():
 
     normalized = _normalize_n6_prompt(payload, 4, identity, ledger, set())
 
-    assert "画面围绕参考图" not in normalized["display_prompt"]
-    assert "生活里的小任务" not in normalized["display_prompt"]
-    assert "只展示 1 个代表性玩偶" in normalized["display_prompt"]
-    assert "出门前一秒的轻松陪伴" in normalized["display_prompt"]
-    assert "clean_benefit_stack" in normalized["display_prompt"]
-    assert "透明叠字" in normalized["display_prompt"]
+    assert normalized["display_prompt"].startswith("画面围绕参考图")
+    assert normalized["prompt_source"] == "deepseek"
 
 
-def test_model_scale_slot_design_requires_user_hand_or_scale_context():
+def test_n5_model_call_failure_fails_preparation_without_fallback(tmp_path, settings, monkeypatch):
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    import platform_app.services as services
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_ALLOW_FALLBACK = False
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="N5 failure")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="e" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    template = OutputTemplate.objects.create(platform="global", site="", name="Two slot")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="benefit")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    fallback_called = {"value": False}
+
+    def fail_fallback(*args, **kwargs):
+        fallback_called["value"] = True
+        raise AssertionError("N5 fallback must not run in production")
+
+    monkeypatch.setattr(services, "_fallback_n5_plans", fail_fallback)
+
+    class BadN5Client(FakeAPIMartClient):
+        def optimize_prompt(self, payload):
+            if "NODE N5" in payload.get("text", ""):
+                raise RuntimeError("DeepSeek timeout")
+            return super().optimize_prompt(payload)
+
+    assert process_prompt_once(BadN5Client(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert fallback_called["value"] is False
+    assert cluster.preparation_status == Cluster.PreparationStatus.FAILED
+    assert cluster.preparation_error == "提示词生成失败，请重试预备生成"
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+
+
+def test_n5_non_json_text_reaches_n6_without_fallback(tmp_path, settings, monkeypatch):
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    import platform_app.services as services
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_ALLOW_FALLBACK = False
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="N5 loose text")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="f" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    template = OutputTemplate.objects.create(platform="global", site="", name="Two slot")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="benefit")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    def fail_fallback(*args, **kwargs):
+        raise AssertionError("N5 fallback must not run when DeepSeek returned text")
+
+    monkeypatch.setattr(services, "_fallback_n5_plans", fail_fallback)
+
+    class LooseN5Client(FakeAPIMartClient):
+        def __init__(self):
+            self.n6_payloads = []
+
+        def optimize_prompt(self, payload):
+            text = payload.get("text", "")
+            if "NODE N5" in text:
+                return {"output_text": "营销导演原文：用餐前从收纳托盘取出木柄餐具，暖光餐桌，文字轻贴在左上角。", "raw": {}}
+            if "NODE N6" in text:
+                self.n6_payloads.append(text)
+            return super().optimize_prompt(payload)
+
+    client = LooseN5Client()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
+    assert any("营销导演原文" in payload for payload in client.n6_payloads)
+    prompt = PromptVersion.objects.get(cluster=cluster, output_slot__order=2)
+    assert prompt.structured_output["marketing_plan"]["prompt_source"] == "deepseek"
+
+
+def test_n6_non_json_text_creates_deepseek_prompt_version_without_fallback(tmp_path, settings, monkeypatch):
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    import platform_app.services as services
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_ALLOW_FALLBACK = False
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="N6 loose text")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="0" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    template = OutputTemplate.objects.create(platform="global", site="", name="Two slot")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="benefit")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    def fail_fallback(*args, **kwargs):
+        raise AssertionError("N6 fallback must not run when DeepSeek returned text")
+
+    monkeypatch.setattr(services, "_fallback_n6_prompt", fail_fallback)
+
+    raw_prompt = "生成一张 1:1 Shopee 商品营销图：木柄餐具从托盘中被手拿起，暖白窗边光，左上角两行越南语细标题。"
+
+    class LooseN6Client(FakeAPIMartClient):
+        def optimize_prompt(self, payload):
+            if "NODE N6" in payload.get("text", ""):
+                return {"output_text": raw_prompt, "raw": {}}
+            return super().optimize_prompt(payload)
+
+    assert process_prompt_once(LooseN6Client(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
+    prompt = PromptVersion.objects.get(cluster=cluster, output_slot__order=2)
+    assert raw_prompt in prompt.prompt_text
+    assert prompt.structured_output["prompt_source"] == "deepseek"
+    assert prompt.structured_output["node_output"]["raw_model_text"] == raw_prompt
+
+
+def test_prompt_os_fallback_requires_explicit_configuration(settings):
+    from types import SimpleNamespace
+
+    from platform_app.services import _fallback_n5_plans
+
+    settings.PROMPT_OS_ALLOW_FALLBACK = False
+    slot = SimpleNamespace(order=2, name="Marketing", purpose="benefit")
+
+    with pytest.raises(RuntimeError, match="PROMPT_OS_ALLOW_FALLBACK"):
+        _fallback_n5_plans(
+            {"product_name": "Demo product", "seed_style": ""},
+            [slot],
+            {"fact.name.001"},
+            set(),
+            set(),
+        )
+
+
+def test_model_scale_slot_design_requires_user_hand_or_scale_context(settings):
     from types import SimpleNamespace
 
     from platform_app.services import _fallback_n5_plans, _fallback_n6_prompt
 
+    settings.PROMPT_OS_ALLOW_FALLBACK = True
     slot = SimpleNamespace(
         order=6,
         name="Model or scale",
@@ -3719,11 +3894,12 @@ def test_target_observed_product_facts_ignore_unrelated_reference_images():
     assert facts == ["yellow plush toy", "large round eyes"]
 
 
-def test_fallback_n5_does_not_invent_packaging_without_evidence():
+def test_fallback_n5_does_not_invent_packaging_without_evidence(settings):
     from types import SimpleNamespace
 
     from platform_app.services import _fallback_n5_plans
 
+    settings.PROMPT_OS_ALLOW_FALLBACK = True
     slots = [SimpleNamespace(order=order, name=f"营销图 {order}", purpose=f"购买问题 {order}") for order in range(2, 10)]
 
     plans = _fallback_n5_plans(
@@ -3743,9 +3919,10 @@ def test_fallback_n5_does_not_invent_packaging_without_evidence():
     assert "contents overview" not in joined
 
 
-def test_fallback_n6_creates_target_language_marketing_copy_for_named_product():
+def test_fallback_n6_creates_target_language_marketing_copy_for_named_product(settings):
     from platform_app.services import _fallback_n6_prompt
 
+    settings.PROMPT_OS_ALLOW_FALLBACK = True
     identity = {
         "primary_asset_id": "asset-plush",
         "supporting_asset_ids": [],
@@ -3780,6 +3957,7 @@ def test_fallback_n6_creates_target_language_marketing_copy_for_named_product():
 
     compiled = _fallback_n6_prompt(slot_input, identity, ledger, set())
 
+    assert compiled["prompt_source"] == "fallback"
     assert compiled["visible_text_lines"]
     assert compiled["localized_copy"]["lines"] == compiled["visible_text_lines"]
     assert all("奶龙" not in line for line in compiled["visible_text_lines"])
@@ -3800,11 +3978,12 @@ def test_fallback_n6_creates_target_language_marketing_copy_for_named_product():
     assert "duplicated" not in compiled["prompt"].lower()
 
 
-def test_fallback_n5_n6_writes_director_brief_not_empty_operator_prompt():
+def test_fallback_n5_n6_writes_director_brief_not_empty_operator_prompt(settings):
     from types import SimpleNamespace
 
     from platform_app.services import _fallback_n5_plans, _fallback_n6_prompt
 
+    settings.PROMPT_OS_ALLOW_FALLBACK = True
     slot = SimpleNamespace(order=4, name="Function", purpose="Explain how the product is used")
     identity = {
         "primary_asset_id": "asset-cutlery",
@@ -3888,9 +4067,10 @@ def test_n6_normalization_replaces_english_copy_for_thai_market():
     assert "Take me home" not in normalized["prompt"]
 
 
-def test_fallback_n6_usage_set_does_not_force_holder_into_every_scene():
+def test_fallback_n6_usage_set_does_not_force_holder_into_every_scene(settings):
     from platform_app.services import _fallback_n6_prompt
 
+    settings.PROMPT_OS_ALLOW_FALLBACK = True
     identity = {
         "primary_asset_id": "asset-1",
         "supporting_asset_ids": [],
@@ -3937,9 +4117,10 @@ def test_fallback_n6_usage_set_does_not_force_holder_into_every_scene():
     assert "visible product set match" not in compiled["prompt"]
 
 
-def test_fallback_n6_uses_slot_visible_unit_count_instead_of_all_source_instances():
+def test_fallback_n6_uses_slot_visible_unit_count_instead_of_all_source_instances(settings):
     from platform_app.services import _fallback_n6_prompt
 
+    settings.PROMPT_OS_ALLOW_FALLBACK = True
     identity = {
         "primary_asset_id": "asset-plush",
         "supporting_asset_ids": [],

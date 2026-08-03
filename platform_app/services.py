@@ -56,6 +56,7 @@ BATCH_GENERATION_LIMIT = 300
 SUPPORTED_PLATFORMS = {"generic", "shopee", "tiktok", "tiktok_shop"}
 SUPPORTED_SIZES = {"1:1", "3:4"}
 SUPPORTED_RESOLUTIONS = {"1k", "2k"}
+PROMPT_GENERATION_FAILED_MESSAGE = "提示词生成失败，请重试预备生成"
 STYLE_DNA_VALUES = {
     "composition": {"centered", "top-left", "top-right", "bottom-left", "bottom-right", "rule-of-thirds", "symmetrical", "negative-space"},
     "lighting": {"soft daylight", "natural daylight", "diffused studio", "softbox", "high key", "low key"},
@@ -2589,6 +2590,7 @@ def compile_slot_prompt(
     main_action=None,
     node_name="slot_prompt",
     node_template=_UNSET,
+    preserve_directive_language=False,
 ):
     batch = batch or cluster.batch
     effective_template, effective_rules, effective_config = _effective_cluster_resources(
@@ -2693,7 +2695,8 @@ def compile_slot_prompt(
         "main_action": main_action or "none",
     }
     prompt, input_snapshot = apply_standard_product_hero_policy(slot, "\n".join(prompt_lines), input_snapshot)
-    prompt = _sanitize_image_prompt_language(prompt, language)
+    if not slot_directive or not preserve_directive_language:
+        prompt = _sanitize_image_prompt_language(prompt, language)
     prompt = _limit_generation_prompt(prompt, visible_text_lines)
     gate = evaluate_prompt_rule_gate(
         batch,
@@ -3635,6 +3638,7 @@ def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs,
             "rule_refs": resolved_rule_refs,
             "generation_parameters": _normalize_generation_parameters(payload),
             "review_required": True,
+            "prompt_source": str(payload.get("prompt_source") or "deepseek").strip() or "deepseek",
         }
     )
     return normalized
@@ -3775,6 +3779,15 @@ def _display_prompt_is_generic(value):
     text = str(value or "").strip()
     folded = text.casefold()
     return not text or len(text) < 100 or any(marker.casefold() in folded for marker in _GENERIC_DISPLAY_PROMPT_MARKERS)
+
+
+def _prompt_os_allow_fallback():
+    return bool(getattr(settings, "PROMPT_OS_ALLOW_FALLBACK", False))
+
+
+def _require_prompt_os_fallback():
+    if not _prompt_os_allow_fallback():
+        raise RuntimeError("PROMPT_OS_ALLOW_FALLBACK=true is required to use deterministic Prompt OS fallback")
 
 
 def _normalize_subject_plan(plan):
@@ -3977,6 +3990,7 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
             raise ValueError("copy_intent must be a string")
         for field in required_lists:
             plan[field] = _required_string_list(plan, field)
+        plan["prompt_source"] = str(plan.get("prompt_source") or "deepseek").strip() or "deepseek"
         plan = _apply_slot_visual_contract(plan, slot)
         _validate_known_refs(plan["fact_refs"], set(fact_ids), "fact_refs")
         _validate_known_refs(plan["inference_refs"], set(inference_ids), "inference_refs")
@@ -4004,6 +4018,7 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
     _validate_marketing_strategy_distribution(normalized)
     result = copy.deepcopy(payload)
     result["plans"] = normalized
+    result["prompt_source"] = str(payload.get("prompt_source") or "deepseek").strip() or "deepseek"
     return result
 
 
@@ -4075,16 +4090,6 @@ def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
             normalized["prompt"] = normalized["prompt"].replace(line, "")
     if localized_copy["lines"] != normalized["visible_text_lines"]:
         raise ValueError("localized_copy lines must match visible_text_lines")
-    if _display_prompt_is_generic(normalized["display_prompt"]):
-        prompt_plan = {
-            **payload,
-            "slot_order": slot_order,
-            "typography_direction": normalized["typography_plan"],
-        }
-        normalized["display_prompt"] = _fallback_display_prompt(
-            prompt_plan,
-            normalized["visible_text_lines"],
-        )
     normalized["prompt"] = _append_visible_copy_lock(
         normalized["prompt"],
         normalized["visible_text_lines"],
@@ -4154,6 +4159,7 @@ def _fallback_n4_prompt(hero_input, identity, ledger, rule_refs):
 
 
 def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids, target_appearance_ids):
+    _require_prompt_os_fallback()
     fact_ref = next(iter(fact_ids), "")
     appearances = sorted(target_appearance_ids or [])
     seed_style = str(marketing_input.get("seed_style") or "").strip()
@@ -4304,6 +4310,7 @@ def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids
             "must_show": ["product clearly visible"],
             "must_avoid": ["random text", "wrong product", "extra logo", "unprovided claim", "discount badge"],
             "seed_style": seed_style,
+            "prompt_source": "fallback",
             "creative_strategy": _fallback_creative_strategy(
                 {
                     "fact_refs": fact_refs,
@@ -4317,13 +4324,17 @@ def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids
             ),
         }
         plans.append(plan)
-    return _normalize_n5_plans(
-        {"plans": plans},
+    result = _normalize_n5_plans(
+        {"plans": plans, "prompt_source": "fallback"},
         marketing_slots,
         fact_ids,
         inference_ids,
         target_appearance_ids,
     )
+    result["prompt_source"] = "fallback"
+    for plan in result["plans"]:
+        plan["prompt_source"] = "fallback"
+    return result
 
 
 def _fallback_marketing_copy_lines(plan, product_name, language):
@@ -4469,6 +4480,7 @@ def _append_visible_copy_lock(prompt, visible_text_lines):
 
 
 def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
+    _require_prompt_os_fallback()
     plan = slot_input["slot_plan"]
     fact_trace = [item["fact_id"] for item in ledger["facts"][:2]]
     appearance_assets = {
@@ -4500,7 +4512,11 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
     display_prompt = _fallback_display_prompt(plan, visible_text_lines)
     prompt_parts = [
         f"Create a polished 1:1 Shopee ecommerce marketing image for {product_label}.",
+        f"Visual theme: {visual_theme}.",
+        f"Specific moment: {specific_moment}.",
+        f"Typography plan: {typography_plan}.",
         f"Director brief in Chinese for composition, moment, lighting, material, scene, product count, and typography: {display_prompt}",
+        "Use the references only for product identity, visible structure, color, proportion, and material cues.",
         f"Product scope: {subject_plan['product_scope']}. Visible unit count: {subject_plan['visible_unit_count']}. Usage/contact relationship: {subject_plan['usage_relationship']}.",
         f"person/hand/pet/scale context: {subject_plan['person_presence']}.",
         f"Scene and action: {plan['main_scene']}; {plan['main_action']}; exact moment: {specific_moment}.",
@@ -4527,6 +4543,7 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
             "visual_theme": visual_theme,
             "text_layout_theme": text_layout_theme,
             "typography_plan": typography_plan,
+            "prompt_source": "fallback",
             "display_prompt": display_prompt,
             "visible_text_lines": visible_text_lines,
             "localized_copy": {
@@ -4793,6 +4810,175 @@ def _prompt_node_json(client, node_id, instruction, payload, normalize=None, rep
         return normalize(value) if normalize is not None else value
 
     return _validated_provider_json(response, validate, repair)
+
+
+def _prompt_node_text(client, node_id, instruction, payload):
+    system_instruction, _ = _prompt_node_contract(node_id)
+    node_text = _render_node_user_message(node_id, instruction, payload)
+    request_payload = {
+        "system": system_instruction,
+        "text": node_text,
+    }
+    temperature = _prompt_node_temperature(node_id)
+    if temperature is not None:
+        request_payload["temperature"] = temperature
+    response = client.optimize_prompt(request_payload)
+    text = str(response.get("output_text") or "").strip()
+    if not text:
+        raise RuntimeError(PROMPT_GENERATION_FAILED_MESSAGE)
+    return text
+
+
+def _deepseek_text_n5_plans(raw_text, marketing_input, marketing_slots, fact_ids, inference_ids, target_appearance_ids):
+    text = str(raw_text or "").strip()
+    fact_ref = next(iter(fact_ids), "")
+    appearances = sorted(target_appearance_ids or [])
+    covered = set()
+    plans = []
+    modes = list(MARKETING_STRATEGY_MODES)
+    for index, slot in enumerate(marketing_slots):
+        selected = []
+        if appearances:
+            selected = [appearances[index % len(appearances)]]
+            covered.update(selected)
+            if index == len(marketing_slots) - 1:
+                selected = list(dict.fromkeys([*selected, *(set(appearances) - covered)]))
+        fact_refs = [fact_ref] if fact_ref else []
+        theme = f"DeepSeek 原文方案 {slot.order}"
+        plan = {
+            "slot_order": slot.order,
+            "role": slot.purpose or slot.name or theme,
+            "appearance_ids": selected,
+            "scene_family": f"deepseek-text-{slot.order}",
+            "environment": f"槽位 {slot.order} 按 DeepSeek 原文设计：{text}",
+            "camera": f"按 DeepSeek 原文镜头执行，槽位 {slot.order}",
+            "visual_theme": theme,
+            "specific_moment": text,
+            "aesthetic_point_of_view": text,
+            "typography_direction": text,
+            "decision_task": text,
+            "conversion_goal": text,
+            "fact_refs": fact_refs,
+            "inference_refs": [],
+            "main_scene": text,
+            "main_action": f"按 DeepSeek 原文动作执行，槽位 {slot.order}",
+            "subject_relationship": text,
+            "composition": f"按 DeepSeek 原文构图执行，槽位 {slot.order}",
+            "copy_intent": text,
+            "text_mode": "up_to_3_lines",
+            "visible_text_lines": [],
+            "localization_notes": [],
+            "must_show": [],
+            "must_avoid": [],
+            "prompt_source": "deepseek",
+            "raw_model_text": text,
+            "creative_strategy": _fallback_creative_strategy(
+                {
+                    "fact_refs": fact_refs,
+                    "decision_task": text,
+                    "copy_intent": text,
+                    "subject_relationship": text,
+                    "main_scene": text,
+                    "must_show": [],
+                },
+                modes[index % len(modes)],
+            ),
+        }
+        plans.append(plan)
+    result = _normalize_n5_plans(
+        {"plans": plans, "prompt_source": "deepseek", "raw_model_text": text},
+        marketing_slots,
+        fact_ids,
+        inference_ids,
+        target_appearance_ids,
+    )
+    result["raw_model_text"] = text
+    return result
+
+
+def _deepseek_text_n6_prompt(raw_text, slot_input, identity, ledger, rule_refs):
+    text = str(raw_text or "").strip()
+    plan = slot_input.get("slot_plan") or {}
+    fact_trace = [item["fact_id"] for item in ledger["facts"][:2]]
+    prompt = _limit_generation_prompt(text, [], limit=3500)
+    payload = {
+        "slot_id": str(slot_input["slot_order"]),
+        "main_scene": str(plan.get("main_scene") or text or "DeepSeek image design"),
+        "main_action": str(plan.get("main_action") or "follow the DeepSeek image design"),
+        "visual_theme": str(plan.get("visual_theme") or f"DeepSeek design {slot_input['slot_order']}"),
+        "text_layout_theme": str(plan.get("text_layout_theme") or _fallback_text_layout_theme(max(0, int(slot_input["slot_order"]) - 2))),
+        "typography_plan": str(plan.get("typography_direction") or text or "follow the DeepSeek typography design"),
+        "display_prompt": text,
+        "visible_text_lines": [],
+        "localized_copy": {
+            "language": slot_input.get("market_context", {}).get("language") or "en",
+            "lines": [],
+            "source_fact_refs": [],
+            "source_inference_refs": [],
+        },
+        "prompt": prompt,
+        "character_count": len(prompt),
+        "reference_plan": {
+            "primary_asset_id": identity["primary_asset_id"],
+            "supporting_asset_ids": [],
+            "completed_white_result_id": None,
+        },
+        "fact_trace": fact_trace,
+        "inference_trace": [],
+        "rule_refs": sorted(rule_refs),
+        "generation_parameters": {
+            "model": "gpt-image-2",
+            "n": 1,
+            "size": slot_input.get("size") or "1:1",
+            "resolution": slot_input.get("resolution") or "1k",
+        },
+        "review_required": True,
+        "prompt_source": "deepseek",
+        "raw_model_text": text,
+    }
+    return _normalize_n6_prompt(payload, slot_input["slot_order"], identity, ledger, rule_refs)
+
+
+def _prompt_node_n5_plan(client, node_id, instruction, payload, marketing_slots, fact_ids, inference_ids, target_appearance_ids):
+    text = _prompt_node_text(client, node_id, instruction, payload)
+    try:
+        value = _json_object(text)
+        _validate_prompt_node_schema(node_id, value)
+        result = _normalize_n5_plans(
+            value,
+            marketing_slots,
+            fact_ids,
+            inference_ids,
+            target_appearance_ids,
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        result = _deepseek_text_n5_plans(
+            text,
+            payload,
+            marketing_slots,
+            fact_ids,
+            inference_ids,
+            target_appearance_ids,
+        )
+    result["prompt_source"] = "deepseek"
+    result.setdefault("raw_model_text", text)
+    for plan in result["plans"]:
+        plan["prompt_source"] = "deepseek"
+        plan.setdefault("raw_model_text", text)
+    return result
+
+
+def _prompt_node_n6_plan(client, node_id, instruction, payload, identity, ledger, rule_refs):
+    text = _prompt_node_text(client, node_id, instruction, payload)
+    try:
+        value = _json_object(text)
+        _validate_prompt_node_schema(node_id, value)
+        result = _normalize_n6_prompt(value, payload["slot_order"], identity, ledger, rule_refs)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        result = _deepseek_text_n6_prompt(text, payload, identity, ledger, rule_refs)
+    result["prompt_source"] = "deepseek"
+    result.setdefault("raw_model_text", text)
+    return result
 
 
 def _identity_facts(identity):
@@ -5619,10 +5805,12 @@ def process_prompt_once(client=None, storage=None):
             main_scene=hero_plan.get("main_scene"),
             main_action=hero_plan.get("main_action"),
             node_name="N4",
+            preserve_directive_language=True,
         )
         compiled_by_slot[hero_slot.id]["reference_snapshot"] = approved_references
         compiled_by_slot[hero_slot.id]["input_snapshot"]["reference_snapshot"] = approved_references
         compiled_by_slot[hero_slot.id]["node_output"] = hero_plan
+        compiled_by_slot[hero_slot.id]["prompt_source"] = hero_plan.get("prompt_source", "deepseek")
 
         marketing_plan = {"plans": []}
         plans = {}
@@ -5657,28 +5845,21 @@ def process_prompt_once(client=None, storage=None):
                 "seed_style": cluster.prompt_override or cluster.batch.global_prompt,
             }
             try:
-                marketing_plan = _prompt_node_json(
+                marketing_plan = _prompt_node_n5_plan(
                     client,
                     n5_node,
                     "Plan one distinct purchase-decision scene for every supplied marketing slot. Vary scene family, environment, camera, action, and composition.",
-                    marketing_input,
-                    normalize=lambda value: _normalize_n5_plans(
-                        value,
-                        marketing_slots,
-                        fact_ids,
-                        inference_ids,
-                        target_appearance_ids,
-                    ),
-                )
-                n5_model = settings.APIMART_PROMPT_MODEL
-            except Exception:
-                marketing_plan = _fallback_n5_plans(
                     marketing_input,
                     marketing_slots,
                     fact_ids,
                     inference_ids,
                     target_appearance_ids,
                 )
+                n5_model = settings.APIMART_PROMPT_MODEL
+            except Exception:
+                if not _prompt_os_allow_fallback():
+                    raise RuntimeError(PROMPT_GENERATION_FAILED_MESSAGE) from None
+                marketing_plan = _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids, target_appearance_ids)
                 n5_model = "deterministic-rule-engine"
             node_snapshots.append(
                 _node_snapshot(n5_node, n5_model, marketing_input, marketing_plan)
@@ -5730,21 +5911,19 @@ def process_prompt_once(client=None, storage=None):
                 n6_inputs_by_slot[slot.id] = copy.deepcopy(slot_input)
                 n6_rule_refs_by_slot[slot.id] = set(slot_rule_refs)
                 try:
-                    slot_plan = _prompt_node_json(
+                    slot_plan = _prompt_node_n6_plan(
                         client,
                         n6_node,
                         f"SLOT_ORDER={slot.order}\nCompile one localized image instruction for this slot with one scene, one main action, and at most three visible text lines.",
                         slot_input,
-                        normalize=lambda value, order=slot.order, refs=slot_rule_refs: _normalize_n6_prompt(
-                            value,
-                            order,
-                            identity,
-                            ledger,
-                            refs,
-                        ),
+                        identity,
+                        ledger,
+                        slot_rule_refs,
                     )
                     n6_model = settings.APIMART_PROMPT_MODEL
                 except Exception:
+                    if not _prompt_os_allow_fallback():
+                        raise RuntimeError(PROMPT_GENERATION_FAILED_MESSAGE) from None
                     slot_plan = _fallback_n6_prompt(slot_input, identity, ledger, slot_rule_refs)
                     n6_model = "deterministic-rule-engine"
                 node_snapshots.append(
@@ -5766,6 +5945,7 @@ def process_prompt_once(client=None, storage=None):
                     main_scene=slot_plan["main_scene"],
                     main_action=slot_plan["main_action"],
                     node_name=n6_node,
+                    preserve_directive_language=True,
                 )
                 slot_references = _appearance_reference_paths(
                     cluster_assets,
@@ -5777,6 +5957,7 @@ def process_prompt_once(client=None, storage=None):
                     "reference_snapshot"
                 ] = slot_references
                 compiled_by_slot[slot.id]["node_output"] = slot_plan
+                compiled_by_slot[slot.id]["prompt_source"] = slot_plan.get("prompt_source", "deepseek")
 
         _set_preparation_progress(cluster.id, claimed_revision, "N7", 6)
         gate_blocks = []
@@ -5844,7 +6025,7 @@ def process_prompt_once(client=None, storage=None):
                     rewrite_input["rewrite_reasons"] = gate["rewrite_reasons"]
                     slot_rule_refs = n6_rule_refs_by_slot[slot.id]
                     try:
-                        slot_plan = _prompt_node_json(
+                        slot_plan = _prompt_node_n6_plan(
                             client,
                             n6_node,
                             (
@@ -5854,16 +6035,14 @@ def process_prompt_once(client=None, storage=None):
                                 "and replace only the localized copy plus matching final image prompt."
                             ),
                             rewrite_input,
-                            normalize=lambda value, order=slot.order, refs=slot_rule_refs: _normalize_n6_prompt(
-                                value,
-                                order,
-                                identity,
-                                ledger,
-                                refs,
-                            ),
+                            identity,
+                            ledger,
+                            slot_rule_refs,
                         )
                         rewrite_model = settings.APIMART_PROMPT_MODEL
                     except Exception:
+                        if not _prompt_os_allow_fallback():
+                            raise RuntimeError(PROMPT_GENERATION_FAILED_MESSAGE) from None
                         slot_plan = _fallback_n6_prompt(rewrite_input, identity, ledger, slot_rule_refs)
                         rewrite_model = "deterministic-rule-engine"
                     node_snapshots.append(
@@ -5885,6 +6064,7 @@ def process_prompt_once(client=None, storage=None):
                         main_scene=slot_plan["main_scene"],
                         main_action=slot_plan["main_action"],
                         node_name=n6_node,
+                        preserve_directive_language=True,
                     )
                     slot_references = _appearance_reference_paths(
                         cluster_assets,
@@ -5894,6 +6074,7 @@ def process_prompt_once(client=None, storage=None):
                     compiled_by_slot[slot.id]["reference_snapshot"] = slot_references
                     compiled_by_slot[slot.id]["input_snapshot"]["reference_snapshot"] = slot_references
                     compiled_by_slot[slot.id]["node_output"] = slot_plan
+                    compiled_by_slot[slot.id]["prompt_source"] = slot_plan.get("prompt_source", "deepseek")
                     compiled = compiled_by_slot[slot.id]
                     prompt_text = compiled["prompt"]
                     final_references = list(compiled["reference_snapshot"])
@@ -5973,8 +6154,16 @@ def process_prompt_once(client=None, storage=None):
             input_snapshot["reference_snapshot"] = final_references
             if node_temperature is not None:
                 input_snapshot["_node_temperature"] = node_temperature
+            prompt_source = (
+                compiled.get("prompt_source")
+                or compiled.get("node_output", {}).get("prompt_source")
+            )
+            if prompt_source:
+                input_snapshot["prompt_source"] = prompt_source
             source_snapshot = copy.deepcopy(input_snapshot)
             structured_output = copy.deepcopy(compiled)
+            if prompt_source:
+                structured_output["prompt_source"] = prompt_source
             structured_output["_preparation_revision"] = claimed_revision
             structured_output["_effective_config_signature"] = config_signature
             structured_output["_preparation_lineage"] = lineage
@@ -6154,6 +6343,12 @@ def _same_slot_n7_snapshot(cluster, slot, snapshot_id):
     return None
 
 
+def _prompt_version_source(prompt_version):
+    structured = prompt_version.structured_output if isinstance(prompt_version.structured_output, dict) else {}
+    node_output = structured.get("node_output") if isinstance(structured.get("node_output"), dict) else {}
+    return str(structured.get("prompt_source") or node_output.get("prompt_source") or "").strip()
+
+
 def _validate_prompt_version_readiness(
     prompt_version,
     cluster,
@@ -6179,6 +6374,8 @@ def _validate_prompt_version_readiness(
     if allowed_nodes and _node_family(prompt_version.node_name) not in allowed_nodes:
         expected = "/".join(sorted(allowed_nodes))
         raise ValueError(f"Current PromptVersion must come from {expected}")
+    if _prompt_version_source(prompt_version) == "fallback" and not _prompt_os_allow_fallback():
+        raise ValueError("fallback PromptVersion cannot enter formal generation")
 
     revision = _preparation_revision(cluster.analysis_snapshot)
     config_signature = _effective_config_signature(batch, cluster)

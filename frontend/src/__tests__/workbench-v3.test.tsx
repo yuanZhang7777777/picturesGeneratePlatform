@@ -309,7 +309,7 @@ test("hides technical preparation errors from operators", async () => {
   stubFetch({ projectSnapshot: failedProject });
   renderApp();
 
-  expect(await screen.findByText(/预备未完成 · 系统已自动降级处理/)).toBeInTheDocument();
+  expect(await screen.findByText(/预备未完成 · 提示词生成失败，请重试预备生成/)).toBeInTheDocument();
   expect(screen.queryByText(/evidence_refs/)).not.toBeInTheDocument();
 });
 

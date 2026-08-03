@@ -140,7 +140,8 @@ function friendlyPreparationError(error: string) {
   if (/Product is being prepared/i.test(error)) return "商品正在处理，完成后再修改或重新生成";
   if (/Cluster changed|refresh before saving/i.test(error)) return "商品信息刚刚更新，请刷新后再保存";
   if (/Product is archived/i.test(error)) return "商品已归档，不能继续修改";
-  if (/image_role|visible product identity|schema|JSON|observed_identity|N2 may only|owned product reference|placeholder string|must be|must identify|additionalProperties|evidence_refs|fact_refs|reference_plan|Expecting value/i.test(error)) return "系统已自动降级处理，请再次点击预备生成或正式生成";
+  if (/提示词生成失败/i.test(error)) return "提示词生成失败，请重试预备生成";
+  if (/image_role|visible product identity|schema|JSON|observed_identity|N2 may only|owned product reference|placeholder string|must be|must identify|additionalProperties|evidence_refs|fact_refs|reference_plan|Expecting value|DeepSeek/i.test(error)) return "提示词生成失败，请重试预备生成";
   if (/no product|cannot confirm|identity_needs_input|product identity/i.test(error)) return "图片中没有可识别商品，请换图或补充商品信息";
   return error;
 }

@@ -213,6 +213,31 @@ def test_ensure_cluster_generations_cannot_compile_a_missing_prompt_version(
     assert Generation.objects.filter(cluster=cluster).count() == 0
 
 
+def test_generation_gate_rejects_fallback_prompt_source_when_fallback_disabled(
+    tmp_path,
+    settings,
+):
+    from platform_app.models import Generation, OutputTemplate, PromptVersion
+    from platform_app.services import ensure_cluster_generations
+
+    settings.PROMPT_OS_ALLOW_FALLBACK = False
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    slot = template.slots.get(order=1)
+    prompt = approve_prompt(cluster, user, slot)
+    structured = dict(prompt.structured_output)
+    structured["prompt_source"] = "fallback"
+    PromptVersion.objects.filter(id=prompt.id).update(structured_output=structured)
+
+    with pytest.raises(ValueError, match="fallback"):
+        ensure_cluster_generations(cluster, user)
+
+    assert Generation.objects.filter(cluster=cluster).count() == 0
+
+
 @pytest.mark.parametrize(
     ("revision", "node_name", "gate", "current_config", "message"),
     [
