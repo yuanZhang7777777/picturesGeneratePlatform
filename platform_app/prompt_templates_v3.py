@@ -507,7 +507,7 @@ N5_CORE = """
 
 # 八个互不重复的购买决策任务
 八个营销槽位按输入职责覆盖并保持独立：第二视角与结构确认、核心收益、事实证明、使用理解、细节信任、尺度或适配、规格包装或包含物、场景体验与购买收尾。缺少规格、包装或包含物证据时，相应槽位改为尚未覆盖的低风险购买疑问，例如“怎么用、为什么更顺手、放在哪里、谁会喜欢、什么场合想带走”，不得重复既有卖点或发明事实。
-所有运营可见字段用中文输出，包括 decision_task、conversion_goal、copy_intent、main_scene、main_action、subject_relationship、composition、localization_notes、must_show、must_avoid 和 creative_strategy 内的文案字段。不要输出英文口号或英文图片 Prompt；英文生图指令由 N6 编译。
+所有运营可见字段用中文输出，包括 decision_task、conversion_goal、copy_intent、main_scene、main_action、subject_relationship、composition、localization_notes、must_show、must_avoid 和 creative_strategy 内的文案字段。decision_task 只用于内部策划，不是给运营编辑的图片提示词。不要输出英文口号或英文图片 Prompt；英文生图指令由 N6 编译。
 
 # 五种转化文案策略
 每槽必须从 creative_strategy.mode 的五种候选中选一个主策略：fab_value、scene_ownership、emotion、personification、identity_signal。先做 Feature→Advantage→Benefit：把商品可验证 feature 翻译成 advantage，再翻译成 consumer_benefit；再用 scene_ownership 的 mental simulation 做“买家脑中正在使用它”的画面，用 emotion 写使用前后的情绪变化，用 personification 让商品以轻口吻说一个价值点，用 identity_signal 让商品代表审美、品位、送礼眼光或自我表达。八图至少覆盖四种 mode，至少一张 fab_value，personification 默认最多一张。执行 cross-slot diversity：不同槽位不能只换形容词复用同一购买问题、同一场景、同一动作、同一光线或同一构图。
@@ -526,7 +526,7 @@ N5_CORE = """
 5. 每槽 appearance_ids 只能引用 N2 target_appearances。白底/款式总览覆盖全部外观；其他槽可选子集，但整套营销计划必须覆盖所有外观。
 
 # 文字意图与本地化
-每槽 copy_intent 只描述一个短标题、一个可选副标题或短标注的事实意图，不直接创作最终文案。text_mode 只能 none 或 up_to_3_lines；规则禁字或员工关闭文字时为 none。localization_notes 说明目标市场语气、禁用词和移动端短文案要求，不允许价格、折扣、最高级、认证、疗效、减重、美容前后对比、站外导流或保证性承诺，除非确认事实和已验证规则同时允许。
+每槽 copy_intent 只描述一个短标题、一个可选副标题或短标注的事实意图，不直接创作最终文案。营销图默认 text_mode=up_to_3_lines；只有白底图、原图直通、规则明确禁止文字或员工关闭文字时才为 none。localization_notes 说明目标市场语气、禁用词和移动端短文案要求，不允许价格、折扣、最高级、认证、疗效、减重、美容前后对比、站外导流或保证性承诺，除非确认事实和已验证规则同时允许。
 
 # 严格输出
 只输出符合 output_schema 的单个 JSON 对象，顶层唯一字段为 plans，不输出 Markdown、解释、代码围栏或额外字段。plans 的数量、slot_order 和顺序必须与输入 slots 完全一致；每个计划必须包含 scene_family、environment、camera、decision_task、main_scene、main_action、subject_relationship、composition 以及 Schema 规定的其余字段。格式、缺槽或差异化失败只允许同输入修复一次。
@@ -554,7 +554,7 @@ N5_PLATFORM = {
 N6_CORE = """
 # 角色与任务
 你是本地化单槽图片 Prompt 编译器。一次只编译一个营销槽位，将 N5 的中文营销策划、商品身份、事实台账、市场上下文、规则指令与参考图计划压缩为严格 JSON。display_prompt 是给中国运营看的中文画面策划稿，可直接在前端编辑；prompt 是在 display_prompt 确认后编译出的英文 gpt-image-2 生图指令。你不重新策划八图、不创建事实、不改变槽位职责。
-display_prompt 必须用中文写清楚：这张图解决什么购买疑虑、画面怎么拍、主体和功能部件如何出现、是否有当地语言图片文案、构图/光线/道具如何服务购买理由。不要在 display_prompt 里写英文字段名或模型内部说明。
+display_prompt 必须是给中国运营直接看的“中文画面提示词”，不是策略说明。必须按画面语言写清楚：画面是什么、主体/功能部件如何出现、人物或道具如何配合、构图/光线/空间层次如何服务购买理由、图片上要显示的目标国家语言文案是什么。不要用“购买任务：”“用户价值：”“场景代入：”开头；不要写英文字段名、模型内部说明或英文生图指令。
 
 # 输入优先级与冲突修正
 优先级依次为：系统安全与硬规则；identity_lock；confirmed 事实与已验证真实使用关系；当前 slot_plan 的购买决策；允许用途匹配的 observed/inferred；抽象风格。当前计划若与更高优先级冲突，静默纠正并在 trace 中保留使用的真实 ID，不得保留错误摆法、错误数量或虚构卖点。
@@ -579,7 +579,7 @@ display_prompt 必须用中文写清楚：这张图解决什么购买疑虑、�
 1. 画面与文案只能引用 fact_ledger 中 allowed_uses 匹配 visual_prompt、scene_planning、consumer_copy 或 consumer_copy_pending_review 的记录。inferred 内容必须进入 inference_trace；blocked 或高风险推断不得进入可见文字。
 2. 最终图像 Prompt 用正向边界表达：只使用已确认或允许推断的商品证据、已锁定本地化文案和当前槽位需要的信息。价格、折扣、认证、疗效、减重、美容前后对比、绝对效果、安全保证、质保、产地、精确容量、兼容保证或站外导流等风险主题留给 N7 内部审查，不作为一长串负向词塞入最终图像 Prompt。包装、配件和内部结构必须有事实引用。
 3. 目标语言直接创作：根据 market_context 先静默生成三个候选，分别偏向清晰收益、具体场景和情绪/身份表达；不要先写中文再翻译，也不要输出候选过程。用 semantic back translation 做语义回译，检查它是否流畅、无歧义、符合当前场景和商品事实，再选择 quality 分最高的一版作为 localized_copy.lines。
-4. 营销图默认必须输出 1–3 行 visible_text_lines，每行短、自然、只出现一次；只有 text_enabled=false、规则禁字、白底图或原图直通槽位才允许零行。text_enabled=false 或规则禁字时 localized_copy.lines 与 visible_text_lines 都为空。
+4. 营销图默认必须输出 1–3 行 visible_text_lines，每行短、自然、只出现一次，并且与当前画面购买理由强相关；只有 text_enabled=false、规则禁字、白底图或原图直通槽位才允许零行。text_enabled=false 或规则禁字时 localized_copy.lines 与 visible_text_lines 都为空。
 5. 逐字冻结：localized_copy.lines 是冻结文本，最终 prompt 只能把这些行作为 quoted visible text 逐字交给 gpt-image-2，不允许模型再翻译、改写、增删、替换同义词或自动生成额外文字。
 6. 英文图片控制：最终 prompt 的图片控制指令必须是英文；只有 quoted visible_text_lines 与商品本身真实品牌/型号可使用目标语言或原文。Prompt 必须明确：Only render the quoted localized copy below exactly as quoted; do not translate, rewrite, add, omit, or render field labels, site codes, language names, internal instructions, or any other text.
 7. 文案区只能有一个，保持移动端可读，不遮挡商品关键结构。不要把 Headline、Subheadline、Callouts、slot_id、role、screen、module、layout 等字段名渲染进图。

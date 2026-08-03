@@ -4050,7 +4050,96 @@ def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids
 
 
 def _fallback_marketing_copy_lines(plan, product_name, language):
-    return []
+    if str(plan.get("text_mode") or "").lower() == "none":
+        return []
+    slot_order = int(plan.get("slot_order") or 2)
+    index = max(0, min(7, slot_order - 2))
+    language_key = str(language or "en").lower()
+    copy_bank = {
+        "vi": [
+            ["Gọn gàng sau bữa", "Dùng là thấy tiện"],
+            ["Nhìn rõ từng chi tiết", "Chọn yên tâm hơn"],
+            ["Dùng đúng lúc cần", "Việc nhỏ nhẹ hơn"],
+            ["Ở nhà hay mang đi", "Luôn vừa tay"],
+            ["Đặt vào là gọn", "Lấy ra là dùng"],
+            ["Trọn bộ dễ chọn", "Không phải nghĩ thêm"],
+            ["Hợp với nhịp sống của bạn", "Nhìn là muốn dùng"],
+            ["Sẵn sàng cho hôm nay", "Chọn một lần, dùng lâu"],
+        ],
+        "th": [
+            ["หยิบใช้แล้วรู้สึกสะดวก", "เก็บง่ายทุกวัน"],
+            ["เห็นรายละเอียดชัด", "เลือกได้มั่นใจกว่า"],
+            ["ใช้ได้พอดีกับจังหวะชีวิต", "เรื่องเล็กง่ายขึ้น"],
+            ["อยู่บ้านหรือพกไปก็ลงตัว", "หยิบใช้สบายมือ"],
+            ["วางแล้วเป็นระเบียบ", "หยิบใช้ได้ทันที"],
+            ["ครบชุด เลือกง่าย", "ไม่ต้องคิดเยอะ"],
+            ["เข้ากับวันของคุณ", "เห็นแล้วอยากใช้"],
+            ["พร้อมสำหรับวันนี้", "เลือกครั้งเดียว ใช้ได้นาน"],
+        ],
+        "ms": [
+            ["Kemas selepas digunakan", "Mudah dipakai setiap hari"],
+            ["Butiran jelas dilihat", "Lebih yakin untuk pilih"],
+            ["Berguna tepat pada masanya", "Rutin jadi lebih mudah"],
+            ["Di rumah atau dibawa keluar", "Selesa di tangan"],
+            ["Simpan kemas, ambil mudah", "Sedia bila diperlukan"],
+            ["Satu set yang senang dipilih", "Tak perlu fikir lama"],
+            ["Sesuai dengan gaya harian anda", "Nampak terus ingin guna"],
+            ["Sedia untuk hari ini", "Pilih sekali, guna lama"],
+        ],
+        "id": [
+            ["Rapi setelah dipakai", "Mudah untuk sehari-hari"],
+            ["Detail terlihat jelas", "Lebih yakin memilih"],
+            ["Pas saat dibutuhkan", "Rutinitas jadi ringan"],
+            ["Di rumah atau dibawa pergi", "Nyaman digenggam"],
+            ["Simpan rapi, ambil cepat", "Siap saat perlu"],
+            ["Satu set, mudah dipilih", "Tak perlu bingung"],
+            ["Cocok untuk hari Anda", "Lihat sekali ingin pakai"],
+            ["Siap untuk hari ini", "Pilih sekali, pakai lama"],
+        ],
+        "zh": [
+            ["用完好收納", "每天都順手"],
+            ["細節看得見", "選得更安心"],
+            ["剛好用在需要的時刻", "小事變輕鬆"],
+            ["在家或外出都合適", "拿起來就順手"],
+            ["放好就整齊", "要用隨手拿"],
+            ["一套就好選", "不用多想"],
+            ["放進你的日常", "看見就想用"],
+            ["今天就能用上", "選一次，用很久"],
+        ],
+        "pt": [
+            ["Tudo no lugar depois de usar", "Prático no dia a dia"],
+            ["Detalhes que dão confiança", "Escolha com mais segurança"],
+            ["Na hora certa, do jeito certo", "A rotina fica mais leve"],
+            ["Em casa ou para levar", "Conforto na mão"],
+            ["Guardar fácil, usar rápido", "Pronto quando precisar"],
+            ["Um conjunto fácil de escolher", "Sem complicar"],
+            ["Combina com seu dia", "Dá vontade de usar"],
+            ["Pronto para hoje", "Escolha uma vez, use por muito tempo"],
+        ],
+        "en": [
+            ["Tidy after every use", "Ready when you need it"],
+            ["Details you can trust", "Choose with confidence"],
+            ["Useful right when it matters", "Small tasks feel easier"],
+            ["At home or on the go", "Comfort in hand"],
+            ["Store neatly, grab quickly", "Ready in seconds"],
+            ["A complete set, easy to choose", "No second guessing"],
+            ["Fits into your day", "Made to be used"],
+            ["Ready for today", "Choose once, use often"],
+        ],
+    }
+    if language_key.startswith("vi"):
+        return copy_bank["vi"][index]
+    if language_key.startswith("th"):
+        return copy_bank["th"][index]
+    if language_key.startswith("ms"):
+        return copy_bank["ms"][index]
+    if language_key.startswith("id"):
+        return copy_bank["id"][index]
+    if language_key.startswith("zh"):
+        return copy_bank["zh"][index]
+    if language_key.startswith("pt"):
+        return copy_bank["pt"][index]
+    return copy_bank["en"][index]
 
 
 def _append_visible_copy_lock(prompt, visible_text_lines):
@@ -4115,7 +4204,13 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
             "slot_id": str(slot_input["slot_order"]),
             "main_scene": plan["main_scene"],
             "main_action": plan["main_action"],
-            "display_prompt": f"购买任务：{plan['decision_task']}。画面：{plan['main_scene']}。动作：{plan['main_action']}。构图：{plan['composition']}。",
+            "display_prompt": (
+                f"画面：{plan['main_scene']}。"
+                "主体：商品清晰可见，按当前槽位展示完整套装或合理使用子集。"
+                f"动作：{plan['main_action']}。"
+                f"构图：{plan['composition']}。"
+                f"图片文案：{' / '.join(visible_text_lines) if visible_text_lines else '无'}。"
+            ),
             "visible_text_lines": visible_text_lines,
             "localized_copy": {
                 "language": language,

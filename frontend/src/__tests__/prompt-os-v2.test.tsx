@@ -80,7 +80,7 @@ test("shows Chinese product recognition details without exposing soft compliance
   expect(screen.queryByText(/发布前需人工复核材质/)).not.toBeInTheDocument();
 });
 
-test("shows marketing strategy, localized copy and final prompt without JSON field names", () => {
+test("shows localized copy and visual prompt without exposing strategy labels", () => {
   render(<PromptEditor sku={{
     ...sku,
     prompts: [
@@ -100,16 +100,16 @@ test("shows marketing strategy, localized copy and final prompt without JSON fie
     ],
   }} onSave={() => undefined} />);
 
-  expect(screen.getByText("场景代入")).toBeInTheDocument();
-  expect(screen.getByText(/让用户想象早上随手现榨/)).toBeInTheDocument();
   expect(screen.getByText(/每天早上顺滑搅拌/)).toBeInTheDocument();
   expect(screen.getAllByText(/Xay mịn mỗi sáng/).length).toBeGreaterThan(0);
   expect((screen.getByLabelText("02 核心卖点图提示词") as HTMLTextAreaElement).value).toContain("通勤前");
+  expect(screen.queryByText("场景代入")).not.toBeInTheDocument();
+  expect(screen.queryByText(/购买任务：/)).not.toBeInTheDocument();
   expect(screen.queryByText("高级：最终生图指令")).not.toBeInTheDocument();
   expect(screen.queryByText(/localized_copy|creative_strategy|back_translation/)).not.toBeInTheDocument();
 });
 
-test("hides internal English image prompts from operator textareas", () => {
+test("converts internal English prompts into Chinese visual prompt drafts", () => {
   render(<PromptEditor sku={{
     ...sku,
     prompts: [{
@@ -122,9 +122,20 @@ test("hides internal English image prompts from operator textareas", () => {
   }} onSave={() => undefined} />);
 
   const field = screen.getByLabelText("03 商品细节图提示词") as HTMLTextAreaElement;
-  expect(field.value).toContain("让买家相信产品细节经得起近看");
+  expect(field.value).toContain("画面：");
+  expect(field.value).toContain("主体：商品清晰可见");
+  expect(field.value).toContain("图片文案：พร้อมใช้ทุกวัน");
+  expect(field.value).not.toContain("购买任务：");
   expect(field.value).not.toContain("Create a polished ecommerce");
   expect(screen.getAllByText(/พร้อมใช้ทุกวัน/).length).toBeGreaterThan(0);
+});
+
+test("uses placeholders instead of editable fake prompt text before preparation", () => {
+  render(<PromptEditor sku={{ ...sku, prompts: [] }} onSave={() => undefined} />);
+
+  const field = screen.getByLabelText("02 核心卖点图提示词") as HTMLTextAreaElement;
+  expect(field.value).toBe("");
+  expect(field.placeholder).toContain("预备生成后显示");
 });
 
 test("posts edited prompts as a structured snake-case array", async () => {

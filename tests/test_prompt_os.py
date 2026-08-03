@@ -3631,6 +3631,10 @@ def test_fallback_n6_creates_target_language_marketing_copy_for_named_product():
     assert compiled["visible_text_lines"]
     assert compiled["localized_copy"]["lines"] == compiled["visible_text_lines"]
     assert all("奶龙" not in line for line in compiled["visible_text_lines"])
+    assert "ภาพ" not in " ".join(compiled["visible_text_lines"])
+    assert "购买任务" not in compiled["display_prompt"]
+    assert "画面：" in compiled["display_prompt"]
+    assert "图片文案：" in compiled["display_prompt"]
     assert "Only render the quoted localized copy" in compiled["prompt"]
     assert "no extra" not in compiled["prompt"].lower()
     assert "missing" not in compiled["prompt"].lower()
@@ -3665,10 +3669,10 @@ def test_n6_normalization_replaces_english_copy_for_thai_market():
 
     normalized = _normalize_n6_prompt(payload, 3, identity, ledger, set())
 
-    assert normalized["visible_text_lines"] == ["พาฉันกลับบ้าน", "อยู่ข้างคุณทุกวัน"]
+    assert normalized["visible_text_lines"] == ["หยิบใช้แล้วรู้สึกสะดวก", "เก็บง่ายทุกวัน"]
     assert normalized["localized_copy"]["lines"] == normalized["visible_text_lines"]
     assert "Final visible copy lock" in normalized["prompt"]
-    assert "พาฉันกลับบ้าน" in normalized["prompt"]
+    assert "หยิบใช้แล้วรู้สึกสะดวก" in normalized["prompt"]
     assert "Take me home" not in normalized["prompt"]
 
 
@@ -3711,6 +3715,7 @@ def test_fallback_n6_usage_set_does_not_force_holder_into_every_scene():
 
     compiled = _fallback_n6_prompt(slot_input, identity, ledger, set())
 
+    assert compiled["visible_text_lines"]
     assert "functional product component" in compiled["prompt"]
     assert "multiple co-primary usable pieces" in compiled["prompt"]
     assert "natural co-use subset" in compiled["prompt"]

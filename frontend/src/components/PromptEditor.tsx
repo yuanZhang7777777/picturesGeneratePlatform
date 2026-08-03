@@ -14,32 +14,24 @@ const defaultPrompts = [
   "补充转化图",
 ].map((slot, index) => ({ slotOrder: index + 1, slot, text: "" }));
 
-const strategyLabels: Record<string, string> = {
-  fab_value: "FAB价值",
-  scene_ownership: "场景代入",
-  emotion: "情绪触发",
-  personification: "商品拟人",
-  identity_signal: "身份表达",
-};
-
 type PromptDraft = {
   prompts: ProductPrompt[];
 };
 
 function visiblePromptText(prompt: ProductPrompt) {
+  const hasGeneratedContent = Boolean(
+    prompt.text.trim()
+    || prompt.displayPrompt?.trim()
+    || prompt.decisionTask
+    || prompt.conversionGoal
+    || prompt.creativeStrategy
+    || prompt.localizedCopy?.lines?.length,
+  );
+  if (!hasGeneratedContent) return "";
   const displayPrompt = prompt.displayPrompt?.trim() ?? "";
-  if (displayPrompt && !isInternalImagePrompt(displayPrompt) && !isEnglishHeavy(displayPrompt)) return displayPrompt;
-  const parts = [
-    prompt.decisionTask ? `购买任务：${prompt.decisionTask}` : "",
-    prompt.conversionGoal && prompt.conversionGoal !== prompt.decisionTask ? `转化目标：${prompt.conversionGoal}` : "",
-    prompt.creativeStrategy?.consumerBenefit ? `用户价值：${prompt.creativeStrategy.consumerBenefit}` : "",
-    prompt.creativeStrategy?.mentalSimulation ? `场景代入：${prompt.creativeStrategy.mentalSimulation}` : "",
-    prompt.creativeStrategy?.emotionalShift ? `情绪触发：${prompt.creativeStrategy.emotionalShift}` : "",
-    prompt.localizedCopy?.lines?.length ? `图片文案：${prompt.localizedCopy.lines.join(" / ")}` : "",
-  ].filter((part) => /[\u3400-\u9fff]/.test(part) || /[^\x00-\x7F]/.test(part));
-  if (parts.length) return parts.join("\n");
-  if (/[\u3400-\u9fff]/.test(prompt.text) && !isInternalImagePrompt(prompt.text) && !isEnglishHeavy(prompt.text)) return prompt.text;
-  return fallbackChinesePrompt(prompt.slotOrder);
+  if (displayPrompt && !isInternalImagePrompt(displayPrompt) && !isEnglishHeavy(displayPrompt)) return cleanOperatorPrompt(displayPrompt, prompt);
+  if (/[\u3400-\u9fff]/.test(prompt.text) && !isInternalImagePrompt(prompt.text) && !isEnglishHeavy(prompt.text)) return cleanOperatorPrompt(prompt.text, prompt);
+  return buildVisualPrompt(prompt, "");
 }
 
 function isInternalImagePrompt(value: string) {
@@ -64,6 +56,44 @@ function fallbackChinesePrompt(order: number) {
     "做一张适合平台列表转化的营销图。",
     "补充最后一个购买理由，让买家愿意下单。",
   ][order - 1] ?? `第 ${order} 张图的中文画面策划。`;
+}
+
+function extractChinesePart(value: string, label: string) {
+  const match = value.match(new RegExp(`${label}[：:]\\s*([^。；;\\n]+)`));
+  return match?.[1]?.trim() ?? "";
+}
+
+function slotScene(order: number) {
+  return [
+    "干净白底产品主图，完整呈现商品主体，方便上架。",
+    "围绕商品最能打动买家的好处设计一张转化图，商品是视觉中心。",
+    "用近景或局部构图展示材质、结构、触感或关键细节。",
+    "用一个真实动作说明商品怎么用、解决什么问题。",
+    "设计一个买家能代入的使用场景，让商品自然参与其中。",
+    "展示商品大小、使用对象或空间比例，让买家快速理解尺度。",
+    "展示尺寸、套装、包装或包含物；没有包装资料时只展示商品本身。",
+    "做一张适合平台列表点击的营销图，画面有明确购买理由。",
+    "补充最后一个转化理由，让买家觉得现在就可以下单。",
+  ][order - 1] ?? fallbackChinesePrompt(order);
+}
+
+function cleanOperatorPrompt(value: string, prompt: ProductPrompt) {
+  if (!/(购买任务|转化目标|用户价值|场景代入|情绪触发|画面[：:]|动作[：:]|构图[：:])/.test(value)) return value;
+  return buildVisualPrompt(prompt, value);
+}
+
+function buildVisualPrompt(prompt: ProductPrompt, source: string) {
+  const scene = extractChinesePart(source, "画面") || slotScene(prompt.slotOrder);
+  const action = extractChinesePart(source, "动作") || prompt.creativeStrategy?.mentalSimulation || prompt.creativeStrategy?.consumerBenefit || prompt.decisionTask || "围绕当前图类型安排一个清楚、自然、能看懂的动作。";
+  const composition = extractChinesePart(source, "构图") || "商品占据主要视觉位置，背景、道具和人物只服务这张图的购买理由，不照搬上传原图构图。";
+  const copy = prompt.localizedCopy?.lines?.filter(Boolean).join(" / ");
+  return [
+    `画面：${scene}`,
+    "主体：商品清晰可见，作为画面主角；多图商品按当前槽位需要选择完整套装或合理子集。",
+    `动作：${action}`,
+    `构图：${composition}`,
+    `图片文案：${copy || "无；如需要文字，预备生成会按所选国家语言生成。"}`
+  ].join("\n");
 }
 
 function promptsFromSku(sku: ProductSku) {
@@ -113,14 +143,9 @@ function evidenceLabel(value: string) {
 }
 
 function promptMeta(prompt: ProductPrompt) {
-  const mode = prompt.creativeStrategy?.mode ?? prompt.localizedCopy?.strategyMode;
-  const label = mode ? strategyLabels[mode] ?? mode : "";
   const copyLines = prompt.localizedCopy?.lines?.filter(Boolean) ?? [];
-  const task = prompt.decisionTask ?? prompt.conversionGoal ?? "";
   return {
-    label,
     copyLines,
-    task: /[\u3400-\u9fff]/.test(task) ? task : "",
     backTranslation: prompt.localizedCopy?.backTranslation ?? "",
   };
 }
@@ -191,7 +216,11 @@ export function PromptEditor({
   const stage = preparation?.stage ?? "";
   const promptStage = ["N4", "N5", "N6", "N7"].includes(stage);
   const progressLabel = promptStage ? "正在生成 1+8 提示词" : "正在读取并理解商品图片";
-  const promptPlaceholder = preparing && !promptStage ? "商品图片读取完成后，会自动生成中文提示词" : preparing ? "正在生成这个槽位的中文提示词" : "预备生成后显示，可人工微调";
+  const promptPlaceholder = (slotOrder: number) => preparing && !promptStage
+    ? "商品图片读取完成后，会自动生成中文提示词"
+    : preparing
+      ? "正在生成这个槽位的中文提示词"
+      : `预备生成后显示：${fallbackChinesePrompt(slotOrder)}`;
 
   return (
     <section className="mt-4 space-y-4">
@@ -246,7 +275,7 @@ export function PromptEditor({
               <textarea
                 aria-label={label}
                 disabled={prompt.readOnly}
-                placeholder={promptPlaceholder}
+                placeholder={promptPlaceholder(prompt.slotOrder)}
                 value={prompt.text}
                 onChange={(event) => updatePrompt(prompt.slotOrder, event.target.value)}
               />
@@ -273,13 +302,9 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
 
 function PromptMeta({ prompt }: { prompt: ProductPrompt }) {
   const meta = promptMeta(prompt);
-  if (!meta.label && !meta.task && !meta.backTranslation && meta.copyLines.length === 0) return null;
+  if (!meta.backTranslation && meta.copyLines.length === 0) return null;
   return (
     <div className="mb-2 rounded-md bg-white px-3 py-2 text-xs text-slate-600">
-      <div className="flex flex-wrap gap-2">
-        {meta.label && <span className="rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700">{meta.label}</span>}
-        {meta.task && <span>购买任务：{meta.task}</span>}
-      </div>
       {meta.copyLines.length > 0 && <p className="mt-1">图片文案：{meta.copyLines.join(" / ")}</p>}
       {meta.backTranslation && <p className="mt-1 text-slate-500">回译：{meta.backTranslation}</p>}
     </div>

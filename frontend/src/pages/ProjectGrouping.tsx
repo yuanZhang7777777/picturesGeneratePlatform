@@ -160,7 +160,7 @@ export default function ProjectGrouping() {
   const busy = upload.isPending || skuImport.isPending || prepare.isPending || generate.isPending || reorganize.isPending || save.isPending || removeAsset.isPending || removeCluster.isPending;
 
   return <Shell>
-    <ProjectToolbar project={project} selectedCount={selectedClusters.length} pending={saveSettings.isPending} onSave={(input) => saveSettings.mutateAsync(input)} onSelectAll={() => setDeselectedIds(new Set())} onDeselectAll={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))} onInvert={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))} />
+    <ProjectToolbar project={project} pending={saveSettings.isPending} onSave={(input) => saveSettings.mutateAsync(input)} />
     <div className="mb-5"><ImportPanel disabled={busy} onUpload={(files, mode) => upload.mutateAsync({ files, mode })} onSkuImport={(skus, mode) => skuImport.mutateAsync({ skus, mode })} onImported={() => undefined} /></div>
     {uploadResult && <div className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">成功导入 {uploadResult.asset_count} 个素材{uploadResult.rejected.length ? `，${uploadResult.rejected.length} 个未导入` : ""}。</div>}
     {localError instanceof ApiError && <p className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{userErrorMessage(localError)}</p>}
@@ -170,7 +170,7 @@ export default function ProjectGrouping() {
       return <ProductCard key={sku.id} sku={sku} assets={assets} selected={!deselectedIds.has(sku.id)} expanded={expandedId === sku.id} disabled={save.isPending || removeAsset.isPending || removeCluster.isPending} onOpen={() => setExpandedId(sku.id)} onClose={() => setExpandedId(null)} onSave={(payload, expectedVersion) => save.mutateAsync({ skuId: sku.id, expectedVersion, payload })} onReload={() => projectQuery.refetch()} onDeleteAsset={(assetId) => removeAsset.mutate(assetId)} onDelete={() => removeCluster.mutate(sku.id)} onSelect={(next) => setDeselectedIds((current) => { const copy = new Set(current); if (next) copy.delete(sku.id); else copy.add(sku.id); return copy; })} />;
     })}</ProductGrid></DndContext>
     {!project.skus.length && <EmptyState title="还没有商品素材" description="在上方导入图片、文件夹或 ERP SKU。" />}
-    <FloatingActions projectId={project.id} selectedCount={selectedClusters.length} busy={busy} onPrepare={() => prepare.mutate()} onGenerate={() => generate.mutate()} />
+    <FloatingActions projectId={project.id} selectedCount={selectedClusters.length} busy={busy} onSelectAll={() => setDeselectedIds(new Set())} onDeselectAll={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))} onInvert={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))} onPrepare={() => prepare.mutate()} onGenerate={() => generate.mutate()} />
   </Shell>;
 }
 
@@ -179,7 +179,7 @@ function ProductGrid({ children }: { children: ReactNode }) {
   return <section ref={blank.setNodeRef} className={`product-card-grid min-h-56 rounded-2xl ${blank.isOver ? "bg-indigo-50" : ""}`} aria-label="商品分组网格">{children}</section>;
 }
 
-function ProjectToolbar({ project, selectedCount, pending, onSave, onSelectAll, onDeselectAll, onInvert }: { project: { id: string; name: string; defaultConfig?: ProductConfiguration; platform: string; market: string; size: string; resolution?: string }; selectedCount: number; pending: boolean; onSave: (input: ProductConfiguration) => Promise<unknown>; onSelectAll: () => void; onDeselectAll: () => void; onInvert: () => void }) {
+function ProjectToolbar({ project, pending, onSave }: { project: { id: string; name: string; defaultConfig?: ProductConfiguration; platform: string; market: string; size: string; resolution?: string }; pending: boolean; onSave: (input: ProductConfiguration) => Promise<unknown> }) {
   const allMarkets = [...commonMarkets, ...extraMarkets];
   const initial = () => ({
     platform: project.defaultConfig?.platform || project.platform?.toLowerCase() || "generic",
@@ -212,20 +212,22 @@ function ProjectToolbar({ project, selectedCount, pending, onSave, onSelectAll, 
   };
   const genericMarket = draft.market === "SEA";
   return <section className="surface mb-3 p-2" aria-label="项目工具栏">
-    <div className="grid gap-2 xl:grid-cols-[auto_auto_8.5rem_5.5rem_5.5rem_minmax(180px,1fr)_auto] xl:items-end">
-      <h1 className="self-center truncate text-lg font-bold tracking-tight" title={project.name}>{project.name}</h1>
-      <fieldset><legend className="mb-1 text-xs font-medium text-slate-500">平台</legend><div className="flex flex-nowrap gap-1">{platforms.map(([code, label]) => <button key={code} aria-pressed={draft.platform === code} className={`toolbar-choice whitespace-nowrap ${draft.platform === code ? "toolbar-choice-active" : ""}`} type="button" disabled={pending} onClick={() => void save({ ...draft, platform: code })}>{label}</button>)}</div></fieldset>
-      <label className={`text-xs font-medium ${genericMarket ? "text-amber-700" : "text-slate-500"}`}>国家<select aria-label="项目国家" className={`mt-1 ${genericMarket ? "border-amber-300 bg-amber-50" : ""}`} value={draft.market} onChange={(event) => void save({ ...draft, market: event.target.value })}>{allMarkets.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select>{genericMarket && <span className="mt-1 block text-[11px]">当前为通用语言，建议按店铺国家选择</span>}</label>
-      <label className="text-xs font-medium text-slate-500">比例<select aria-label="图片比例" className="mt-1" value={draft.size} onChange={(event) => void save({ ...draft, size: event.target.value })}><option value="1:1">1:1</option><option value="3:4">3:4</option></select></label>
-      <label className="text-xs font-medium text-slate-500">分辨率<select aria-label="图片分辨率" className="mt-1" value={draft.resolution} onChange={(event) => void save({ ...draft, resolution: event.target.value })}><option value="1k">1K</option><option value="2k">2K</option></select></label>
-      <label className="text-xs font-medium text-slate-500">项目风格提示词<textarea aria-label="项目风格提示词" className="mt-1 min-h-9 py-1.5" value={draft.globalPrompt} placeholder="全项目默认提示词（选填）" onChange={(event) => setDraft({ ...draft, globalPrompt: event.target.value })} onBlur={() => { if (dirty) void save(draft); }} /></label>
-      <div className="flex flex-wrap justify-end gap-2"><button className="toolbar-choice" type="button" onClick={onSelectAll}>全选</button><button className="toolbar-choice" type="button" onClick={onDeselectAll}>取消全选</button><button className="toolbar-choice" type="button" onClick={onInvert}>反选</button><span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">已选 {selectedCount}</span><Link className="secondary-button min-h-8 px-3 text-xs" to={`/projects/${project.id}/results`}>生产结果</Link></div>
+    <div className="flex flex-wrap items-end gap-2">
+      <h1 className="mr-1 min-w-28 max-w-44 self-center truncate text-lg font-bold tracking-tight" title={project.name}>{project.name}</h1>
+      <fieldset className="shrink-0"><legend className="mb-1 text-xs font-medium text-slate-500">平台</legend><div className="flex flex-nowrap gap-1">{platforms.map(([code, label]) => <button key={code} aria-pressed={draft.platform === code} className={`toolbar-choice whitespace-nowrap ${draft.platform === code ? "toolbar-choice-active" : ""}`} type="button" disabled={pending} onClick={() => void save({ ...draft, platform: code })}>{label}</button>)}</div></fieldset>
+      <label className={`w-40 text-xs font-medium ${genericMarket ? "text-amber-700" : "text-slate-500"}`}>国家<select aria-label="项目国家" className={`mt-1 ${genericMarket ? "border-amber-300 bg-amber-50" : ""}`} value={draft.market} onChange={(event) => void save({ ...draft, market: event.target.value })}>{allMarkets.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select>{genericMarket && <span className="mt-1 block text-[11px] leading-tight">建议按店铺国家选择</span>}</label>
+      <label className="w-24 text-xs font-medium text-slate-500">比例<select aria-label="图片比例" className="mt-1" value={draft.size} onChange={(event) => void save({ ...draft, size: event.target.value })}><option value="1:1">1:1</option><option value="3:4">3:4</option></select></label>
+      <label className="w-24 text-xs font-medium text-slate-500">分辨率<select aria-label="图片分辨率" className="mt-1" value={draft.resolution} onChange={(event) => void save({ ...draft, resolution: event.target.value })}><option value="1k">1K</option><option value="2k">2K</option></select></label>
+      <label className="min-w-52 flex-1 text-xs font-medium text-slate-500">项目风格提示词<textarea aria-label="项目风格提示词" className="mt-1 min-h-9 max-h-24 resize-y py-1.5" value={draft.globalPrompt} placeholder="全项目默认提示词（选填）" onChange={(event) => setDraft({ ...draft, globalPrompt: event.target.value })} onBlur={() => { if (dirty) void save(draft); }} /></label>
     </div>
   </section>;
 }
 
-function FloatingActions({ projectId, selectedCount, busy, onPrepare, onGenerate }: { projectId: string; selectedCount: number; busy: boolean; onPrepare: () => void; onGenerate: () => void }) {
+function FloatingActions({ projectId, selectedCount, busy, onSelectAll, onDeselectAll, onInvert, onPrepare, onGenerate }: { projectId: string; selectedCount: number; busy: boolean; onSelectAll: () => void; onDeselectAll: () => void; onInvert: () => void; onPrepare: () => void; onGenerate: () => void }) {
   return <div className="fixed bottom-5 right-5 z-50 flex max-w-[calc(100vw-2.5rem)] flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-2xl shadow-slate-300/70 backdrop-blur" aria-label="滚动常驻生成动作">
+    <button className="toolbar-choice min-h-9 px-3" type="button" onClick={onSelectAll}>全选</button>
+    <button className="toolbar-choice min-h-9 px-3" type="button" onClick={onDeselectAll}>取消全选</button>
+    <button className="toolbar-choice min-h-9 px-3" type="button" onClick={onInvert}>反选</button>
     <span className="px-2 text-xs font-semibold text-slate-600">已选 {selectedCount}</span>
     <button className="secondary-button min-h-9 px-3" type="button" disabled={busy || !selectedCount} onClick={onPrepare}>预备生成（{selectedCount}）</button>
     <button className="primary-button min-h-9 px-3" type="button" disabled={busy || !selectedCount} onClick={onGenerate}>正式生成（{selectedCount}）</button>
