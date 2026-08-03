@@ -19,7 +19,7 @@ const stageText: Record<string, string> = {
   N3: "正在整理商品信息",
   N4: "正在准备白底图提示词",
   N5: "正在设计卖点和场景",
-  N6: "正在生成 1+8 提示词",
+  N6: "正在生成提示词",
   N7: "正在做出图前检查",
 };
 
@@ -261,7 +261,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       </div>
     </article>
     {expanded && <section className="surface product-card-expanded-detail fixed inset-y-4 right-4 z-40 w-[min(720px,calc(100vw-2rem))] overflow-y-auto p-5 shadow-2xl" role="dialog" aria-modal="false" aria-label={`${label} 商品详情`}>
-      <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品信息与 1+8 提示词</p><h2 className="mt-1 text-xl font-semibold">{label}</h2></div><button className="secondary-button" type="button" onClick={onClose}>收起</button></div>
+      <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品信息与生成提示词</p><h2 className="mt-1 text-xl font-semibold">{label}</h2></div><button className="secondary-button" type="button" onClick={onClose}>收起</button></div>
       <ProductInfoEditor label={label} draft={draft} setDraft={setDraft} onBlur={submit} saving={saving || !!disabled} />
       <PromptEditor sku={sku} onSave={savePrompt} disabled={saving || disabled} />
       <button className="mt-4 text-sm font-semibold text-rose-700" type="button" disabled={saving || disabled} onClick={() => { if (window.confirm(`删除“${label}”？有历史结果时只会归档。`)) onDelete(); }}>删除商品</button>

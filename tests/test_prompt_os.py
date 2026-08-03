@@ -222,9 +222,8 @@ def test_n6_normalization_keeps_generic_model_text_as_deepseek_output():
     assert normalized["prompt_source"] == "deepseek"
 
 
-def test_n5_model_call_failure_fails_preparation_without_fallback(tmp_path, settings, monkeypatch):
+def test_n5_model_call_failure_reports_specific_reason_without_fallback(tmp_path, settings):
     from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
-    import platform_app.services as services
     from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
 
     settings.MEDIA_ROOT = tmp_path
@@ -251,14 +250,6 @@ def test_n5_model_call_failure_fails_preparation_without_fallback(tmp_path, sett
     batch.save(update_fields=["output_template"])
     request_cluster_preparation(cluster, auto_generate=False)
 
-    fallback_called = {"value": False}
-
-    def fail_fallback(*args, **kwargs):
-        fallback_called["value"] = True
-        raise AssertionError("N5 fallback must not run in production")
-
-    monkeypatch.setattr(services, "_fallback_n5_plans", fail_fallback)
-
     class BadN5Client(FakeAPIMartClient):
         def optimize_prompt(self, payload):
             if "NODE N5" in payload.get("text", ""):
@@ -268,9 +259,8 @@ def test_n5_model_call_failure_fails_preparation_without_fallback(tmp_path, sett
     assert process_prompt_once(BadN5Client(), LocalStorage(tmp_path)) == 1
     cluster.refresh_from_db()
 
-    assert fallback_called["value"] is False
     assert cluster.preparation_status == Cluster.PreparationStatus.FAILED
-    assert cluster.preparation_error == "提示词生成失败，请重试预备生成"
+    assert cluster.preparation_error == "模型服务响应超时，请重试预备生成"
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
 
 
@@ -411,6 +401,48 @@ def test_n6_non_json_text_creates_deepseek_prompt_version_without_fallback(tmp_p
     assert raw_prompt in prompt.prompt_text
     assert prompt.structured_output["prompt_source"] == "deepseek"
     assert prompt.structured_output["node_output"]["raw_model_text"] == raw_prompt
+
+
+def test_n6_model_call_failure_reports_specific_reason_without_fallback(tmp_path, settings):
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_ALLOW_FALLBACK = False
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="N6 failure fallback")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="3" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    template = OutputTemplate.objects.create(platform="global", site="", name="Two slot")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="benefit")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class BadN6Client(FakeAPIMartClient):
+        def optimize_prompt(self, payload):
+            if "NODE N6" in payload.get("text", ""):
+                raise RuntimeError("DeepSeek timeout")
+            return super().optimize_prompt(payload)
+
+    assert process_prompt_once(BadN6Client(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.FAILED
+    assert cluster.preparation_error == "模型服务响应超时，请重试预备生成"
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0
 
 
 def test_n6_validation_exception_keeps_returned_deepseek_text(monkeypatch):

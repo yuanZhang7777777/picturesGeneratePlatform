@@ -214,6 +214,17 @@ def _sanitize_provider_text(text):
     if settings.APIMART_API_KEY:
         text = text.replace(settings.APIMART_API_KEY, "[redacted]")
     text = re.sub(r"Bearer\s+[A-Za-z0-9._-]+", "Bearer [redacted]", text)
+    lower = text.lower()
+    if "api key" in lower or "authentication" in lower or "unauthorized" in lower:
+        return "模型服务鉴权失败，请联系管理员"
+    if "read timed out" in lower or "read timeout" in lower or "timed out" in lower or "timeout" in lower:
+        return "模型服务响应超时，请重试预备生成"
+    if "rate limit" in lower or "too many requests" in lower or "429" in lower:
+        return "模型服务限流，请稍后重试"
+    if "provider chat response did not include" in lower or "message content" in lower or "output_text" in lower:
+        return "模型服务返回内容为空或格式异常，请重试预备生成"
+    if "provider returned invalid json" in lower:
+        return "模型服务返回无法解析，请重试预备生成"
     internal_tokens = (
         "expecting value",
         "line 1 column 1",
@@ -243,10 +254,13 @@ def _raise_provider_error(response):
         or payload.get("message")
         or f"provider returned HTTP {response.status_code}"
     )
-    sanitized = _sanitize_provider_text(message)
     if response.status_code == 429:
-        raise RateLimited(sanitized)
-    raise ProviderError(sanitized)
+        raise RateLimited("模型服务限流，请稍后重试")
+    if response.status_code in {401, 403}:
+        raise ProviderError("模型服务鉴权失败，请联系管理员")
+    if response.status_code >= 500:
+        raise ProviderError("模型服务临时异常，请重试预备生成")
+    raise ProviderError(_sanitize_provider_text(message))
 
 
 class LocalStorage:
@@ -723,26 +737,60 @@ class APIMartClient:
         temperature = _validate_prompt_temperature(
             settings.APIMART_PROMPT_TEMPERATURE if temperature is None else temperature
         )
-        response = self.session.post(
-            self._api_url("/api/v1/chat/completions"),
-            json={
-                "model": model or settings.APIMART_PROMPT_MODEL,
-                "stream": False,
-                "temperature": temperature,
-                "messages": messages,
-            },
-            headers=self.headers,
-            timeout=settings.APIMART_PROMPT_TIMEOUT_SECONDS,
-        )
+        try:
+            response = self.session.post(
+                self._api_url("/api/v1/chat/completions"),
+                json={
+                    "model": model or settings.APIMART_PROMPT_MODEL,
+                    "stream": False,
+                    "temperature": temperature,
+                    "messages": messages,
+                },
+                headers=self.headers,
+                timeout=settings.APIMART_PROMPT_TIMEOUT_SECONDS,
+            )
+        except requests.Timeout as exc:
+            raise ProviderError("模型服务响应超时，请重试预备生成") from exc
+        except requests.RequestException as exc:
+            raise ProviderError(_sanitize_provider_text(str(exc))) from exc
         payload = self._json(response)
-        choices = payload.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise ProviderError("provider chat response did not include choices")
-        message = choices[0].get("message") if isinstance(choices[0], dict) else None
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str):
-            raise ProviderError("provider chat response did not include message content")
+        content = self._chat_output_text(payload)
+        if not content:
+            raise ProviderError("模型服务返回内容为空或格式异常，请重试预备生成")
         return {"output_text": content, "raw": payload}
+
+    def _content_text(self, content):
+        if isinstance(content, str):
+            return content.strip()
+        if not isinstance(content, list):
+            return ""
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if not isinstance(text, str):
+                    text = item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part.strip() for part in parts if part and part.strip())
+
+    def _chat_output_text(self, payload):
+        if isinstance(payload.get("output_text"), str) and payload["output_text"].strip():
+            return payload["output_text"].strip()
+        choices = payload.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+                text = self._content_text(message.get("content"))
+                if not text:
+                    text = self._content_text(choice.get("text"))
+                if text:
+                    return text
+        return self._responses_output_text(payload).strip()
 
     def _responses_output_text(self, payload):
         if isinstance(payload.get("output_text"), str) and payload["output_text"]:
@@ -4158,7 +4206,13 @@ def _fallback_n4_prompt(hero_input, identity, ledger, rule_refs):
     )
 
 
-def _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids, target_appearance_ids):
+def _fallback_n5_plans(
+    marketing_input,
+    marketing_slots,
+    fact_ids,
+    inference_ids,
+    target_appearance_ids,
+):
     _require_prompt_os_fallback()
     fact_ref = next(iter(fact_ids), "")
     appearances = sorted(target_appearance_ids or [])
@@ -5856,9 +5910,9 @@ def process_prompt_once(client=None, storage=None):
                     target_appearance_ids,
                 )
                 n5_model = settings.APIMART_PROMPT_MODEL
-            except Exception:
+            except Exception as exc:
                 if not _prompt_os_allow_fallback():
-                    raise RuntimeError(PROMPT_GENERATION_FAILED_MESSAGE) from None
+                    raise RuntimeError(_sanitize_provider_text(str(exc))) from None
                 marketing_plan = _fallback_n5_plans(marketing_input, marketing_slots, fact_ids, inference_ids, target_appearance_ids)
                 n5_model = "deterministic-rule-engine"
             node_snapshots.append(
@@ -5921,9 +5975,9 @@ def process_prompt_once(client=None, storage=None):
                         slot_rule_refs,
                     )
                     n6_model = settings.APIMART_PROMPT_MODEL
-                except Exception:
+                except Exception as exc:
                     if not _prompt_os_allow_fallback():
-                        raise RuntimeError(PROMPT_GENERATION_FAILED_MESSAGE) from None
+                        raise RuntimeError(_sanitize_provider_text(str(exc))) from None
                     slot_plan = _fallback_n6_prompt(slot_input, identity, ledger, slot_rule_refs)
                     n6_model = "deterministic-rule-engine"
                 node_snapshots.append(
@@ -6040,9 +6094,9 @@ def process_prompt_once(client=None, storage=None):
                             slot_rule_refs,
                         )
                         rewrite_model = settings.APIMART_PROMPT_MODEL
-                    except Exception:
+                    except Exception as exc:
                         if not _prompt_os_allow_fallback():
-                            raise RuntimeError(PROMPT_GENERATION_FAILED_MESSAGE) from None
+                            raise RuntimeError(_sanitize_provider_text(str(exc))) from None
                         slot_plan = _fallback_n6_prompt(rewrite_input, identity, ledger, slot_rule_refs)
                         rewrite_model = "deterministic-rule-engine"
                     node_snapshots.append(

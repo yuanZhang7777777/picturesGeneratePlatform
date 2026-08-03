@@ -313,6 +313,37 @@ test("hides technical preparation errors from operators", async () => {
   expect(screen.queryByText(/evidence_refs/)).not.toBeInTheDocument();
 });
 
+test("shows specific model preparation errors without technical details", async () => {
+  const failedProject = {
+    ...project,
+    skus: [{
+      ...project.skus[0],
+      preparationStatus: "failed",
+      preparation: { status: "failed", stage: "failed", current: 0, total: 7, error: "模型服务响应超时，请重试预备生成" },
+    }],
+  };
+  stubFetch({ projectSnapshot: failedProject });
+  renderApp();
+
+  expect(await screen.findByText(/预备未完成 · 模型服务响应超时，请重试预备生成/)).toBeInTheDocument();
+});
+
+test("does not call N6 progress 1+8 when source-photo slots are hidden", async () => {
+  const preparingProject = {
+    ...project,
+    skus: [{
+      ...project.skus[0],
+      preparationStatus: "preparing",
+      preparation: { status: "preparing", stage: "N6", current: 5, total: 7, error: "" },
+    }],
+  };
+  stubFetch({ projectSnapshot: preparingProject });
+  renderApp();
+
+  expect(await screen.findByText("正在生成提示词 · 5/7")).toBeInTheDocument();
+  expect(screen.queryByText(/正在生成 1\+8 提示词/)).not.toBeInTheDocument();
+});
+
 test("shows AI-recognized English product info as Chinese operator text", async () => {
   stubFetch({
     projectSnapshot: {
@@ -410,11 +441,15 @@ test("opens one product in a fixed side panel and consumes the first outside cli
 
   fireEvent.click(await screen.findByRole("button", { name: "桌面灯 详情" }));
   expect(screen.getByRole("dialog", { name: "桌面灯 商品详情" })).toBeInTheDocument();
+  expect(screen.getByText("商品信息与生成提示词")).toBeInTheDocument();
+  expect(screen.queryByText("商品信息与 1+8 提示词")).not.toBeInTheDocument();
   expect((screen.getAllByLabelText("补充信息 桌面灯")[0] as HTMLTextAreaElement).value).toContain("适合明亮桌面场景");
   expect(screen.queryByLabelText("商品身份")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("主要外观")).not.toBeInTheDocument();
+  expect(screen.getByText("9 张生成提示词")).toBeInTheDocument();
   expect(screen.getByText("01 标准白底产品图提示词")).toBeInTheDocument();
   expect(screen.getByText("02 核心卖点图提示词")).toBeInTheDocument();
+  expect(screen.queryByText("1+8 输出提示词")).not.toBeInTheDocument();
   expect(screen.queryByText(/第 1 张输出图提示词/)).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "折叠椅 详情" }));
@@ -453,11 +488,12 @@ test("labels Shopee VN source-photo slots without a duplicate white-background t
 
   fireEvent.click(await screen.findByRole("button", { name: "越南商品 详情" }));
 
+  expect(screen.getByText("8 张生成提示词")).toBeInTheDocument();
   expect(screen.queryByText("01 原始商品图提示词")).not.toBeInTheDocument();
-  expect(screen.getByText("02 标准白底产品图提示词")).toBeInTheDocument();
-  expect(screen.getByText("03 商品结构图提示词")).toBeInTheDocument();
-  expect(screen.getByText("08 本地生活方式图提示词")).toBeInTheDocument();
-  expect(screen.queryByText("01 标准白底产品图提示词")).not.toBeInTheDocument();
+  expect(screen.getByText("01 标准白底产品图提示词")).toBeInTheDocument();
+  expect(screen.getByText("02 商品结构图提示词")).toBeInTheDocument();
+  expect(screen.getByText("07 本地生活方式图提示词")).toBeInTheDocument();
+  expect(screen.queryByText("1+8 输出提示词")).not.toBeInTheDocument();
 });
 
 test("hides Prompt Center from operators and exposes the Chinese administrator page", async () => {

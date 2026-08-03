@@ -169,12 +169,15 @@ export function PromptEditor({
   const progressCurrent = Math.min(preparation?.current ?? 0, progressTotal);
   const stage = preparation?.stage ?? "";
   const promptStage = ["N4", "N5", "N6", "N7"].includes(stage);
-  const progressLabel = promptStage ? "正在生成 1+8 提示词" : "正在读取并理解商品图片";
-  const promptPlaceholder = (slotOrder: number) => preparing && !promptStage
+  const editablePrompts = draft.prompts.filter((prompt) => !prompt.readOnly);
+  const hasSourcePassthrough = editablePrompts.length < draft.prompts.length;
+  const promptSectionTitle = `${editablePrompts.length} 张生成提示词`;
+  const progressLabel = promptStage ? `正在生成 ${editablePrompts.length} 张提示词` : "正在读取并理解商品图片";
+  const promptPlaceholder = (displayOrder: number) => preparing && !promptStage
     ? "商品图片读取完成后，会自动生成中文提示词"
     : preparing
       ? "正在生成这个槽位的中文提示词"
-      : `预备生成后显示：${fallbackChinesePrompt(slotOrder)}`;
+      : `预备生成后显示：${fallbackChinesePrompt(displayOrder)}`;
 
   return (
     <section className="mt-4 space-y-4">
@@ -215,13 +218,14 @@ export function PromptEditor({
       )}
       <section className="rounded-lg bg-slate-50 p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-slate-700">1+8 输出提示词</h3>
+          <h3 className="text-sm font-semibold text-slate-700">{promptSectionTitle}</h3>
           {preparing && <span className="text-xs font-semibold text-indigo-700">{progressLabel} {progressCurrent}/{progressTotal}</span>}
         </div>
         {preparing && <ProgressBar current={progressCurrent} total={progressTotal} />}
         <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {draft.prompts.filter((prompt) => !prompt.readOnly).map((prompt) => {
-            const label = `${String(prompt.slotOrder).padStart(2, "0")} ${slotLabel(prompt.slot, prompt.slotOrder)}提示词`;
+          {editablePrompts.map((prompt, index) => {
+            const displayOrder = hasSourcePassthrough ? index + 1 : prompt.slotOrder;
+            const label = `${String(displayOrder).padStart(2, "0")} ${slotLabel(prompt.slot, prompt.slotOrder)}提示词`;
             return (
             <label className="block text-sm font-medium text-slate-700" key={prompt.slotOrder}>
               <span className="mb-2 block">{label}</span>
@@ -229,7 +233,7 @@ export function PromptEditor({
               <textarea
                 aria-label={label}
                 disabled={prompt.readOnly}
-                placeholder={promptPlaceholder(prompt.slotOrder)}
+                placeholder={promptPlaceholder(displayOrder)}
                 value={prompt.text}
                 onChange={(event) => updatePrompt(prompt.slotOrder, event.target.value)}
               />

@@ -2,6 +2,7 @@ from pathlib import Path
 from io import StringIO
 
 import pytest
+import requests
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import override_settings
@@ -30,6 +31,11 @@ class Session:
     def get(self, url, **kwargs):
         self.calls.append(("GET", url, kwargs))
         return self.responses.pop(0)
+
+
+class TimeoutSession:
+    def post(self, url, **kwargs):
+        raise requests.ReadTimeout("read timeout=20")
 
 
 @override_settings(APIMART_API_KEY="secret-key", APIMART_BASE_URL="https://api.apimart.ai")
@@ -210,6 +216,45 @@ def test_complete_chat_uses_explicit_temperature():
     client.complete_chat([{"role": "user", "content": "hello"}], temperature=0.9)
 
     assert session.calls[0][2]["json"]["temperature"] == 0.9
+
+
+@override_settings(
+    APIMART_API_KEY="secret-key",
+    APIMART_BASE_URL="https://api.apimart.ai",
+    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    APIMART_PROMPT_TEMPERATURE=0.4,
+)
+def test_complete_chat_reports_timeout_in_chinese():
+    from platform_app.services import APIMartClient, ProviderError
+
+    client = APIMartClient(session=TimeoutSession())
+
+    with pytest.raises(ProviderError, match="模型服务响应超时，请重试预备生成"):
+        client.complete_chat([{"role": "user", "content": "hello"}])
+
+
+@override_settings(
+    APIMART_API_KEY="secret-key",
+    APIMART_BASE_URL="https://api.apimart.ai",
+    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    APIMART_PROMPT_TEMPERATURE=0.4,
+)
+def test_complete_chat_extracts_list_message_content():
+    from platform_app.services import APIMartClient
+
+    session = Session(
+        [
+            Response(
+                200,
+                {"choices": [{"message": {"content": [{"type": "text", "text": "节点返回文本"}]}}]},
+            )
+        ]
+    )
+    client = APIMartClient(session=session)
+
+    data = client.complete_chat([{"role": "user", "content": "hello"}])
+
+    assert data["output_text"] == "节点返回文本"
 
 
 @pytest.mark.parametrize("temperature", [-0.1, 2.1])
