@@ -445,6 +445,104 @@ def test_n6_model_call_failure_reports_specific_reason_without_fallback(tmp_path
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
 
 
+def test_n6_empty_model_text_does_not_create_prompt_versions(tmp_path, settings):
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_ALLOW_FALLBACK = False
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="N6 empty text")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="8" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    template = OutputTemplate.objects.create(platform="global", site="", name="Two slot empty N6")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="benefit")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class EmptyN6Client(FakeAPIMartClient):
+        def optimize_prompt(self, payload):
+            if "NODE N6" in payload.get("text", ""):
+                return {"output_text": ""}
+            return super().optimize_prompt(payload)
+
+    assert process_prompt_once(EmptyN6Client(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.FAILED
+    assert cluster.preparation_error == "提示词生成失败，请重试预备生成"
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+
+
+def test_n6_missing_chinese_display_prompt_triggers_one_model_rewrite(tmp_path, settings):
+    import json
+
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_ALLOW_FALLBACK = False
+    settings.PROMPT_OS_SLOT_CONCURRENCY = 1
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="N6 display rewrite")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="9" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    template = OutputTemplate.objects.create(platform="global", site="", name="Two slot display")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="benefit")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class RewriteDisplayClient(FakeAPIMartClient):
+        n6_calls = 0
+
+        def optimize_prompt(self, payload):
+            if "NODE N6" not in payload.get("text", ""):
+                return super().optimize_prompt(payload)
+            self.n6_calls += 1
+            response = super().optimize_prompt(payload)
+            output = json.loads(response["output_text"])
+            if self.n6_calls == 1:
+                output.pop("display_prompt", None)
+            else:
+                output["display_prompt"] = "生成一张 1:1 Shopee 商品营销图，画面把商品放在浅木桌面的真实使用瞬间里，平视近景突出商品主体、材质纹理和触手动作，暖白自然光从左侧进入，目标语言两行标题以轻巧无衬线字体落在左上角浅色空间，整体色彩干净但有生活温度。"
+            return {"output_text": json.dumps(output, ensure_ascii=False), "raw": {}}
+
+    client = RewriteDisplayClient()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
+    assert client.n6_calls == 2
+    prompt = PromptVersion.objects.get(cluster=cluster, output_slot__order=2)
+    assert "真实使用瞬间" in prompt.structured_output["node_output"]["display_prompt"]
+
+
 def test_n6_validation_exception_keeps_returned_deepseek_text(monkeypatch):
     import platform_app.services as services
 
@@ -481,6 +579,110 @@ def test_n6_validation_exception_keeps_returned_deepseek_text(monkeypatch):
     assert result["prompt_source"] == "deepseek"
     assert "手部拿起商品" in result["prompt"]
     assert "生成一张 1:1 Shopee 商品营销图" in result["raw_model_text"]
+
+
+def test_n6_marketing_slots_run_concurrently(tmp_path, settings):
+    import threading
+    import time
+
+    from platform_app.models import Asset, Batch, OutputTemplate, PromptVersion
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_ALLOW_FALLBACK = False
+    settings.PROMPT_OS_SLOT_CONCURRENCY = 4
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Concurrent slots")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    for order in range(2, 6):
+        template.slots.create(order=order, name=f"营销图 {order}", purpose=f"benefit {order}")
+    batch = Batch.objects.create(owner=user, name="Concurrent N6", output_template=template)
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="4" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = make_cluster(batch)
+    cluster.cluster_assets.update(asset=asset)
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class SlowN6Client(FakeAPIMartClient):
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+
+        def optimize_prompt(self, payload):
+            if "NODE N6" not in payload.get("text", ""):
+                return super().optimize_prompt(payload)
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.05)
+                return super().optimize_prompt(payload)
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    client = SlowN6Client()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == cluster.PreparationStatus.READY, cluster.preparation_error
+    assert client.max_active > 1
+    assert PromptVersion.objects.filter(cluster=cluster).count() == 5
+
+
+def test_shopee_prompt_os_uses_scoped_marketing_nodes(tmp_path, settings):
+    from platform_app.models import Asset, Batch, OutputTemplate, PromptVersion
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="shopee", site="VN", name="Shopee scoped")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="benefit")
+    batch = Batch.objects.create(
+        owner=user,
+        name="Shopee scoped nodes",
+        platform="shopee",
+        market="VN",
+        output_template=template,
+    )
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="5" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = make_cluster(batch)
+    cluster.cluster_assets.update(asset=asset)
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    assert process_prompt_once(FakeAPIMartClient(), LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    node_ids = [snapshot["node_id"] for snapshot in cluster.analysis_snapshot["prompt_os"]]
+    assert "N5.shopee" in node_ids
+    assert "N6.shopee" in node_ids
+    assert "N7.shopee" in node_ids
+    assert "N5.generic" not in node_ids
+    assert "N6.generic" not in node_ids
+    assert PromptVersion.objects.get(cluster=cluster, output_slot__order=2).node_name == "N6.shopee"
 
 
 def test_prompt_os_fallback_requires_explicit_configuration(settings):

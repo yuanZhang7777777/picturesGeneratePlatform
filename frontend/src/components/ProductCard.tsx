@@ -117,7 +117,7 @@ function draftFromSku(sku: ProductSku): Draft {
 function progressText(sku: ProductSku) {
   const generation = sku.generationProgress;
   const generated = generation?.completed ?? generation?.current ?? 0;
-  const generationTotal = generation?.total ?? 0;
+  const generationTotal = generation?.total || expectedGenerationTotal(sku);
   const failed = generation?.failed ?? 0;
   const failureText = failed ? ` · 有 ${failed} 张失败` : "";
   if (generation?.active || (generation?.status && !["idle", "completed", "failed"].includes(generation.status) && generated + failed < generationTotal)) return `出图中 · ${generated}/${generationTotal}${failureText}`;
@@ -149,15 +149,20 @@ function friendlyPreparationError(error: string) {
 function progressMeta(sku: ProductSku) {
   const generation = sku.generationProgress;
   const generated = generation?.completed ?? generation?.current ?? 0;
-  const generationTotal = generation?.total ?? 0;
+  const generationTotal = generation?.total || expectedGenerationTotal(sku);
   if (generation?.active || (generation?.status && !["idle", "completed", "failed"].includes(generation.status) && generated + (generation.failed ?? 0) < generationTotal)) {
-    return { text: progressText(sku), current: generated, total: generationTotal || 9, active: true };
+    return { text: progressText(sku), current: generated, total: generationTotal, active: true };
   }
   const preparation = sku.preparation;
   if (["pending", "preparing"].includes(preparation?.status ?? sku.preparationStatus ?? "")) {
     return { text: progressText(sku), current: preparation?.current ?? 0, total: preparation?.total ?? 7, active: true };
   }
   return { text: progressText(sku), current: 0, total: 0, active: false };
+}
+
+function expectedGenerationTotal(sku: ProductSku) {
+  const promptCount = (sku.prompts ?? []).filter((prompt) => !prompt.readOnly).length;
+  return promptCount || sku.outputs.length || 9;
 }
 
 export function ProductCard({ sku, assets, selected, expanded = false, onOpen = () => undefined, onClose = () => undefined, onSelect, onSave, onReload, onDeleteAsset, onDelete, onPause, disabled }: {

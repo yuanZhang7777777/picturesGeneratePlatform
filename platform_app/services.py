@@ -5,6 +5,7 @@ import json
 import re
 import uuid
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import timedelta
 from io import BytesIO
@@ -552,10 +553,12 @@ class FakeAPIMartClient:
                 if item.get("fact_id")
             ]
             prompt = f"Create demo ecommerce product image slot {slot_order}."
+            display_prompt = f"生成一张 1:1 商品营销图，槽位 {slot_order} 用清楚的商品主体、具体使用画面、自然光线、材质细节和简洁目标语言标题表达当前卖点。"
             output = {
                 "slot_id": str(slot_order),
                 "main_scene": node_input.get("slot_plan", {}).get("main_scene", "clean ecommerce scene"),
                 "main_action": node_input.get("slot_plan", {}).get("main_action", "none"),
+                "display_prompt": display_prompt,
                 "visible_text_lines": node_input.get("slot_plan", {}).get("visible_text_lines", []),
                 "localized_copy": {
                     "language": node_input.get("market_context", {}).get("language", "en"),
@@ -3803,6 +3806,7 @@ _GENERIC_DISPLAY_PROMPT_MARKERS = (
     "一个核心部件",
     "能立刻解释核心收益",
     "当前购买任务",
+    "具体可见的购买瞬间",
 )
 
 
@@ -3827,6 +3831,12 @@ def _display_prompt_is_generic(value):
     text = str(value or "").strip()
     folded = text.casefold()
     return not text or len(text) < 100 or any(marker.casefold() in folded for marker in _GENERIC_DISPLAY_PROMPT_MARKERS)
+
+
+def _display_prompt_needs_model_rewrite(value):
+    text = str(value or "").strip()
+    folded = text.casefold()
+    return not text or not _contains_cjk(text) or any(marker.casefold() in folded for marker in _GENERIC_DISPLAY_PROMPT_MARKERS)
 
 
 def _prompt_os_allow_fallback():
@@ -4869,11 +4879,15 @@ def _prompt_node_json(client, node_id, instruction, payload, normalize=None, rep
 def _prompt_node_text(client, node_id, instruction, payload):
     system_instruction, _ = _prompt_node_contract(node_id)
     node_text = _render_node_user_message(node_id, instruction, payload)
+    temperature = _prompt_node_temperature(node_id)
+    return _prompt_node_text_from_rendered(client, system_instruction, node_text, temperature)
+
+
+def _prompt_node_text_from_rendered(client, system_instruction, node_text, temperature=None):
     request_payload = {
         "system": system_instruction,
         "text": node_text,
     }
-    temperature = _prompt_node_temperature(node_id)
     if temperature is not None:
         request_payload["temperature"] = temperature
     response = client.optimize_prompt(request_payload)
@@ -5024,15 +5038,39 @@ def _prompt_node_n5_plan(client, node_id, instruction, payload, marketing_slots,
 
 def _prompt_node_n6_plan(client, node_id, instruction, payload, identity, ledger, rule_refs):
     text = _prompt_node_text(client, node_id, instruction, payload)
+    return _normalize_n6_model_text(text, node_id, None, payload, identity, ledger, rule_refs)
+
+
+def _normalize_n6_model_text(text, node_id, output_schema, payload, identity, ledger, rule_refs):
     try:
         value = _json_object(text)
-        _validate_prompt_node_schema(node_id, value)
+        if output_schema is None:
+            _validate_prompt_node_schema(node_id, value)
+        elif output_schema:
+            _validate_json_schema(value, output_schema)
         result = _normalize_n6_prompt(value, payload["slot_order"], identity, ledger, rule_refs)
     except Exception:
         result = _deepseek_text_n6_prompt(text, payload, identity, ledger, rule_refs)
     result["prompt_source"] = "deepseek"
     result.setdefault("raw_model_text", text)
     return result
+
+
+def _prompt_node_n6_plan_from_rendered(client, node_id, rendered, payload, identity, ledger, rule_refs):
+    system_instruction, node_text, temperature, output_schema = rendered
+    text = _prompt_node_text_from_rendered(
+        client,
+        system_instruction,
+        node_text,
+        temperature,
+    )
+    return _normalize_n6_model_text(text, node_id, output_schema, payload, identity, ledger, rule_refs)
+
+
+def _parallel_prompt_client(client):
+    if client.__class__ is APIMartClient:
+        return APIMartClient(timeout=client.timeout)
+    return client
 
 
 def _identity_facts(identity):
@@ -5425,7 +5463,7 @@ def _claim_prompt_cluster(candidate):
 
 
 def _restore_stale_preparations():
-    stale_before = timezone.now() - timedelta(seconds=120)
+    stale_before = timezone.now() - timedelta(seconds=settings.PROMPT_PREPARATION_STALE_SECONDS)
     Cluster.objects.filter(
         preparation_status=Cluster.PreparationStatus.PREPARING,
         updated_at__lt=stale_before,
@@ -5920,6 +5958,11 @@ def process_prompt_once(client=None, storage=None):
             )
             plans = {plan["slot_order"]: plan for plan in marketing_plan["plans"]}
             _set_preparation_progress(cluster.id, claimed_revision, "N6", 5)
+            n6_system_instruction, _ = _prompt_node_contract(n6_node)
+            n6_template = _published_prompt_node(n6_node)
+            n6_output_schema = copy.deepcopy(n6_template.output_schema) if n6_template is not None else {}
+            n6_temperature = _prompt_node_temperature(n6_node)
+            n6_jobs = []
             for slot in marketing_slots:
                 slot_rules = _applicable_rules(
                     cluster.batch,
@@ -5964,22 +6007,74 @@ def process_prompt_once(client=None, storage=None):
                 }
                 n6_inputs_by_slot[slot.id] = copy.deepcopy(slot_input)
                 n6_rule_refs_by_slot[slot.id] = set(slot_rule_refs)
+                n6_instruction = (
+                    f"SLOT_ORDER={slot.order}\n"
+                    "Compile one localized image instruction for this slot with one scene, one main action, and at most three visible text lines."
+                )
+                n6_rendered = (
+                    n6_system_instruction,
+                    _render_node_user_message(n6_node, n6_instruction, slot_input),
+                    n6_temperature,
+                    n6_output_schema,
+                )
+                n6_jobs.append((slot, slot_input, slot_rule_refs, n6_rendered))
+
+            def run_n6_slot(slot, slot_input, slot_rule_refs, n6_rendered):
                 try:
-                    slot_plan = _prompt_node_n6_plan(
-                        client,
+                    slot_plan = _prompt_node_n6_plan_from_rendered(
+                        _parallel_prompt_client(client),
                         n6_node,
-                        f"SLOT_ORDER={slot.order}\nCompile one localized image instruction for this slot with one scene, one main action, and at most three visible text lines.",
+                        n6_rendered,
                         slot_input,
                         identity,
                         ledger,
                         slot_rule_refs,
                     )
+                    if _display_prompt_needs_model_rewrite(slot_plan.get("display_prompt")):
+                        system_instruction, node_text, temperature, output_schema = n6_rendered
+                        rewrite_rendered = (
+                            system_instruction,
+                            (
+                                f"{node_text}\n\n"
+                                "上一次输出的 display_prompt 不是合格中文广告图导演稿。"
+                                "请重新输出完整 JSON：display_prompt 必须用中文自然段直接设计画面，写清商品呈现、人物或空间关系、镜头构图、光线、材质、色彩、文字版式和购买情绪；"
+                                "不要输出英文生图指令、字段标签、空泛句或策略说明。"
+                            ),
+                            temperature,
+                            output_schema,
+                        )
+                        slot_plan = _prompt_node_n6_plan_from_rendered(
+                            _parallel_prompt_client(client),
+                            n6_node,
+                            rewrite_rendered,
+                            slot_input,
+                            identity,
+                            ledger,
+                            slot_rule_refs,
+                        )
+                        if _display_prompt_needs_model_rewrite(slot_plan.get("display_prompt")):
+                            raise RuntimeError(PROMPT_GENERATION_FAILED_MESSAGE)
                     n6_model = settings.APIMART_PROMPT_MODEL
                 except Exception as exc:
                     if not _prompt_os_allow_fallback():
                         raise RuntimeError(_sanitize_provider_text(str(exc))) from None
                     slot_plan = _fallback_n6_prompt(slot_input, identity, ledger, slot_rule_refs)
                     n6_model = "deterministic-rule-engine"
+                return slot, slot_input, slot_rule_refs, slot_plan, n6_model
+
+            n6_workers = min(
+                len(n6_jobs),
+                max(1, int(getattr(settings, "PROMPT_OS_SLOT_CONCURRENCY", 1))),
+            )
+            if n6_workers <= 1:
+                n6_results = [run_n6_slot(*job) for job in n6_jobs]
+            else:
+                with ThreadPoolExecutor(max_workers=n6_workers) as executor:
+                    futures = [executor.submit(run_n6_slot, *job) for job in n6_jobs]
+                    n6_results = [future.result() for future in as_completed(futures)]
+                n6_results.sort(key=lambda item: item[0].order)
+
+            for slot, slot_input, slot_rule_refs, slot_plan, n6_model in n6_results:
                 node_snapshots.append(
                     _node_snapshot(
                         n6_node,
@@ -6228,6 +6323,10 @@ def process_prompt_once(client=None, storage=None):
                 structured_output["_node_temperature"] = node_temperature
             if slot.order in plans:
                 structured_output["marketing_plan"] = copy.deepcopy(plans[slot.order])
+            if not is_source_product_photo_slot(slot):
+                display_prompt = compiled.get("node_output", {}).get("display_prompt") or compiled.get("display_prompt")
+                if not str(prompt_text or "").strip() or (slot in marketing_slots and _display_prompt_needs_model_rewrite(display_prompt)):
+                    raise RuntimeError("提示词生成失败，请重试预备生成")
             prompt_values.append({
                 "output_slot": slot,
                 "node_name": compiled["node_name"],

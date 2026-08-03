@@ -67,8 +67,8 @@ test("shows Chinese product recognition details without exposing soft compliance
   render(<PromptEditor sku={sku} onSave={() => undefined} />);
 
   expect(screen.getByText("商品识别信息")).toBeInTheDocument();
-  expect(screen.getByText("杯盖为绿色")).toBeInTheDocument();
-  expect(screen.getByText("杯身可能为食品级塑料")).toBeInTheDocument();
+  expect(screen.getAllByText("杯盖为绿色").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("杯身可能为食品级塑料").length).toBeGreaterThan(0);
   expect(screen.getByText("已确认 · 100%")).toBeInTheDocument();
   expect(screen.getByText("辅助判断 · 68%")).toBeInTheDocument();
   expect(screen.getByText("确认 1 · 图片观察 0 · 辅助判断 1")).toBeInTheDocument();
@@ -78,6 +78,42 @@ test("shows Chinese product recognition details without exposing soft compliance
   expect(screen.queryByText(/高风险材质推断不得进入消费者文案/)).not.toBeInTheDocument();
   expect(screen.queryByText(/“食品级”缺少确认来源/)).not.toBeInTheDocument();
   expect(screen.queryByText(/发布前需人工复核材质/)).not.toBeInTheDocument();
+});
+
+test("renders long mixed-language recognition facts as compact Chinese operator text", () => {
+  render(<PromptEditor sku={{
+    ...sku,
+    analysisSnapshot: {
+      fact_ledger: {
+        facts: [
+          "Yellow plush toy",
+          "large round head",
+          "two big round eyes",
+          "short arms",
+          "short legs",
+          "plush texture",
+          "confirmed_points",
+        ].map((statement, index) => ({
+          fact_id: `fact-${index}`,
+          statement,
+          fact_class: "confirmed" as const,
+          confidence: 1,
+          evidence_refs: ["confirmed_points"],
+          risk_level: "low",
+          allowed_uses: ["visual_prompt"],
+          review_note: "",
+        })),
+        review_summary: { confirmed_count: 7, observed_count: 0, inferred_count: 0, high_risk_count: 0 },
+      },
+    },
+  }} onSave={() => undefined} />);
+
+  expect(screen.getAllByText("黄色毛绒玩偶").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("圆形头部").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("两只大圆眼睛").length).toBeGreaterThan(0);
+  expect(screen.getByText("查看全部识别证据（6）")).toBeInTheDocument();
+  expect(screen.queryByText("large round head")).not.toBeInTheDocument();
+  expect(screen.queryByText("confirmed_points")).not.toBeInTheDocument();
 });
 
 test("shows localized copy and visual prompt without exposing strategy labels", () => {
@@ -132,9 +168,10 @@ test("shows backend final Chinese image prompt without inventing a field summary
   expect(screen.getAllByText(/พร้อมใช้ทุกวัน/).length).toBeGreaterThan(0);
 });
 
-test("does not invent editable prompt text when backend has only internal English", () => {
+test("does not show internal English when Chinese display prompt is missing", () => {
   render(<PromptEditor sku={{
     ...sku,
+    preparationStatus: "ready",
     prompts: [{
       slotOrder: 4,
       slot: "Function",
@@ -145,7 +182,8 @@ test("does not invent editable prompt text when backend has only internal Englis
 
   const field = screen.getByLabelText("04 功能说明图提示词") as HTMLTextAreaElement;
   expect(field.value).toBe("");
-  expect(field.placeholder).toContain("预备生成后显示");
+  expect(field.placeholder).toContain("此槽位提示词缺失");
+  expect(screen.getAllByText("此槽位提示词缺失，请重新预备生成").length).toBeGreaterThan(0);
 });
 
 test("uses placeholders instead of editable fake prompt text before preparation", () => {

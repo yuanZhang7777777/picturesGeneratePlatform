@@ -297,6 +297,24 @@ test("reports mixed generation failures without per-product market overrides", a
   expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/clusters/one/")).toBe(false);
 });
 
+test("shows active generation progress without a 0/0 denominator", async () => {
+  const runningProject = {
+    ...project,
+    skus: [{
+      ...project.skus[0],
+      preparationStatus: "ready",
+      preparation: { status: "ready", stage: "N7", current: 7, total: 7, error: "" },
+      generationProgress: { status: "running", current: 0, completed: 0, active: 1, failed: 0, total: 0 },
+    }],
+  };
+  stubFetch({ projectSnapshot: runningProject });
+  renderApp();
+
+  await screen.findByLabelText("商品名称 桌面灯");
+  expect(screen.getByText("出图中 · 0/9")).toBeInTheDocument();
+  expect(screen.queryByText(/0\/0/)).not.toBeInTheDocument();
+});
+
 test("hides technical preparation errors from operators", async () => {
   const failedProject = {
     ...project,

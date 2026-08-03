@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { slotLabel } from "../labels";
-import type { ClusterUpdateInput, ClusterUpdateResult, ProductPrompt, ProductSku, RuleGateMessage } from "../types";
+import type { ClusterUpdateInput, ClusterUpdateResult, ProductPrompt, ProductSku, PromptFact, RuleGateMessage } from "../types";
 
 const defaultPrompts = [
   "标准白底产品图",
@@ -93,7 +93,29 @@ function evidenceLabel(value: string) {
   if (value.startsWith("asset:")) return "上传图片";
   if (value.startsWith("observation:")) return "图片识别";
   if (value.startsWith("erp:")) return "ERP资料";
+  if (value === "confirmed_points") return "确认点";
   return value;
+}
+
+function recognitionText(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw || raw === "confirmed_points") return "";
+  const translated = raw
+    .replace(/Yellow plush toy/gi, "黄色毛绒玩偶")
+    .replace(/large round head/gi, "圆形头部")
+    .replace(/two big round eyes/gi, "两只大圆眼睛")
+    .replace(/round black eyes/gi, "圆形黑眼睛")
+    .replace(/short arms/gi, "短小手臂")
+    .replace(/short legs/gi, "短小腿部")
+    .replace(/plush texture/gi, "毛绒质感")
+    .replace(/yellow plush/gi, "黄色毛绒")
+    .replace(/plush toy/gi, "毛绒玩偶")
+    .replace(/visible wooden-handled spoons with tray/gi, "木柄餐具套装")
+    .replace(/wooden[- ]handled cutlery/gi, "木柄餐具")
+    .replace(/wooden[- ]handled spoons?/gi, "木柄勺")
+    .replace(/tray material resembles pressed pulp\/cardboard/gi, "托盘材质像纸浆或纸板")
+    .trim();
+  return /[\u3400-\u9fff]/.test(translated) ? translated : "";
 }
 
 function promptMeta(prompt: ProductPrompt) {
@@ -159,12 +181,17 @@ export function PromptEditor({
   const ledger = sku.analysisSnapshot?.fact_ledger;
   const gate = sku.analysisSnapshot?.rule_gate;
   const facts = ledger?.facts ?? [];
+  const displayFacts = facts
+    .map((fact) => ({ ...fact, statement: recognitionText(fact.statement) }))
+    .filter((fact) => fact.statement);
   const hardBlocks = (gate?.hard_blocks ?? []).filter((item) => !quietGateMessage(item));
   const semanticRisks = (gate?.semantic_risks ?? []).filter((item) => !quietGateMessage(item));
   const warnings = (gate?.warnings ?? []).filter((item) => !quietGateMessage(item));
   const hasGateSummary = hardBlocks.length + semanticRisks.length + warnings.length > 0;
   const preparation = sku.preparation;
-  const preparing = ["pending", "preparing"].includes(preparation?.status ?? sku.preparationStatus ?? "");
+  const preparationStatus = preparation?.status ?? sku.preparationStatus ?? "";
+  const preparing = ["pending", "preparing"].includes(preparationStatus);
+  const prepared = preparationStatus === "ready";
   const progressTotal = preparation?.total || 7;
   const progressCurrent = Math.min(preparation?.current ?? 0, progressTotal);
   const stage = preparation?.stage ?? "";
@@ -177,6 +204,8 @@ export function PromptEditor({
     ? "商品图片读取完成后，会自动生成中文提示词"
     : preparing
       ? "正在生成这个槽位的中文提示词"
+      : prepared
+        ? "此槽位提示词缺失，请重新预备生成"
       : `预备生成后显示：${fallbackChinesePrompt(displayOrder)}`;
 
   return (
@@ -191,18 +220,25 @@ export function PromptEditor({
               </p>
             )}
           </div>
-          <div className="mt-3 space-y-2">
-            {facts.map((fact) => (
-              <article className="rounded-md bg-white px-3 py-2" key={fact.fact_id}>
-                <p className="text-sm text-slate-800">{fact.statement}</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {{ confirmed: "已确认", observed: "图片观察", inferred: "辅助判断" }[fact.fact_class]} · {Math.round(fact.confidence * 100)}%
-                </p>
-                {fact.evidence_refs.length > 0 && <p className="mt-1 text-xs text-slate-400">来源：{Array.from(new Set(fact.evidence_refs.map(evidenceLabel))).join("、")}</p>}
-                {fact.review_note && !/结构化|异常|price|certification|medical/i.test(fact.review_note) && <p className="mt-1 text-xs text-amber-700">{fact.review_note}</p>}
-              </article>
-            ))}
-          </div>
+          {displayFacts.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {displayFacts.slice(0, 8).map((fact) => (
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200" key={fact.fact_id}>{fact.statement}</span>
+              ))}
+            </div>
+          )}
+          {displayFacts.length <= 4 ? (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {displayFacts.map((fact) => <FactEvidence key={fact.fact_id} fact={fact} />)}
+            </div>
+          ) : (
+            <details className="mt-3 rounded-md bg-white px-3 py-2 text-xs text-slate-600">
+              <summary className="cursor-pointer font-semibold text-slate-700">查看全部识别证据（{displayFacts.length}）</summary>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {displayFacts.map((fact) => <FactEvidence key={fact.fact_id} fact={fact} />)}
+              </div>
+            </details>
+          )}
         </section>
       )}
       {hasGateSummary && (
@@ -237,6 +273,7 @@ export function PromptEditor({
                 value={prompt.text}
                 onChange={(event) => updatePrompt(prompt.slotOrder, event.target.value)}
               />
+              {prepared && !prompt.text.trim() && <p className="mt-1 text-xs text-rose-700">此槽位提示词缺失，请重新预备生成</p>}
             </label>
           );
           })}
@@ -256,6 +293,19 @@ export function PromptEditor({
 function ProgressBar({ current, total }: { current: number; total: number }) {
   const percent = total ? Math.max(12, Math.min(100, Math.round((current / total) * 100))) : 12;
   return <div className="progress-track mt-3" aria-label="预备生成进度" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={current}><span className="progress-fill progress-fill-active" style={{ width: `${percent}%` }} /></div>;
+}
+
+function FactEvidence({ fact }: { fact: PromptFact }) {
+  return (
+    <article className="rounded-md bg-slate-50 px-2 py-1.5">
+      <p className="font-medium text-slate-800">{fact.statement}</p>
+      <p className="mt-0.5 text-slate-500">
+        {{ confirmed: "已确认", observed: "图片观察", inferred: "辅助判断" }[fact.fact_class]} · {Math.round(fact.confidence * 100)}%
+      </p>
+      {fact.evidence_refs.length > 0 && <p className="mt-0.5 text-slate-400">来源：{Array.from(new Set(fact.evidence_refs.map(evidenceLabel))).join("、")}</p>}
+      {fact.review_note && !/结构化|异常|price|certification|medical/i.test(fact.review_note) && <p className="mt-0.5 text-amber-700">{fact.review_note}</p>}
+    </article>
+  );
 }
 
 function PromptMeta({ prompt }: { prompt: ProductPrompt }) {
