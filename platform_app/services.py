@@ -3817,6 +3817,63 @@ def _normalize_style_plan(plan):
     return value
 
 
+def _slot_text(slot):
+    return f"{getattr(slot, 'name', '')} {getattr(slot, 'purpose', '')}".casefold()
+
+
+def _slot_name(slot):
+    return str(getattr(slot, "name", "") or "").casefold()
+
+
+def _slot_purpose(slot):
+    return str(getattr(slot, "purpose", "") or "").casefold()
+
+
+def _slot_requires_model_or_scale(slot):
+    text = _slot_text(slot)
+    return any(
+        token in text
+        for token in ("model", "scale", "wearer", "模特", "比例", "尺度", "真人")
+    )
+
+
+def _slot_requires_real_use(slot):
+    purpose = _slot_purpose(slot)
+    name = _slot_name(slot)
+    if any(token in purpose for token in ("usage", "realistic product use", "function", "使用", "功能", "操作", "穿戴", "佩戴", "手持")):
+        return True
+    return any(token in name for token in ("usage", "real use", "function", "使用场景", "功能说明", "使用图", "操作图", "穿戴图", "佩戴图", "手持图"))
+
+
+def _apply_slot_visual_contract(plan, slot):
+    subject = plan.get("subject_plan") if isinstance(plan.get("subject_plan"), dict) else {}
+    subject = copy.deepcopy(subject)
+    if _slot_requires_model_or_scale(slot):
+        subject.update(
+            {
+                "person_presence": "必须出现真人手部、身体局部、模特、用户、宠物或真实空间尺度线索；人物/手/宠物要和商品形成握持、佩戴、抱起、靠近或比例对照",
+                "usage_relationship": "用人物、手部、宠物或空间参照清楚展示商品真实大小、接触位置或使用尺度",
+                "reason": "当前槽位是模特/比例图，必须让买家理解商品与真实用户或空间的尺度关系",
+            }
+        )
+        plan["main_action"] = "真人手部拿起、抱起、佩戴或靠近商品，形成清楚的比例参照"
+        plan["specific_moment"] = "真人手部、身体局部、用户或宠物正与商品同框互动，买家一眼看懂商品大小和适用对象"
+        plan["must_show"] = list(dict.fromkeys([*plan.get("must_show", []), "person/hand/pet/scale context"]))
+    elif _slot_requires_real_use(slot):
+        subject.update(
+            {
+                "person_presence": "必须优先出现真人手部、身体局部、用户或宠物，实际握持、佩戴、携带、摆放或操作商品",
+                "usage_relationship": "商品处在真实或品类显而易见的使用位置，人物/手部/宠物与商品有清楚接触点和单一动作",
+                "reason": "当前槽位要解释商品怎么被使用，人物或手部关系能比静态摆拍更快说明用途",
+            }
+        )
+        plan["main_action"] = "用户手部正在拿起、摆放或使用商品，展示一个清楚的真实使用关系"
+        plan["specific_moment"] = "用户或手部正把商品用于一个明确场景，画面说明商品此刻解决的具体购买疑问"
+        plan["must_show"] = list(dict.fromkeys([*plan.get("must_show", []), "real user/hand use relationship"]))
+    plan["subject_plan"] = subject
+    return plan
+
+
 def _normalize_copywriting_chain(plan, fact_ids):
     value = plan.get("copywriting_chain")
     if not isinstance(value, dict):
@@ -3904,6 +3961,7 @@ def _normalize_n5_plans(payload, marketing_slots, fact_ids, inference_ids, targe
             raise ValueError("copy_intent must be a string")
         for field in required_lists:
             plan[field] = _required_string_list(plan, field)
+        plan = _apply_slot_visual_contract(plan, slot)
         _validate_known_refs(plan["fact_refs"], set(fact_ids), "fact_refs")
         _validate_known_refs(plan["inference_refs"], set(inference_ids), "inference_refs")
         appearance_ids = plan.get("appearance_ids")
@@ -4424,6 +4482,7 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
         f"Visual theme: {visual_theme}.",
         f"Specific moment: {specific_moment}.",
         f"Product scope for this slot: {subject_plan['product_scope']}. Visible unit count: {subject_plan['visible_unit_count']}. Usage/contact relationship: {subject_plan['usage_relationship']}.",
+        f"person/hand/pet/scale context: {subject_plan['person_presence']}.",
         f"Scene: {plan['main_scene']}.",
         f"Main action: {plan['main_action']}.",
         f"Composition: {composition_plan['canvas']}; {composition_plan['camera']}; {composition_plan['shot_scale']}; subject share {composition_plan['subject_share']}; text area {composition_plan['text_area']}. Camera: {plan['camera']}.",

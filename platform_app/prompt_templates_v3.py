@@ -577,6 +577,8 @@ N5_CORE = """
 4. typography_direction 写清营销文字如何服务主题：语言方向、标题/副标题层级、字体气质、字号关系、位置、占画面比例、颜色、是否有轻阴影或半透明柔光。营销文字必须贴合当前 visual_theme 和 specific_moment，不能八张图共用一组泛用短句；不要规划大块实心色块或笨重标签背景。
 5. text_layout_theme 写一个图片设计师会执行的版式主题，可参考 premium_whisper、clean_benefit_stack、soft_family_label、tech_spec_edge、deal_pop_corner、lifestyle_caption_float、feature_callout_pin、youth_sticker_light，也可以按商品创造更合适的主题。它不是死模板，必须服务当前商品和画面瞬间。
 6. subject_plan 必须说明 product_scope、visible_unit_count、person_presence、usage_relationship 和 reason。参考图里有多个重复商品实例时，不等于每张图都要全部出现；白底、总览、包装/包含物确认图可展示完整数量，情绪、细节、使用和场景图应只展示当前槽位需要的商品实例。上传玩偶图里有三只，不代表每张营销图都必须三只；单体陪伴、细节或情绪图可以只规划一个代表性玩偶。
+   - slot.name 或 slot.purpose 指向 Usage、使用、功能、操作、穿戴、佩戴或手持时，person_presence 必须写出真人/手部/身体局部/用户/宠物如何实际接触、拿起、佩戴、携带、摆放或操作商品；不能退回纯商品摆拍。
+   - slot.name 或 slot.purpose 指向 Model、scale、user、pet、模特、比例、尺度、用户或宠物时，person_presence 必须写出真人/手部/宠物/真实空间尺度线索，usage_relationship 必须说明它如何帮助买家判断大小、适配对象或使用尺度。
 7. composition_plan 必须把 canvas、camera、shot_scale、subject_share、text_area、diversity_signature 写清楚。文字区域一般占画面 8%–18%，标题高度约 6%–10%，副标题约 3%–5%，边距约 5%–7%；文字应以 transparent text overlay、轻阴影、空气感留白或自然浅色区域融入画面，no solid banner，不做大块方形底色。
 8. style_plan 必须说明 lighting、material_focus、palette 和 props，让 N6 能写出内容、灯光、质感和构图，而不是“真实使用瞬间”这类空话。copywriting_chain 必须从商品事实推到用户结果：raw_fact → feature → advantage → user_result → use_scene → emotion_hook → copy_angle，并写 source_fact_refs 与 risk_note。
 
@@ -642,9 +644,10 @@ text_layout_theme 必须继承 slot_plan，可使用 premium_whisper、clean_ben
 1. 第二段写 verified real-world usage relationship：商品与人物、身体部位、手、宠物、承载面、安装位置或配套物体之间已验证的佩戴、接触、握持、悬挂、收纳、放置、朝向、接触点和受力关系，并用正向方式写清正确摆放。
 2. 真实使用场景需要人物/身体/手/宠物才能解释用途时必须出现，动作只保留一个且必须正确执行；不能为了画面简洁把穿戴物、手持物或安装物改成桌面摆件，也不能让人物或宠物仅站在旁边。
 3. 对餐具、工具、美妆、玩具、穿戴、宠物和家居等可操作商品，使用场景要写清“谁正在用哪个功能部件做什么动作，以及这个动作解决什么购买疑虑”。不能只把整套商品平放到桌面。
-4. 静态展示只用于外观、结构、细节或规格。使用参考图支持的中性姿态、合理平放、悬浮或支撑方式；非承重功能部件不得充当底座，不得把商品表现成可自行站立的生物、机器人、家具或装饰物。
-5. usage_relationship 为空或证据不足时，使用中性展示或普通低风险日用品的品类常识轻量使用画面，画面只表达外观、结构、摆放和低风险接触关系，不虚构性能或功效。
-6. 真实使用场景必须包含这项英文约束：Show the product in its verified or category-obvious real-world use position and contact relationship.
+4. 若 slot_plan.subject_plan.person_presence 写了真人、手部、身体局部、用户、宠物、模特、比例或尺度，display_prompt 和最终英文 prompt 都必须完整保留这层关系，并明确它是画面里的主信息之一。
+5. 静态展示只用于外观、结构、细节或规格。使用参考图支持的中性姿态、合理平放、悬浮或支撑方式；非承重功能部件不得充当底座，不得把商品表现成可自行站立的生物、机器人、家具或装饰物。
+6. usage_relationship 为空或证据不足时，使用中性展示或普通低风险日用品的品类常识轻量使用画面，画面只表达外观、结构、摆放和低风险接触关系，不虚构性能或功效。
+7. 真实使用场景必须包含这项英文约束：Show the product in its verified or category-obvious real-world use position and contact relationship.
 
 # 事实、推断与消费者文案
 1. 画面与文案只能引用 fact_ledger 中 allowed_uses 匹配 visual_prompt、scene_planning、consumer_copy 或 consumer_copy_pending_review 的记录。inferred 内容必须进入 inference_trace；blocked 或高风险推断不得进入可见文字。

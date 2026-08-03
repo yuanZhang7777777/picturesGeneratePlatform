@@ -24,21 +24,41 @@ const stageText: Record<string, string> = {
 };
 
 function cleanChineseProductText(value: string) {
-  const text = String(value || "").trim();
+  const text = translateKnownProductText(String(value || "").trim());
   if (!text) return "";
-  const mapped = chineseProductPhrase(text);
-  if (mapped !== text) return mapped;
   const parts = text
-    .split(/[;\n]/)
+    .split(/[;\n,]/)
     .map((part) => part.trim())
     .filter(Boolean)
-    .map((part) => (/[\u3400-\u9fff]/.test(part) ? part.replace(/^可见/, "") : chineseProductPhrase(part)))
+    .map((part) => part.replace(/^可见/, "").replace(/^(主要外观|款式\/颜色|风格\/要求|身份保持)[：:]\s*$/, ""))
+    .filter(Boolean)
+    .map((part) => (/[\u3400-\u9fff]/.test(part) ? part : chineseProductPhrase(part)))
     .filter((part) => /[\u3400-\u9fff]/.test(part));
   return Array.from(new Set(parts)).join("；");
 }
 
+function translateKnownProductText(value: string) {
+  return String(value || "")
+    .replace(/Main appearance\s*:?/gi, "主要外观：")
+    .replace(/Style\/Color\s*:?/gi, "款式/颜色：")
+    .replace(/Style\/Requirements\s*:?/gi, "风格/要求：")
+    .replace(/Identity maintained\s*:?/gi, "身份保持：")
+    .replace(/Copper-bowl wooden-handled cutlery/gi, "木柄餐具套装")
+    .replace(/visible wooden-handled spoons with tray/gi, "木柄餐具套装")
+    .replace(/tray material resembles pressed pulp\/cardboard/gi, "托盘材质像纸浆或纸板")
+    .replace(/wooden[- ]handled spoons?/gi, "木柄勺")
+    .replace(/wooden[- ]handled cutlery/gi, "木柄餐具")
+    .replace(/Yellow plush toy/gi, "黄色毛绒玩偶")
+    .replace(/round black eyes/gi, "圆形黑眼睛")
+    .replace(/plush texture/gi, "毛绒质感")
+    .replace(/yellow plush/gi, "黄色毛绒")
+    .replace(/plush toy/gi, "毛绒玩偶")
+    .replace(/\bdark style\b/gi, "暗黑风格")
+    .trim();
+}
+
 function chineseProductPhrase(value: string) {
-  const text = String(value || "").trim();
+  const text = translateKnownProductText(String(value || "").trim());
   if (/[\u3400-\u9fff]/.test(text)) {
     const cleaned = text.replace(/^可见/, "").replace(/;.*[A-Za-z].*$/, "").trim();
     return cleaned || text;
@@ -87,7 +107,7 @@ function supplementFromSku(sku: ProductSku) {
 
 function draftFromSku(sku: ProductSku): Draft {
   return {
-    name: chineseProductPhrase(sku.name),
+    name: chineseProductPhrase(sku.name || sku.identity?.product_name || ""),
     productFacts: supplementFromSku(sku),
     platformOverride: sku.overrides?.platform ?? "",
     marketOverride: sku.overrides?.market ?? "",
@@ -174,11 +194,14 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
     if (previewAssetId && !assets.some((asset) => asset.id === previewAssetId)) setPreviewAssetId(null);
   }, [assets, previewAssetId]);
   useEffect(() => {
-    if (!dirty) {
-      const next = draftFromSku(sku);
-      setDraft(next);
-      setSavedDraft(next);
-    }
+    const next = draftFromSku(sku);
+    setDraft((current) => ({
+      name: current.name === savedDraft.name ? next.name : current.name,
+      productFacts: current.productFacts === savedDraft.productFacts ? next.productFacts : current.productFacts,
+      platformOverride: current.platformOverride === savedDraft.platformOverride ? next.platformOverride : current.platformOverride,
+      marketOverride: current.marketOverride === savedDraft.marketOverride ? next.marketOverride : current.marketOverride,
+    }));
+    setSavedDraft(next);
   }, [sku.id, sku.name, sku.productFacts, sku.facts, sku.productStyle, sku.brief, sku.identityLock, sku.identity, sku.overrides?.platform, sku.overrides?.market, dirty]);
 
   const submit = async () => {

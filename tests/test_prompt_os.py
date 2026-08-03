@@ -226,6 +226,56 @@ def test_n6_normalization_rewrites_generic_operator_display_prompt():
     assert "透明叠字" in normalized["display_prompt"]
 
 
+def test_model_scale_slot_design_requires_user_hand_or_scale_context():
+    from types import SimpleNamespace
+
+    from platform_app.services import _fallback_n5_plans, _fallback_n6_prompt
+
+    slot = SimpleNamespace(
+        order=6,
+        name="Model or scale",
+        purpose="Show model, wearer, user, pet, or real-world scale without unverified claims",
+    )
+    identity = {
+        "primary_asset_id": "asset-plush",
+        "supporting_asset_ids": [],
+        "target_appearances": [],
+    }
+    ledger = {"facts": [{"fact_id": "fact.name.001", "fact_class": "confirmed"}]}
+
+    plan = _fallback_n5_plans(
+        {
+            "product_name": "黄色毛绒玩偶",
+            "seed_style": "",
+        },
+        [slot],
+        {"fact.name.001"},
+        set(),
+        set(),
+    )["plans"][0]
+
+    assert "必须" in plan["subject_plan"]["person_presence"]
+    assert any(token in plan["subject_plan"]["person_presence"] for token in ("真人", "手部", "模特", "用户", "宠物", "尺度"))
+    assert any(token in plan["main_action"] for token in ("真人", "手部", "抱", "拿", "尺度", "比例"))
+
+    compiled = _fallback_n6_prompt(
+        {
+            "slot_order": 6,
+            "slot_plan": plan,
+            "product_name": "黄色毛绒玩偶",
+            "market_context": {"language": "th-TH"},
+            "size": "1:1",
+            "resolution": "1k",
+        },
+        identity,
+        ledger,
+        set(),
+    )
+
+    assert any(token in compiled["display_prompt"] for token in ("真人", "手部", "模特", "用户", "宠物", "尺度"))
+    assert "person/hand/pet/scale context" in compiled["prompt"]
+
+
 def test_confirm_generation_snapshots_selected_market_template_rule_and_prompt_asset():
     """A generation must retain the selected configuration after it is later edited."""
     from platform_app.models import Batch, OutputSlot, OutputTemplate, RuleProfile

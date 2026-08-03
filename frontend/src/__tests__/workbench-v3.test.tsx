@@ -334,6 +334,77 @@ test("shows AI-recognized English product info as Chinese operator text", async 
   expect(within(card).queryByDisplayValue(/Copper-bowl|visible wooden/i)).not.toBeInTheDocument();
 });
 
+test("shows mixed English recognized plush identity as Chinese operator text", async () => {
+  stubFetch({
+    projectSnapshot: {
+      ...project,
+      skus: [{
+        ...product("plush", "Yellow plush toy"),
+        productNameSource: "ai",
+        facts: "Yellow plush toy, round black eyes, plush texture\nMain appearance:\nStyle/Color: Yellow plush toy\nStyle/Requirements:\nIdentity maintained: yellow plush暗黑风格",
+        productFacts: "Yellow plush toy, round black eyes, plush texture\nMain appearance:\nStyle/Color: Yellow plush toy\nStyle/Requirements:\nIdentity maintained: yellow plush暗黑风格",
+        identityLock: "yellow plush暗黑风格",
+        identity: {
+          product_name: "Yellow plush toy",
+          confidence: 0.9,
+          product_profile: { category: "plush toy", primary_appearance: "Yellow plush toy, round black eyes, plush texture", shared_structure: ["plush texture", "round black eyes"] },
+          identity_lock: { must_not_change: ["yellow plush", "round black eyes"] },
+          target_appearances: [],
+        },
+      }],
+    },
+  });
+  renderApp();
+
+  const card = await screen.findByRole("group", { name: /黄色毛绒玩偶 商品卡片/ });
+  const supplement = within(card).getByLabelText("补充信息 黄色毛绒玩偶") as HTMLTextAreaElement;
+  expect(supplement.value).toContain("黄色毛绒玩偶");
+  expect(supplement.value).toContain("圆形黑眼睛");
+  expect(supplement.value).toContain("毛绒质感");
+  expect(supplement.value).toContain("暗黑风格");
+  expect(supplement.value).not.toMatch(/Yellow plush|Main appearance|Style\/Color|Identity maintained/i);
+});
+
+test("fills an empty product name from a later AI identity snapshot without overwriting edited supplement", async () => {
+  const blankProject = {
+    ...project,
+    skus: [{
+      ...product("blank", ""),
+      name: "",
+      productFacts: "",
+      facts: "",
+      identity: undefined,
+      productNameSource: "blank" as const,
+    }],
+  };
+  stubFetch({ projectSnapshot: blankProject });
+  const { queryClient } = renderApp();
+
+  const supplement = await screen.findByLabelText("补充信息 未命名商品");
+  fireEvent.change(supplement, { target: { value: "人工补充不要覆盖" } });
+  await act(async () => {
+    queryClient.setQueryData(["project", "project-1"], {
+      ...blankProject,
+      skus: [{
+        ...blankProject.skus[0],
+        name: "Yellow plush toy",
+        productNameSource: "ai" as const,
+        facts: "Yellow plush toy, round black eyes",
+        productFacts: "Yellow plush toy, round black eyes",
+        identity: {
+          product_name: "Yellow plush toy",
+          confidence: 0.92,
+          product_profile: { category: "plush toy", primary_appearance: "Yellow plush toy, round black eyes" },
+        },
+        version: 2,
+      }],
+    });
+  });
+
+  expect(await screen.findByLabelText("商品名称 黄色毛绒玩偶")).toHaveValue("黄色毛绒玩偶");
+  expect(screen.getByLabelText("补充信息 黄色毛绒玩偶")).toHaveValue("人工补充不要覆盖");
+});
+
 test("opens one product in a fixed side panel and consumes the first outside click", async () => {
   renderApp();
 

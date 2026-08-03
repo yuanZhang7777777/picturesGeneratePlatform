@@ -476,6 +476,7 @@ test("shows a nine-slot result grid for the project", async () => {
 
   expect(await screen.findByRole("heading", { name: "生产与结果" })).toBeInTheDocument();
   for (const slot of slotNames) expect(screen.getByText(slot)).toBeInTheDocument();
+  expect(await screen.findByRole("img", { name: "标准白底产品图结果图" })).toHaveAttribute("loading", "lazy");
 });
 
 test("selects the latest successful version by default for export", async () => {

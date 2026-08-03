@@ -160,7 +160,7 @@ export function ResultGrid({ project }: { project: Project }) {
                       <span className={`status status-${output.status}`}>v{output.attempt}</span>
                     </div>
                     <button className="mt-3 result-preview" onClick={() => setSelectedOutputId(output.id)}>
-                      {output.imageUrl ? <img src={output.imageUrl} alt={`${outputName}结果图`} /> : <span>{output.failureReason ?? "等待结果"}</span>}
+                      {output.imageUrl ? <img src={output.imageUrl} alt={`${outputName}结果图`} loading="lazy" decoding="async" /> : <span>{output.failureReason ?? "等待结果"}</span>}
                     </button>
                     {output.status === "completed" && output.imageUrl && output.reviewStatus === "accepted" && (
                       <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
@@ -199,7 +199,7 @@ export function ResultGrid({ project }: { project: Project }) {
             <h3 className="mt-1 font-semibold">当前修改：{selectedOutputName}</h3>
             {selectedOutput.reviewStatus !== "accepted" && <button className="primary-button mt-3 w-full justify-center" disabled={accept.isPending} onClick={() => accept.mutate(selectedOutput.id)}>通过此图，允许导出</button>}
             <button ref={canvas} type="button" aria-label="在结果图上添加问题圈选" onClick={(event) => addAnnotation(normalizedCircle(event, image.current))} onKeyDown={onKeyDown} className="review-canvas mt-4 min-h-64 border-0 text-left">
-              {selectedOutput.imageUrl ? <img ref={image} src={selectedOutput.imageUrl} alt={`当前${selectedOutputName}结果图`} /> : <span>结果图预览</span>}
+              {selectedOutput.imageUrl ? <img ref={image} src={selectedOutput.imageUrl} alt={`当前${selectedOutputName}结果图`} loading="lazy" decoding="async" /> : <span>结果图预览</span>}
               {annotations.map((annotation, index) => annotation.rect ? <i key={`${annotation.rect[0]}-${annotation.rect[1]}-${index}`} className="review-mark" style={markerPosition(annotation, canvas.current?.getBoundingClientRect(), image.current)}>{index + 1}</i> : null)}
             </button>
             <fieldset className="mt-4">
