@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
-import { ApiError, loadWorkspace, logoutUser } from "./api";
+import { ApiError, loadCurrentUser, logoutUser } from "./api";
 
 export function Shell({ children }: { children: ReactNode }) {
   const [loggingOut, setLoggingOut] = useState(false);
@@ -22,7 +22,7 @@ export function Shell({ children }: { children: ReactNode }) {
 }
 
 function Brand() { return <Link to="/" className="mb-9 flex items-center gap-3 px-2 text-lg font-bold tracking-tight text-slate-950"><span className="grid size-8 place-items-center rounded-lg bg-indigo-600 text-sm text-white">图</span>Prompt OS</Link>; }
-function Navigation() { const workspace = useQuery({ queryKey: ["workspace"], queryFn: loadWorkspace }); const admin = workspace.data?.currentUser?.role === "admin"; return <div className="flex gap-1 lg:block lg:space-y-1"><NavLink end to="/" className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}>工作台</NavLink><NavLink to="/projects/new" className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}>新建项目</NavLink><NavLink to="/production" className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}>生产队列</NavLink>{admin && <NavLink to="/admin/prompt-center" className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}>Prompt 管理中心</NavLink>}</div>; }
+function Navigation() { const currentUser = useQuery({ queryKey: ["current-user"], queryFn: loadCurrentUser, staleTime: 5 * 60_000, retry: false }); const admin = currentUser.data?.role === "admin"; return <div className="flex gap-1 lg:block lg:space-y-1"><NavLink end to="/" className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}>工作台</NavLink><NavLink to="/projects/new" className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}>新建项目</NavLink><NavLink to="/production" className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}>生产队列</NavLink>{admin && <NavLink to="/admin/prompt-center" className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}>Prompt 管理中心</NavLink>}</div>; }
 
 export function PageHeading({ eyebrow, title, action }: { eyebrow: string; title: string; action?: ReactNode }) { return <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">{eyebrow}</p><h1 className="text-3xl font-bold tracking-tight text-slate-950">{title}</h1></div>{action}</div>; }
 export function userErrorMessage(error: unknown) { const message = error instanceof Error ? error.message : ""; if (/Product is being prepared/i.test(message)) return "商品正在处理，完成后再修改或重新生成"; if (/Cluster changed|refresh before saving/i.test(message)) return "商品信息刚刚更新，请刷新后再保存"; if (/Product is archived/i.test(message)) return "商品已归档，不能继续修改"; if (/forbidden/i.test(message)) return "没有权限访问"; return message || "请检查网络或稍后重试。"; }

@@ -90,6 +90,7 @@ function stubFetch(options: { admin?: boolean; projectSnapshot?: typeof project;
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf" });
+    if (url === "/api/current-user/") return response(200, { role: options.admin ? "admin" : "operator" });
     if (url === "/api/workspace/snapshot/") return response(200, { currentUser: { role: options.admin ? "admin" : "operator" }, projects: [currentProject] });
     if (url === "/api/admin/prompt-nodes/" && (!init?.method || init.method === "GET")) return options.admin ? response(200, { nodes: promptNodes }) : response(403, { error: "forbidden" });
     if (url === "/api/admin/prompt-nodes/" && init?.method === "POST") return response(201, promptNodes[0]);
@@ -257,6 +258,50 @@ test("shows editable compact card fields and exact preparation progress without 
   expect(screen.queryByText("generic")).not.toBeInTheDocument();
   expect(screen.queryByText("SEA")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("多图关系")).not.toBeInTheDocument();
+});
+
+test("shows the active preparation stage instead of queued when a stage is present", async () => {
+  const stagedProject = {
+    ...project,
+    skus: [{
+      ...project.skus[0],
+      preparationStatus: "pending",
+      preparation: { status: "pending", stage: "N1", current: 0, total: 7, error: "" },
+    }],
+  };
+  stubFetch({ projectSnapshot: stagedProject });
+  renderApp();
+
+  expect(await screen.findByText("正在读取商品图片 · 0/7")).toBeInTheDocument();
+  expect(screen.queryByText(/预备排队中/)).not.toBeInTheDocument();
+});
+
+test("does not submit generation while selected products are still preparing", async () => {
+  const preparingProject = {
+    ...project,
+    skus: [{
+      ...project.skus[0],
+      preparationStatus: "preparing",
+      preparation: { status: "preparing", stage: "N1", current: 0, total: 7, error: "" },
+    }],
+  };
+  const fetchMock = stubFetch({ projectSnapshot: preparingProject });
+  renderApp();
+
+  const generateButton = await screen.findByRole("button", { name: "正式生成（1）" });
+  expect(generateButton).toBeDisabled();
+  fireEvent.click(generateButton);
+  expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/generate/")).toBe(false);
+  expect(screen.getByRole("button", { name: "暂停所选（1）" })).not.toBeDisabled();
+});
+
+test("does not load the full workspace snapshot on the new-project page", async () => {
+  const fetchMock = stubFetch();
+  renderApp("/projects/new");
+
+  expect(await screen.findByRole("heading", { name: "创建出图项目" })).toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/current-user/")).toBe(true);
+  expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/workspace/snapshot/")).toBe(false);
 });
 
 test("shows product name source only for AI recognition and ERP", async () => {

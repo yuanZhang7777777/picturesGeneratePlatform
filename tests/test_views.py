@@ -101,6 +101,16 @@ def test_legacy_batch_list_and_new_redirect_to_react(client):
     assert new_response["Location"] == "/projects/new"
 
 
+def test_current_user_api_returns_role_without_workspace_payload(client):
+    user = make_user()
+    client.force_login(user)
+
+    response = client.get(reverse("api_current_user"))
+
+    assert response.status_code == 200
+    assert response.json() == {"role": "operator"}
+
+
 def test_upload_api_creates_assets_and_default_clusters(client, tmp_path, settings):
     from platform_app.models import Batch
 

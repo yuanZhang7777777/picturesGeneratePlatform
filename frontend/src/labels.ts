@@ -97,5 +97,5 @@ export const stageLabels: Record<string, string> = {
   N4: "白底主图",
   N5: "营销规划",
   N6: "单图 Prompt",
-  N7: "规则校验",
+  N7: "出图请求整理",
 };

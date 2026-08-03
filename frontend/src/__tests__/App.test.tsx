@@ -104,6 +104,7 @@ function stubFetch(handler?: (url: string, init?: RequestInit) => Promise<unknow
   const fetchMock = vi.fn((url: string, init?: RequestInit) => {
     if (handler) return handler(url, init);
     if (url.includes("/csrf/")) return Promise.resolve(response(200, { csrf_token: "csrf-for-test" }));
+    if (url.includes("/current-user/")) return Promise.resolve(response(200, { role: "operator" }));
     if (url.includes("/workspace/")) return Promise.resolve(response(200, { projects: [project] }));
     return Promise.resolve(response(200, project));
   });

@@ -1,5 +1,5 @@
 import { developmentWorkspace } from "./mock-data";
-import type { ClusterUpdateInput, ClusterUpdateResult, ImportMode, PreflightResult, ProductConfiguration, Project, ProjectInput, PromptNodeDraftInput, PromptNodeTemplate, ReviewInput, RevisionInput, SkuImportResult, WorkspaceSnapshot } from "./types";
+import type { ClusterUpdateInput, ClusterUpdateResult, CurrentUser, ImportMode, PreflightResult, ProductConfiguration, Project, ProjectInput, PromptNodeDraftInput, PromptNodeTemplate, ReviewInput, RevisionInput, SkuImportResult, WorkspaceSnapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public authRequired = false) {
@@ -102,6 +102,10 @@ export async function loadWorkspace(): Promise<WorkspaceSnapshot> {
     if (demoMode()) return developmentWorkspace;
     throw error;
   }
+}
+
+export function loadCurrentUser(): Promise<CurrentUser> {
+  return jsonRequest<CurrentUser>("/api/current-user/");
 }
 
 export function loadProject(projectId: string) {

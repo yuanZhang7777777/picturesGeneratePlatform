@@ -12,6 +12,7 @@ urlpatterns = [
     path("batches/new/", views.legacy_batch_new_redirect, name="legacy_batch_new_redirect"),
     path("batches/<uuid:batch_id>/", views.legacy_batch_detail_redirect, name="legacy_batch_detail_redirect"),
     path("api/csrf/", views.api_csrf, name="api_csrf"),
+    path("api/current-user/", views.api_current_user, name="api_current_user"),
     path("api/workspace/snapshot/", views.api_workspace_snapshot, name="api_workspace_snapshot"),
     path("api/projects/", views.api_project_create, name="api_project_create"),
     path(

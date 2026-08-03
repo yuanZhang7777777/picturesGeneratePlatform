@@ -25,7 +25,7 @@ Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worke
 
 `MAX_ACTIVE_GENERATIONS` 表示同时提交给供应商并处于运行中的图片任务数；供应商 API 上限为 **500**，有效值必须在 `1..500`，预览默认 `50`。`GENERATION_USER_ACTIVE_SOFT_LIMIT` 默认 `10`：同一用户达到软限制后，其他有排队任务的用户优先；如果没有其他用户排队，该用户继续借用空闲容量。
 
-`PROMPT_WORKER_CONCURRENCY` 只控制预备生成阶段的 N1–N7 商品并发，默认 `16`。`GENERATION_WORKER_CONCURRENCY` 控制本地提交、轮询和归档线程，默认 `32`。它们与 `MAX_ACTIVE_GENERATIONS` 分开：前者调用视觉/文本分析和 Prompt 编译，后者控制 `gpt-image-2` 付费生图活跃任务。
+`PROMPT_WORKER_CONCURRENCY` 只控制预备生成阶段的 N1–N7 商品并发，默认 `64`；`PROMPT_OS_SLOT_CONCURRENCY` 控制同一商品 N6 槽位内的 DeepSeek 并发，默认 `8`；`GENERATION_WORKER_CONCURRENCY` 控制本地提交、轮询和归档线程，默认 `32`。它们与 `MAX_ACTIVE_GENERATIONS` 分开：前者调用视觉/文本分析和 Prompt 编译，后者控制 `gpt-image-2` 付费生图活跃任务。Prompt Worker 使用数据库行锁/原子认领分发商品，多个线程不会反复抢同一个 `pending` 商品。
 
 登录使用 ERP：`ERP_LOGIN_URL` 接收用户输入的用户名和密码，平台只把返回的 Token 保存在服务端 session 中，不保存 ERP 密码。所有 ERP 登录成功用户都可进入平台；`PLATFORM_ADMIN_ERP_USERS` 用逗号分隔管理员 ERP 登录名，默认仅配置刘学城的登录名。
 
@@ -120,7 +120,7 @@ docker compose logs --tail=100 web generation-worker prompt-worker proxy
 
 `web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认 Worker 只领取显式进入 `pending` 的商品，`draft` 商品绝不调用 AI，并保存 N1–N7 节点快照、推断台账和 9 槽 PromptVersion。Prompt OS 4.1 的 N5/N6 优先消费 DeepSeek 非空输出；JSON 不合法、缺字段或普通空泛文本不触发 deterministic fallback；模型调用失败或空响应在生产直接失败并保存中文业务原因，只有显式 `PROMPT_OS_ALLOW_FALLBACK=true` 的测试/demo/无模型开发环境才允许 fallback。
 
-不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 尚未实现跨进程任务原子认领；并发 one-shot 调试可能在真实付费模式重复提交。仅在隔离测试栈或停止常驻 worker 后使用该命令。
+不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 已通过数据库状态 CAS 认领任务，但真实付费模式下额外 one-shot 调试会和常驻 worker 争抢队列、干扰人工判断。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 
 前端工作台使用双速项目工作区和项目结果页。手工验收路径为：登录测试账号 → 创建项目并确认默认“Shopee/东南亚通用/1:1/1K” → 选择整理模式上传图片/文件夹或输入 ERP SKU → 确认只出现商品卡且没有 Prompt/视觉模型调用 → 在卡内排序缩略图，或把图片拖入另一商品卡共同生成一套图 → 填写名称、补充信息或单品风格 → 选中商品点击预备生成 → 在固定侧浮层查看 N1–N7 进度、多外观身份卡和 9 槽 Prompt → 正式生成 → 白底图完成后生成营销图 → 结果进入待审核 → 人工通过需要导出的版本 → 圈选修改单张或重做失败项 → 下载本地 ZIP。正式生成若发现 Prompt 缺失或过期，须先返回准备态并自动完成同一 N1–N7 后续接；整理导入本身仍不得调用 AI。Shopee VN 普通店还须验证槽位 1 为真实来源图直通、槽位 2 白底完成后才提交槽位 3–9。未审核通过的结果不得导出。
 
@@ -148,6 +148,8 @@ bridge_needed=no
 ```
 
 持有 `.codex_locks/global.lock` 后，在目标目录执行 Compose 静态解析、构建、迁移、健康检查和人工验收，并把命令输出与镜像版本写入发布记录。只有主 Agent 可以签核该发布。
+
+发布顺序必须保持稳定：先 `docker compose stop prompt-worker generation-worker`，再设置 `APP_IMAGE_TAG` 并用同一个 app 镜像构建 `web`，构建时用 `COMPOSE_PARALLEL_LIMIT=1` 限制并发；迁移和 `manage.py check` 通过后先启动 `web` 与 `proxy`，确认 `/health/ready` 和外部入口健康，再启动 `prompt-worker` 与 `generation-worker`。如果任一 worker 进入重启循环，先停掉该 worker 查日志，不让它持续拖慢整机。并发先按 `.env` 当前值运行，稳定后再提高，不在健康检查失败时继续加压。
 
 HTTP 的 IP:端口入口仅供测试账号和非敏感素材。正式入口不使用来源 IP 白名单，但必须具备域名 HTTPS、账号安全、备份恢复、私有存储和真实供应商契约测试，才可向 100 名员工开放真实素材或付费生成。
 

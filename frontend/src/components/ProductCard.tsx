@@ -1,5 +1,5 @@
 import { useDraggable, useDroppable } from "@dnd-kit/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../api";
 import { commonMarkets, extraMarkets, platforms } from "../labels";
@@ -20,7 +20,7 @@ const stageText: Record<string, string> = {
   N4: "正在准备白底图提示词",
   N5: "正在设计卖点和场景",
   N6: "正在生成提示词",
-  N7: "正在做出图前检查",
+  N7: "正在整理出图请求",
 };
 
 function cleanChineseProductText(value: string) {
@@ -130,6 +130,9 @@ function progressText(sku: ProductSku) {
     const stage = preparation?.stage ?? "";
     return `${stage ? stageText[stage] ?? "正在处理商品" : "正在预备生成"} · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
   }
+  if (status === "pending" && preparation?.stage && preparation.stage !== "queued") {
+    return `${stageText[preparation.stage] ?? "正在处理商品"} · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
+  }
   if (status === "pending") return `预备排队中 · ${preparation?.current ?? 0}/${preparation?.total ?? 7}`;
   if (status === "blocked") return `需要补充信息${preparation?.error ? ` · ${friendlyPreparationError(preparation.error)}` : ""}`;
   if (status === "failed") return `预备未完成${preparation?.error ? ` · ${friendlyPreparationError(preparation.error)}` : ""}`;
@@ -185,17 +188,19 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
   const droppable = useDroppable({ id: `cluster:${sku.id}`, data: { type: "cluster", clusterId: sku.id }, disabled });
   const [draft, setDraft] = useState(() => draftFromSku(sku));
   const [savedDraft, setSavedDraft] = useState(() => draftFromSku(sku));
-  const [currentVersion, setCurrentVersion] = useState(sku.version);
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
   const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
+  const currentVersionRef = useRef(sku.version);
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
   const label = draft.name.trim() || "未命名商品";
   const nameSourceText = sku.productNameSource === "ai" ? "AI 识别，可修改" : sku.productNameSource === "erp" ? "来自 ERP" : "";
   const progress = progressMeta(sku);
   const previewAsset = assets.find((asset) => asset.id === previewAssetId) ?? assets[0];
 
-  useEffect(() => { setCurrentVersion(sku.version); }, [sku.id, sku.version]);
+  useEffect(() => {
+    currentVersionRef.current = sku.version;
+  }, [sku.id, sku.version]);
   useEffect(() => {
     if (previewAssetId && !assets.some((asset) => asset.id === previewAssetId)) setPreviewAssetId(null);
   }, [assets, previewAssetId]);
@@ -220,8 +225,8 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
     setSaving(true);
     setSaveError("");
     try {
-      const result = await onSave(payload, currentVersion);
-      setCurrentVersion(result.version);
+      const result = await onSave(payload, currentVersionRef.current);
+      currentVersionRef.current = result.version;
       setSavedDraft(draft);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
@@ -233,8 +238,8 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
     }
   };
   const savePrompt = async (payload: ClusterUpdateInput) => {
-    const result = await onSave(payload, currentVersion);
-    setCurrentVersion(result.version);
+    const result = await onSave(payload, currentVersionRef.current);
+    currentVersionRef.current = result.version;
     return result;
   };
   return <div className="min-w-0" data-expanded-product={expanded ? sku.id : undefined}>

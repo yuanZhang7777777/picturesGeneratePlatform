@@ -168,7 +168,7 @@ test("shows backend final Chinese image prompt without inventing a field summary
   expect(screen.getAllByText(/พร้อมใช้ทุกวัน/).length).toBeGreaterThan(0);
 });
 
-test("does not show internal English when Chinese display prompt is missing", () => {
+test("shows the available model prompt when Chinese display prompt is missing", () => {
   render(<PromptEditor sku={{
     ...sku,
     preparationStatus: "ready",
@@ -181,9 +181,9 @@ test("does not show internal English when Chinese display prompt is missing", ()
   }} onSave={() => undefined} />);
 
   const field = screen.getByLabelText("04 功能说明图提示词") as HTMLTextAreaElement;
-  expect(field.value).toBe("");
-  expect(field.placeholder).toContain("此槽位提示词缺失");
-  expect(screen.getAllByText("此槽位提示词缺失，请重新预备生成").length).toBeGreaterThan(0);
+  expect(field.value).toContain("Create a polished ecommerce listing image");
+  expect(field.placeholder).not.toContain("此槽位提示词缺失");
+  expect(field.closest("label")).not.toHaveTextContent("此槽位提示词缺失，请重新预备生成");
 });
 
 test("uses placeholders instead of editable fake prompt text before preparation", () => {
@@ -194,7 +194,7 @@ test("uses placeholders instead of editable fake prompt text before preparation"
   expect(field.placeholder).toContain("预备生成后显示");
 });
 
-test("posts edited prompts as a structured snake-case array", async () => {
+test("autosaves edited prompts as a structured snake-case array", async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ csrf_token: "csrf" }) })
     .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: "cluster-1", version: 4 }) });
@@ -203,15 +203,17 @@ test("posts edited prompts as a structured snake-case array", async () => {
     <PromptEditor
       sku={sku}
       onSave={(payload) => {
-        void updateCluster(sku.id, sku.version, payload);
+        return updateCluster(sku.id, sku.version, payload);
       }}
     />,
   );
 
-  fireEvent.change(screen.getByLabelText("01 白底标准图提示词"), {
+  const field = screen.getByLabelText("01 白底标准图提示词");
+  expect(screen.queryByRole("button", { name: "保存提示词" })).not.toBeInTheDocument();
+  fireEvent.change(field, {
     target: { value: "纯白背景，保留绿色杯盖" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "保存提示词" }));
+  fireEvent.blur(field);
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toMatchObject({
@@ -240,8 +242,9 @@ test("keeps a successful prompt save while the parent still renders the old SKU 
   const onSave = vi.fn().mockResolvedValue({ id: "cluster-1", version: 4 });
   const view = render(<PromptEditor sku={sku} onSave={onSave} />);
 
-  fireEvent.change(screen.getByLabelText("01 白底标准图提示词"), { target: { value: "已保存白底提示词" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存提示词" }));
+  const field = screen.getByLabelText("01 白底标准图提示词");
+  fireEvent.change(field, { target: { value: "已保存白底提示词" } });
+  fireEvent.blur(field);
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
   view.rerender(<PromptEditor sku={sku} onSave={onSave} />);
 
@@ -252,8 +255,9 @@ test("adopts the acknowledged SKU snapshot as the new prompt baseline", async ()
   const onSave = vi.fn().mockResolvedValue({ id: "cluster-1", version: 4 });
   const view = render(<PromptEditor sku={sku} onSave={onSave} />);
 
-  fireEvent.change(screen.getByLabelText("01 白底标准图提示词"), { target: { value: "已保存白底提示词" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存提示词" }));
+  const field = screen.getByLabelText("01 白底标准图提示词");
+  fireEvent.change(field, { target: { value: "已保存白底提示词" } });
+  fireEvent.blur(field);
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
 
   view.rerender(<PromptEditor sku={{ ...sku, version: 4, prompts: [{ slotOrder: 1, slot: "白底标准图", text: "服务器确认提示词" }] }} onSave={onSave} />);

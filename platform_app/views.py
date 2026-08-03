@@ -180,6 +180,13 @@ def api_csrf(request):
 
 @login_required
 @password_change_required
+@require_http_methods(["GET"])
+def api_current_user(request):
+    return JsonResponse({"role": "admin" if request.user.is_platform_admin else "operator"})
+
+
+@login_required
+@password_change_required
 @require_POST
 def api_project_create(request):
     try:

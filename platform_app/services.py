@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlparse
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, connection, transaction
 from django.db.models import F, Max, Prefetch, Q
 from django.urls import reverse
 from django.utils import timezone
@@ -5462,6 +5462,62 @@ def _claim_prompt_cluster(candidate):
     ).get(id=candidate.id)
 
 
+def _claim_next_prompt_cluster():
+    base = Cluster.objects.select_related(
+        "batch",
+        "batch__owner",
+        "batch__output_template",
+    ).filter(
+        preparation_status=Cluster.PreparationStatus.PENDING,
+        archived_at__isnull=True,
+    ).order_by("updated_at", "created_at", "id")
+    with transaction.atomic():
+        queryset = base
+        if connection.features.has_select_for_update_skip_locked:
+            queryset = queryset.select_for_update(skip_locked=True)
+        candidate = queryset.first()
+        if candidate is None:
+            return None
+        candidate.preparation_status = Cluster.PreparationStatus.PREPARING
+        candidate.preparation_error = ""
+        candidate.preparation_stage = "N1"
+        candidate.preparation_current = 0
+        candidate.preparation_total = 7
+        candidate.updated_at = timezone.now()
+        if connection.features.has_select_for_update_skip_locked:
+            candidate.save(
+                update_fields=[
+                    "preparation_status",
+                    "preparation_error",
+                    "preparation_stage",
+                    "preparation_current",
+                    "preparation_total",
+                    "updated_at",
+                ]
+            )
+            return candidate
+        claimed = Cluster.objects.filter(
+            id=candidate.id,
+            preparation_status=Cluster.PreparationStatus.PENDING,
+            archived_at__isnull=True,
+            analysis_snapshot=copy.deepcopy(candidate.analysis_snapshot),
+        ).update(
+            preparation_status=Cluster.PreparationStatus.PREPARING,
+            preparation_error="",
+            preparation_stage="N1",
+            preparation_current=0,
+            preparation_total=7,
+            updated_at=timezone.now(),
+        )
+    if not claimed:
+        return None
+    return Cluster.objects.select_related(
+        "batch",
+        "batch__owner",
+        "batch__output_template",
+    ).get(id=candidate.id)
+
+
 def _restore_stale_preparations():
     stale_before = timezone.now() - timedelta(seconds=settings.PROMPT_PREPARATION_STALE_SECONDS)
     Cluster.objects.filter(
@@ -5480,15 +5536,7 @@ def process_prompt_once(client=None, storage=None):
     client = client or (FakeAPIMartClient() if settings.APIMART_FAKE_MODE else APIMartClient())
     storage = storage or LocalStorage()
     _restore_stale_preparations()
-    cluster = (
-        Cluster.objects.select_related("batch", "batch__owner", "batch__output_template")
-        .filter(preparation_status=Cluster.PreparationStatus.PENDING, archived_at__isnull=True)
-        .order_by("updated_at", "created_at", "id")
-        .first()
-    )
-    if cluster is None:
-        return 0
-    cluster = _claim_prompt_cluster(cluster)
+    cluster = _claim_next_prompt_cluster()
     if cluster is None:
         return 0
     claimed_revision = _preparation_revision(cluster.analysis_snapshot)
@@ -7357,6 +7405,22 @@ def _claim_generation_for_polling(generation_id):
     ).get(id=generation_id)
 
 
+def _claim_next_generation_for_submission(candidates):
+    for candidate in candidates:
+        claimed = _claim_generation_for_submission(candidate.id)
+        if claimed is not None:
+            return claimed
+    return None
+
+
+def _claim_next_generation_for_polling(candidates):
+    for candidate in candidates:
+        claimed = _claim_generation_for_polling(candidate.id)
+        if claimed is not None:
+            return claimed
+    return None
+
+
 def _current_n2_reference_relations(cluster):
     identity = (
         cluster.analysis_snapshot.get("identity", {})
@@ -7864,16 +7928,14 @@ def process_generation_once(client=None, storage=None):
         queued_candidates = list(queued_candidates)
         active_by_user = _active_generation_user_counts()
         queued_owner_ids = [_generation_owner_id(candidate) for candidate in queued_candidates]
+        fair_candidates = []
         for candidate in queued_candidates:
             if not _queue_is_fair_candidate(candidate, active_by_user, queued_owner_ids):
                 continue
-            queued = candidate
-            break
+            fair_candidates.append(candidate)
+        queued = _claim_next_generation_for_submission(fair_candidates)
 
     if queued is not None:
-        queued = _claim_generation_for_submission(queued.id)
-        if queued is None:
-            return 0
         try:
             queued = _seal_generation_submission(queued.id)
         except (TypeError, ValueError, PromptVersion.DoesNotExist) as exc:
@@ -7928,15 +7990,12 @@ def process_generation_once(client=None, storage=None):
         queued.batch.recompute_status()
         return 1
 
-    active = (
+    active_candidates = (
         Generation.objects.select_related("batch", "cluster", "output_slot")
         .filter(status__in=[Generation.Status.SUBMITTED, Generation.Status.PROCESSING])
         .order_by("submitted_at", "created_at", "id")
-        .first()
     )
-    if active is None:
-        return 0
-    active = _claim_generation_for_polling(active.id)
+    active = _claim_next_generation_for_polling(active_candidates)
     if active is None:
         return 0
 

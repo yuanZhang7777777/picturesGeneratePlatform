@@ -20,20 +20,7 @@ type PromptDraft = {
 
 function visiblePromptText(prompt: ProductPrompt) {
   const displayPrompt = prompt.displayPrompt?.trim() ?? "";
-  if (displayPrompt && !isInternalImagePrompt(displayPrompt) && !isEnglishHeavy(displayPrompt)) return displayPrompt;
-  const text = prompt.text.trim();
-  if (/[\u3400-\u9fff]/.test(text) && !isInternalImagePrompt(text) && !isEnglishHeavy(text)) return text;
-  return "";
-}
-
-function isInternalImagePrompt(value: string) {
-  return /Create a|Only render|Scene:|Composition:|Reference|Product facts|buyer motivation|product category|visible text|frame|prompt instructions/i.test(value);
-}
-
-function isEnglishHeavy(value: string) {
-  const english = (value.match(/[A-Za-z]/g) ?? []).length;
-  const chinese = (value.match(/[\u3400-\u9fff]/g) ?? []).length;
-  return english > Math.max(18, chinese * 2);
+  return displayPrompt || prompt.text.trim();
 }
 
 function fallbackChinesePrompt(order: number) {
@@ -139,6 +126,10 @@ export function PromptEditor({
   const [savedDraft, setSavedDraft] = useState(() => draftFromSku(sku));
   const currentSkuId = useRef(sku.id);
   const pendingVersion = useRef<number | null>(null);
+  const draftRef = useRef(draft);
+  const savedDraftRef = useRef(savedDraft);
+  const saveInFlight = useRef(false);
+  const saveAgain = useRef(false);
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
 
   useEffect(() => {
@@ -147,6 +138,8 @@ export function PromptEditor({
     currentSkuId.current = sku.id;
     if (skuChanged) {
       pendingVersion.current = null;
+      draftRef.current = next;
+      savedDraftRef.current = next;
       setDraft(next);
       setSavedDraft(next);
       return;
@@ -156,28 +149,55 @@ export function PromptEditor({
       pendingVersion.current = null;
     }
     if (!dirty) {
+      draftRef.current = next;
+      savedDraftRef.current = next;
       setDraft(next);
       setSavedDraft(next);
     }
   }, [sku.id, sku.version, sku.prompts, dirty]);
 
   const updatePrompt = (slotOrder: number, text: string) => {
-    setDraft((current) => ({ ...current, prompts: current.prompts.map((prompt) => prompt.slotOrder === slotOrder ? { ...prompt, text } : prompt) }));
+    setDraft((current) => {
+      const next = { ...current, prompts: current.prompts.map((prompt) => prompt.slotOrder === slotOrder ? { ...prompt, text } : prompt) };
+      draftRef.current = next;
+      return next;
+    });
   };
   const save = async () => {
-    const next = draft;
+    if (disabled) return;
+    if (saveInFlight.current) {
+      saveAgain.current = true;
+      return;
+    }
+    const next = draftRef.current;
+    const baseline = savedDraftRef.current;
+    const prompts = next.prompts
+      .filter((prompt) => !prompt.readOnly && prompt.text.trim() && prompt.text !== baseline.prompts.find((item) => item.slotOrder === prompt.slotOrder)?.text)
+      .map((prompt) => ({ slot_order: prompt.slotOrder, prompt: prompt.text }));
+    if (!prompts.length) return;
+    saveInFlight.current = true;
     try {
       const result = await onSave({
-        prompts: next.prompts
-          .filter((prompt) => !prompt.readOnly && prompt.text.trim() && prompt.text !== savedDraft.prompts.find((item) => item.slotOrder === prompt.slotOrder)?.text)
-          .map((prompt) => ({ slot_order: prompt.slotOrder, prompt: prompt.text })),
+        prompts,
       });
       pendingVersion.current = result?.version ?? null;
+      savedDraftRef.current = next;
       setSavedDraft(next);
     } catch {
       // ProductCard shows the save error and keeps this local draft dirty for retry.
+    } finally {
+      saveInFlight.current = false;
+      if (saveAgain.current) {
+        saveAgain.current = false;
+        void save();
+      }
     }
   };
+  useEffect(() => {
+    if (!dirty || disabled) return;
+    const timer = window.setTimeout(() => void save(), 700);
+    return () => window.clearTimeout(timer);
+  }, [dirty, draft, disabled]);
   const ledger = sku.analysisSnapshot?.fact_ledger;
   const gate = sku.analysisSnapshot?.rule_gate;
   const facts = ledger?.facts ?? [];
@@ -269,9 +289,10 @@ export function PromptEditor({
               <textarea
                 aria-label={label}
                 disabled={prompt.readOnly}
-                placeholder={promptPlaceholder(displayOrder)}
+                placeholder={prompt.text.trim() ? "" : promptPlaceholder(displayOrder)}
                 value={prompt.text}
                 onChange={(event) => updatePrompt(prompt.slotOrder, event.target.value)}
+                onBlur={() => void save()}
               />
               {prepared && !prompt.text.trim() && <p className="mt-1 text-xs text-rose-700">此槽位提示词缺失，请重新预备生成</p>}
             </label>
@@ -279,13 +300,6 @@ export function PromptEditor({
           })}
         </div>
       </section>
-      <button
-        className="secondary-button"
-        disabled={disabled}
-        onClick={() => void save()}
-      >
-        保存提示词
-      </button>
     </section>
   );
 }

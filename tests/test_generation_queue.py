@@ -1810,6 +1810,78 @@ def test_generation_submission_claim_has_one_cas_winner(tmp_path, settings):
     assert second is None
 
 
+def test_generation_submission_claim_skips_already_claimed_candidate(tmp_path, settings):
+    from platform_app.models import Generation, OutputTemplate
+    from platform_app.services import (
+        _claim_generation_for_submission,
+        _claim_next_generation_for_submission,
+    )
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    slot = OutputTemplate.objects.get(platform="global", site="").slots.get(order=1)
+    first = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        attempt=1,
+    )
+    second = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        created_by=user,
+        status=Generation.Status.QUEUED,
+        attempt=2,
+    )
+
+    assert _claim_generation_for_submission(first.id) is not None
+    claimed = _claim_next_generation_for_submission([first, second])
+
+    assert claimed is not None
+    assert claimed.id == second.id
+    assert claimed.status == Generation.Status.SUBMITTING
+
+
+def test_generation_polling_claim_skips_already_claimed_candidate(tmp_path, settings):
+    from platform_app.models import Generation, OutputTemplate
+    from platform_app.services import (
+        _claim_generation_for_polling,
+        _claim_next_generation_for_polling,
+    )
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    slot = OutputTemplate.objects.get(platform="global", site="").slots.get(order=1)
+    first = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        created_by=user,
+        status=Generation.Status.SUBMITTED,
+        provider_task_id="task-1",
+        attempt=1,
+    )
+    second = Generation.objects.create(
+        batch=batch,
+        cluster=cluster,
+        output_slot=slot,
+        created_by=user,
+        status=Generation.Status.SUBMITTED,
+        provider_task_id="task-2",
+        attempt=2,
+    )
+
+    assert _claim_generation_for_polling(first.id) is not None
+    claimed = _claim_next_generation_for_polling([first, second])
+
+    assert claimed is not None
+    assert claimed.id == second.id
+    assert claimed.status == Generation.Status.ARCHIVING
+
+
 def test_n8_followup_has_current_n7_and_valid_parent_lineage(tmp_path, settings):
     from platform_app.models import Generation, OutputTemplate
     from platform_app.services import (

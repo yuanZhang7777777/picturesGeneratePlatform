@@ -210,7 +210,11 @@ export interface Project {
 
 export interface WorkspaceSnapshot {
   projects: Project[];
-  currentUser?: { role: "admin" | "operator" };
+  currentUser?: CurrentUser;
+}
+
+export interface CurrentUser {
+  role: "admin" | "operator";
 }
 
 export interface CreativeBriefPlan {
