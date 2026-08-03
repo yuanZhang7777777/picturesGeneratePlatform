@@ -240,8 +240,8 @@ test("shows editable compact card fields and exact preparation progress without 
   expect((screen.getByLabelText("补充信息 桌面灯") as HTMLTextAreaElement).value).toContain("适合明亮桌面场景");
   expect((screen.getByLabelText("补充信息 桌面灯") as HTMLTextAreaElement).value).toContain("保留蓝色外壳");
   expect(screen.getByLabelText("项目国家")).toBeInTheDocument();
-  expect(screen.queryByLabelText("商品平台 桌面灯")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("商品国家 桌面灯")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("商品平台 桌面灯")).toHaveDisplayValue("跟随项目");
+  expect(screen.getByLabelText("商品国家 桌面灯")).toHaveDisplayValue("跟随项目");
   expect(screen.queryByLabelText("单品风格 桌面灯")).not.toBeInTheDocument();
   expect(screen.getAllByText("正在整理商品信息 · 3/7")).toHaveLength(2);
   expect(screen.getAllByRole("progressbar", { name: "预备生成进度" })).not.toHaveLength(0);
@@ -256,7 +256,6 @@ test("shows editable compact card fields and exact preparation progress without 
   expect(screen.queryByText("one-secret.jpg")).not.toBeInTheDocument();
   expect(screen.queryByText("generic")).not.toBeInTheDocument();
   expect(screen.queryByText("SEA")).not.toBeInTheDocument();
-  expect(screen.queryByText("跟随项目")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("多图关系")).not.toBeInTheDocument();
 });
 

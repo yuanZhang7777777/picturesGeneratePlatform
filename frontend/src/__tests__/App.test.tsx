@@ -385,6 +385,19 @@ test("saves the editable product brief through the cluster endpoint", async () =
   expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ product_facts: "更明亮的书桌场景" });
 });
 
+test("saves product platform and country overrides through the cluster endpoint", async () => {
+  const fetchMock = stubFetch();
+  renderApp("/projects/project-demo");
+
+  const platform = await screen.findByLabelText("商品平台 桌面护眼灯");
+  fireEvent.change(platform, { target: { value: "tiktok" } });
+  fireEvent.blur(platform);
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/clusters/sku-lamp/"))).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/clusters/sku-lamp/"));
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ platform_override: "tiktok" });
+});
+
 test("starts generation for selected products and shows product and image counts", async () => {
   const fetchMock = stubFetch();
   renderApp("/projects/project-demo");

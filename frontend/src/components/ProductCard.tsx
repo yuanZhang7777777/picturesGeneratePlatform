@@ -2,12 +2,15 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useEffect, useState } from "react";
 
 import { ApiError } from "../api";
+import { commonMarkets, extraMarkets, platforms } from "../labels";
 import type { ClusterUpdateInput, ClusterUpdateResult, ProductAsset, ProductSku } from "../types";
 import { PromptEditor } from "./PromptEditor";
 
 type Draft = {
   name: string;
   productFacts: string;
+  platformOverride: string;
+  marketOverride: string;
 };
 
 const stageText: Record<string, string> = {
@@ -86,6 +89,8 @@ function draftFromSku(sku: ProductSku): Draft {
   return {
     name: chineseProductPhrase(sku.name),
     productFacts: supplementFromSku(sku),
+    platformOverride: sku.overrides?.platform ?? "",
+    marketOverride: sku.overrides?.market ?? "",
   };
 }
 
@@ -174,12 +179,14 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       setDraft(next);
       setSavedDraft(next);
     }
-  }, [sku.id, sku.name, sku.productFacts, sku.facts, sku.productStyle, sku.brief, sku.identityLock, sku.identity, dirty]);
+  }, [sku.id, sku.name, sku.productFacts, sku.facts, sku.productStyle, sku.brief, sku.identityLock, sku.identity, sku.overrides?.platform, sku.overrides?.market, dirty]);
 
   const submit = async () => {
     const payload: ClusterUpdateInput = {};
     if (draft.name !== savedDraft.name) payload.name = draft.name;
     if (draft.productFacts !== savedDraft.productFacts) payload.product_facts = draft.productFacts;
+    if (draft.platformOverride !== savedDraft.platformOverride) payload.platform_override = draft.platformOverride || null;
+    if (draft.marketOverride !== savedDraft.marketOverride) payload.market_override = draft.marketOverride || null;
     if (!Object.keys(payload).length) return;
     setSaving(true);
     setSaveError("");
@@ -220,6 +227,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       <div className="flex flex-col gap-2 p-3">
         <input aria-label={`商品名称 ${label}`} className="h-9 min-h-9 font-semibold" value={draft.name} placeholder="可不填，预备生成时识别" onChange={(event) => setDraft({ ...draft, name: event.target.value })} onBlur={() => void submit()} />
         {nameSourceText && <p className="text-[11px] text-slate-500">{nameSourceText}</p>}
+        <ProductConfigEditor label={label} draft={draft} setDraft={setDraft} onBlur={submit} saving={saving || !!disabled} />
         <textarea aria-label={`补充信息 ${label}`} className="min-h-20 resize-none py-1.5 text-xs" value={draft.productFacts} placeholder="材质、颜色、款式、使用限制、风格要求都写在这里" onChange={(event) => setDraft({ ...draft, productFacts: event.target.value })} onBlur={() => void submit()} />
         {saveError && <p className="text-xs text-amber-700">{saveError}</p>}
         <div className="mt-auto space-y-2 text-xs">
@@ -234,6 +242,26 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
       <PromptEditor sku={sku} onSave={savePrompt} disabled={saving || disabled} />
       <button className="mt-4 text-sm font-semibold text-rose-700" type="button" disabled={saving || disabled} onClick={() => { if (window.confirm(`删除“${label}”？有历史结果时只会归档。`)) onDelete(); }}>删除商品</button>
     </section>}
+  </div>;
+}
+
+function ProductConfigEditor({
+  label,
+  draft,
+  setDraft,
+  onBlur,
+  saving,
+}: {
+  label: string;
+  draft: Draft;
+  setDraft: (draft: Draft) => void;
+  onBlur: () => Promise<void>;
+  saving?: boolean;
+}) {
+  const allMarkets = [...commonMarkets, ...extraMarkets];
+  return <div className="grid grid-cols-2 gap-2">
+    <label className="text-xs font-medium text-slate-500">平台<select aria-label={`商品平台 ${label}`} className="mt-1 h-9" value={draft.platformOverride} disabled={saving} onChange={(event) => setDraft({ ...draft, platformOverride: event.target.value })} onBlur={() => void onBlur()}><option value="">跟随项目</option>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select></label>
+    <label className="text-xs font-medium text-slate-500">国家<select aria-label={`商品国家 ${label}`} className="mt-1 h-9" value={draft.marketOverride} disabled={saving} onChange={(event) => setDraft({ ...draft, marketOverride: event.target.value })} onBlur={() => void onBlur()}><option value="">跟随项目</option>{allMarkets.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select></label>
   </div>;
 }
 
