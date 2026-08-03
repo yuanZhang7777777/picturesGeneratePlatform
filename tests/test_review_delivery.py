@@ -511,8 +511,8 @@ def test_media_guard_rejects_other_batch_prefix_and_prefix_symlink(client, tmp_p
     assert client.get(reverse("api_asset_media", args=[asset.id])).status_code == 404
 
 
-def test_only_accepted_result_exports_without_persisting_zip(client, tmp_path, settings, monkeypatch):
-    from platform_app.models import AuditEvent, Generation
+def test_completed_result_exports_without_approval_or_persisting_zip(client, tmp_path, settings, monkeypatch):
+    from platform_app.models import AuditEvent
     from platform_app import views
 
     settings.MEDIA_ROOT = tmp_path
@@ -520,13 +520,6 @@ def test_only_accepted_result_exports_without_persisting_zip(client, tmp_path, s
     other = make_user("other")
     batch, cluster, slot, generation, _ = make_generation(owner, tmp_path)
     client.force_login(owner)
-
-    pending = post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []})
-    assert pending.status_code == 400
-    assert "approved" in pending.json()["error"].lower()
-
-    generation.review_status = Generation.ReviewStatus.ACCEPTED
-    generation.save(update_fields=["review_status"])
 
     def fail_save(*args, **kwargs):
         raise AssertionError("export ZIP must not be stored")
@@ -552,20 +545,16 @@ def test_only_accepted_result_exports_without_persisting_zip(client, tmp_path, s
 
 
 def test_export_missing_result_file_returns_clear_error_not_500(client, tmp_path, settings):
-    from platform_app.models import Generation
-
     settings.MEDIA_ROOT = tmp_path
     owner = make_user("missing-export-owner")
     batch, _, _, generation, result = make_generation(owner, tmp_path)
-    generation.review_status = Generation.ReviewStatus.ACCEPTED
-    generation.save(update_fields=["review_status"])
     (tmp_path / result.storage_path).unlink()
     client.force_login(owner)
 
     response = post_json(client, reverse("api_project_export", args=[batch.id]), {"generation_ids": []})
 
     assert response.status_code == 400
-    assert "approved" in response.json()["error"].lower()
+    assert "completed" in response.json()["error"].lower()
 
 
 def test_export_defaults_to_latest_success_and_explicit_ids_can_select_old_success(

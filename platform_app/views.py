@@ -916,13 +916,11 @@ def _selected_export_generations(batch, generation_ids):
             queryset.filter(
                 id__in=requested,
                 status=Generation.Status.COMPLETED,
-                review_status=Generation.ReviewStatus.ACCEPTED,
             ).order_by("cluster__name", "output_slot__order", "-attempt")
         )
     latest = {}
     for generation in queryset.filter(
         status=Generation.Status.COMPLETED,
-        review_status=Generation.ReviewStatus.ACCEPTED,
     ).order_by(
         "cluster_id", "output_slot_id", "-attempt", "-id"
     ):
@@ -968,7 +966,7 @@ def api_project_export(request, batch_id):
                 continue
             result_size = len(data)
             if result_size > MAX_EXPORT_RESULT_BYTES:
-                return JsonResponse({"error": "An accepted result is too large to export"}, status=400)
+                return JsonResponse({"error": "A completed result is too large to export"}, status=400)
             total_size += result_size
             if total_size > MAX_EXPORT_TOTAL_BYTES:
                 return JsonResponse({"error": "The requested export is too large"}, status=400)
@@ -999,7 +997,7 @@ def api_project_export(request, batch_id):
                 ]
             )
     if not entries:
-        return JsonResponse({"error": "No approved images are available to export"}, status=400)
+        return JsonResponse({"error": "No completed images are available to export"}, status=400)
 
     export_data = BytesIO()
     with zipfile.ZipFile(export_data, "w", zipfile.ZIP_DEFLATED) as archive:

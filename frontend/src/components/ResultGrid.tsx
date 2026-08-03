@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { exportProject, pauseProject, regenerateGeneration, reviseGeneration, submitReview } from "../api";
+import { exportProject, pauseProject, regenerateGeneration, reviseGeneration } from "../api";
 import { ErrorPanel } from "../layout";
 import { displaySlotName } from "../slotDisplay";
 import type { Project, ReviewAnnotation } from "../types";
@@ -58,10 +58,8 @@ export function ResultGrid({ project }: { project: Project }) {
   const queryClient = useQueryClient();
   const latestBySku = useMemo(() => project.skus.map((sku) => ({ sku, latest: currentOutputs(sku.outputs) })), [project]);
   const completed = latestBySku.flatMap(({ latest }) => latest.filter((output) => output.status === "completed" && output.imageUrl));
-  const exportable = completed.filter((output) => output.reviewStatus === "accepted");
   const completedKey = completed.map((output) => output.id).join("|");
-  const exportableKey = exportable.map((output) => output.id).join("|");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(exportable.map((output) => output.id)));
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(completed.map((output) => output.id)));
   const [selectedOutputId, setSelectedOutputId] = useState("");
   const [description, setDescription] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -72,9 +70,9 @@ export function ResultGrid({ project }: { project: Project }) {
   const selectedOutputName = selectedOutput ? displaySlotName(selectedOutput) : "";
 
   useEffect(() => {
-    setSelectedIds(new Set(exportable.map((output) => output.id)));
+    setSelectedIds(new Set(completed.map((output) => output.id)));
     setSelectedOutputId((current) => completed.some((output) => output.id === current) ? current : completed[0]?.id ?? "");
-  }, [project.id, completedKey, exportableKey]);
+  }, [project.id, completedKey]);
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ["project", project.id] });
@@ -103,10 +101,6 @@ export function ResultGrid({ project }: { project: Project }) {
         })),
       } : current);
     },
-    onSuccess: invalidate,
-  });
-  const accept = useMutation({
-    mutationFn: (generationId: string) => submitReview(generationId, { decision: "accept", issue_tags: [], description: "", annotations: [] }),
     onSuccess: invalidate,
   });
   const revise = useMutation({
@@ -162,13 +156,12 @@ export function ResultGrid({ project }: { project: Project }) {
                     <button className="mt-3 result-preview" onClick={() => setSelectedOutputId(output.id)}>
                       {output.imageUrl ? <img src={output.imageUrl} alt={`${outputName}结果图`} loading="lazy" decoding="async" /> : <span>{output.failureReason ?? "等待结果"}</span>}
                     </button>
-                    {output.status === "completed" && output.imageUrl && output.reviewStatus === "accepted" && (
+                    {output.status === "completed" && output.imageUrl && (
                       <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
                         <input className="size-4" type="checkbox" checked={selectedIds.has(output.id)} onChange={() => toggle(output.id)} />
                         导出 {outputName} v{output.attempt}
                       </label>
                     )}
-                    {output.status === "completed" && output.imageUrl && output.reviewStatus !== "accepted" && <p className="mt-3 text-sm text-amber-700">待审核通过后可导出</p>}
                     <div className="mt-3 flex flex-wrap gap-2">
                       {(output.status === "completed" || output.status === "failed") && <button className="text-sm font-semibold text-indigo-700" onClick={() => regenerate.mutate(output.id)}>再生成 {outputName}</button>}
                       {["queued", "running"].includes(output.status) && <button className="text-sm font-semibold text-amber-700" onClick={() => pause.mutate(output.id)}>暂停 {outputName}</button>}
@@ -187,21 +180,24 @@ export function ResultGrid({ project }: { project: Project }) {
         {zip.isError && <ErrorPanel error={zip.error} retry={() => zip.mutate()} />}
         {regenerate.isError && <ErrorPanel error={regenerate.error} retry={() => { if (selectedOutput) regenerate.mutate(selectedOutput.id); }} />}
         {pause.isError && <ErrorPanel error={pause.error} retry={() => { if (selectedOutput) pause.mutate(selectedOutput.id); }} />}
-        {accept.isError && <ErrorPanel error={accept.error} retry={() => { if (selectedOutput) accept.mutate(selectedOutput.id); }} />}
         {revise.isError && <ErrorPanel error={revise.error} retry={() => revise.mutate()} />}
         <button className="primary-button mt-4 w-full" disabled={!selectedIds.size || zip.isPending} onClick={() => zip.mutate()}>
           下载选中 ZIP（{selectedIds.size} 张）
         </button>
-        {!exportable.length && <p className="mt-3 text-sm text-amber-700">没有审核通过的图片，先在下方通过需要导出的图。</p>}
         {selectedOutput && (
           <section className="mt-6 border-t border-slate-200 pt-5">
             <p className="section-label">圈选修改</p>
             <h3 className="mt-1 font-semibold">当前修改：{selectedOutputName}</h3>
-            {selectedOutput.reviewStatus !== "accepted" && <button className="primary-button mt-3 w-full justify-center" disabled={accept.isPending} onClick={() => accept.mutate(selectedOutput.id)}>通过此图，允许导出</button>}
             <button ref={canvas} type="button" aria-label="在结果图上添加问题圈选" onClick={(event) => addAnnotation(normalizedCircle(event, image.current))} onKeyDown={onKeyDown} className="review-canvas mt-4 min-h-64 border-0 text-left">
               {selectedOutput.imageUrl ? <img ref={image} src={selectedOutput.imageUrl} alt={`当前${selectedOutputName}结果图`} loading="lazy" decoding="async" /> : <span>结果图预览</span>}
               {annotations.map((annotation, index) => annotation.rect ? <i key={`${annotation.rect[0]}-${annotation.rect[1]}-${index}`} className="review-mark" style={markerPosition(annotation, canvas.current?.getBoundingClientRect(), image.current)}>{index + 1}</i> : null)}
             </button>
+            {selectedOutput.prompt && (
+              <label className="mt-4 block text-sm font-medium text-slate-700">
+                <span className="mb-2 block">生成提示词</span>
+                <textarea className="min-h-40 text-xs leading-5" readOnly value={selectedOutput.prompt} />
+              </label>
+            )}
             <fieldset className="mt-4">
               <legend className="text-sm font-medium text-slate-700">问题标签</legend>
               <div className="mt-2 grid grid-cols-2 gap-2">

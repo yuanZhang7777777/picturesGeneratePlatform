@@ -724,7 +724,7 @@ N7_CORE = """
 6. ADVICE 未满足只能进入 warnings；UNVERIFIED 只提示人工复核。仅明确 HARD_PLATFORM、HARD_MALL、系统安全或 APIMart 契约可形成相应硬阻断。
 
 # 决策和严格输出
-保留确定性引擎已有真正硬结论；只有上述极高风险内容才 decision=block 并追加 hard_blocks。无法确认、图片识别弱、身份不完整、文案普通或平台差异不清楚时，不要 block，写 semantic_risks/warnings 并要求人工复核。pass 只表示可提交本次请求，不表示生成结果审核通过或可导出。
+保留确定性引擎已有真正硬结论；只有上述极高风险内容才 decision=block 并追加 hard_blocks。无法确认、图片识别弱、身份不完整、文案普通或平台差异不清楚时，不要 block，写 semantic_risks/warnings 并要求人工复核。pass 只表示可提交本次请求，不表示生成结果质量已人工认可。
 
 只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、代码围栏或额外字段。prompt_checks 必须填写实际字符数、文字行数、场景/动作数和参考有效性；resolved_rule_refs 不得省略。语义模型失败时调用方保留确定性结论，不得用空结果覆盖。
 """.strip()

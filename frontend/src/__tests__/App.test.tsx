@@ -515,7 +515,7 @@ test("posts only selected generation IDs when downloading the ZIP", async () => 
   expect(JSON.parse(String(call?.[1]?.body)).generation_ids).not.toContain("generation-1");
 });
 
-test("allows accepting a result before export from the result page", async () => {
+test("exports completed results by default without approval and shows the generation prompt", async () => {
   const pendingProject = {
     ...project,
     skus: [{ ...project.skus[0], outputs: outputs.map((output) => ({ ...output, reviewStatus: "pending" })) }],
@@ -526,12 +526,18 @@ test("allows accepting a result before export from the result page", async () =>
   });
   renderApp("/projects/project-demo/results");
 
-  fireEvent.click(await screen.findByRole("button", { name: "通过此图，允许导出" }));
+  expect(await screen.findByRole("checkbox", { name: "导出 标准白底产品图 v1" })).toBeChecked();
+  expect(screen.getByRole("button", { name: "下载选中 ZIP（9 张）" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "通过此图，允许导出" })).not.toBeInTheDocument();
+  expect(screen.queryByText("没有审核通过的图片，先在下方通过需要导出的图。")).not.toBeInTheDocument();
+  expect(screen.getByText("生成提示词")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("Standard white-background product hero prompt")).toBeInTheDocument();
 
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-    "/api/generations/generation-1/review/",
-    expect.objectContaining({ method: "POST" }),
-  ));
+  fireEvent.click(screen.getByRole("button", { name: "下载选中 ZIP（9 张）" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/export/"))).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/export/"));
+  expect(JSON.parse(String(call?.[1]?.body)).generation_ids).toContain("generation-1");
 });
 
 test("requests a new version for a successful result", async () => {

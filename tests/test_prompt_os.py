@@ -254,7 +254,8 @@ def test_model_scale_slot_design_requires_user_hand_or_scale_context():
         set(),
     )["plans"][0]
 
-    assert "必须" in plan["subject_plan"]["person_presence"]
+    assert "比例" in plan["visual_theme"]
+    assert "安排" in plan["subject_plan"]["person_presence"]
     assert any(token in plan["subject_plan"]["person_presence"] for token in ("真人", "手部", "模特", "用户", "宠物", "尺度"))
     assert any(token in plan["main_action"] for token in ("真人", "手部", "抱", "拿", "尺度", "比例"))
 
@@ -3793,10 +3794,63 @@ def test_fallback_n6_creates_target_language_marketing_copy_for_named_product():
     assert "构图：" not in compiled["display_prompt"]
     assert "禁止" not in compiled["display_prompt"]
     assert "do not" not in compiled["display_prompt"].lower()
-    assert "Only render the quoted localized copy" in compiled["prompt"]
+    assert "Visible copy set, rendered exactly once" in compiled["prompt"]
     assert "no extra" not in compiled["prompt"].lower()
     assert "missing" not in compiled["prompt"].lower()
     assert "duplicated" not in compiled["prompt"].lower()
+
+
+def test_fallback_n5_n6_writes_director_brief_not_empty_operator_prompt():
+    from types import SimpleNamespace
+
+    from platform_app.services import _fallback_n5_plans, _fallback_n6_prompt
+
+    slot = SimpleNamespace(order=4, name="Function", purpose="Explain how the product is used")
+    identity = {
+        "primary_asset_id": "asset-cutlery",
+        "supporting_asset_ids": [],
+        "target_appearances": [
+            {
+                "appearance_id": "appearance.1",
+                "asset_ids": ["asset-cutlery"],
+                "primary_asset_id": "asset-cutlery",
+            }
+        ],
+    }
+    ledger = {"facts": [{"fact_id": "fact.name.001", "fact_class": "confirmed"}]}
+    plan = _fallback_n5_plans(
+        {"product_name": "餐具套装", "seed_style": ""},
+        [slot],
+        {"fact.name.001"},
+        set(),
+        {"appearance.1"},
+    )["plans"][0]
+
+    compiled = _fallback_n6_prompt(
+        {
+            "slot_order": 4,
+            "slot_plan": plan,
+            "product_name": "餐具套装",
+            "market_context": {"language": "vi", "market": "VN"},
+            "size": "1:1",
+            "resolution": "1k",
+        },
+        identity,
+        ledger,
+        set(),
+    )
+
+    prompt = compiled["display_prompt"]
+    assert len(prompt) >= 450
+    assert "刚好用上的一秒" in prompt
+    for token in ("消费者文案源", "画面目标", "商品呈现", "人物与场景", "构图与镜头", "光线材质", "文字版式"):
+        assert token in prompt
+    for bad in ("画面围绕参考图", "一个核心部件", "能立刻解释核心收益", "当前购买任务", "生活里的小任务", "防错", "禁止"):
+        assert bad not in prompt
+    assert "穿戴" not in prompt
+    assert "取出" in prompt
+    assert "34px" in prompt or "32px" in prompt
+    assert "透明叠字" in prompt
 
 
 def test_n6_normalization_replaces_english_copy_for_thai_market():
