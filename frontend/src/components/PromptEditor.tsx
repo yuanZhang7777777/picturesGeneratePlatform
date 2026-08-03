@@ -19,19 +19,11 @@ type PromptDraft = {
 };
 
 function visiblePromptText(prompt: ProductPrompt) {
-  const hasGeneratedContent = Boolean(
-    prompt.text.trim()
-    || prompt.displayPrompt?.trim()
-    || prompt.decisionTask
-    || prompt.conversionGoal
-    || prompt.creativeStrategy
-    || prompt.localizedCopy?.lines?.length,
-  );
-  if (!hasGeneratedContent) return "";
   const displayPrompt = prompt.displayPrompt?.trim() ?? "";
-  if (displayPrompt && !isInternalImagePrompt(displayPrompt) && !isEnglishHeavy(displayPrompt)) return cleanOperatorPrompt(displayPrompt, prompt);
-  if (/[\u3400-\u9fff]/.test(prompt.text) && !isInternalImagePrompt(prompt.text) && !isEnglishHeavy(prompt.text)) return cleanOperatorPrompt(prompt.text, prompt);
-  return buildVisualPrompt(prompt, "");
+  if (displayPrompt && !isInternalImagePrompt(displayPrompt) && !isEnglishHeavy(displayPrompt)) return displayPrompt;
+  const text = prompt.text.trim();
+  if (/[\u3400-\u9fff]/.test(text) && !isInternalImagePrompt(text) && !isEnglishHeavy(text)) return text;
+  return "";
 }
 
 function isInternalImagePrompt(value: string) {
@@ -56,44 +48,6 @@ function fallbackChinesePrompt(order: number) {
     "做一张适合平台列表转化的营销图。",
     "补充最后一个购买理由，让买家愿意下单。",
   ][order - 1] ?? `第 ${order} 张图的中文画面策划。`;
-}
-
-function extractChinesePart(value: string, label: string) {
-  const match = value.match(new RegExp(`${label}[：:]\\s*([^。；;\\n]+)`));
-  return match?.[1]?.trim() ?? "";
-}
-
-function slotScene(order: number) {
-  return [
-    "干净白底产品主图，完整呈现商品主体，方便上架。",
-    "围绕商品最能打动买家的好处设计一张转化图，商品是视觉中心。",
-    "用近景或局部构图展示材质、结构、触感或关键细节。",
-    "用一个真实动作说明商品怎么用、解决什么问题。",
-    "设计一个买家能代入的使用场景，让商品自然参与其中。",
-    "展示商品大小、使用对象或空间比例，让买家快速理解尺度。",
-    "展示尺寸、套装、包装或包含物；没有包装资料时只展示商品本身。",
-    "做一张适合平台列表点击的营销图，画面有明确购买理由。",
-    "补充最后一个转化理由，让买家觉得现在就可以下单。",
-  ][order - 1] ?? fallbackChinesePrompt(order);
-}
-
-function cleanOperatorPrompt(value: string, prompt: ProductPrompt) {
-  if (!/(购买任务|转化目标|用户价值|场景代入|情绪触发|画面[：:]|动作[：:]|构图[：:])/.test(value)) return value;
-  return buildVisualPrompt(prompt, value);
-}
-
-function buildVisualPrompt(prompt: ProductPrompt, source: string) {
-  const scene = extractChinesePart(source, "画面") || slotScene(prompt.slotOrder);
-  const action = extractChinesePart(source, "动作") || prompt.creativeStrategy?.mentalSimulation || prompt.creativeStrategy?.consumerBenefit || prompt.decisionTask || "围绕当前图类型安排一个清楚、自然、能看懂的动作。";
-  const composition = extractChinesePart(source, "构图") || "商品占据主要视觉位置，背景、道具和人物只服务这张图的购买理由，不照搬上传原图构图。";
-  const copy = prompt.localizedCopy?.lines?.filter(Boolean).join(" / ");
-  return [
-    `画面：${scene}`,
-    "主体：商品清晰可见，作为画面主角；多图商品按当前槽位需要选择完整套装或合理子集。",
-    `动作：${action}`,
-    `构图：${composition}`,
-    `图片文案：${copy || "无；如需要文字，预备生成会按所选国家语言生成。"}`
-  ].join("\n");
 }
 
 function promptsFromSku(sku: ProductSku) {

@@ -502,8 +502,9 @@ N5_CORE = """
    - visual_deconstruction：提炼画面层级、主体落点、镜头关系和商业心理，不复制具体场景；
    - composition / typography / color_palette / photographic_direction：分别转译为构图、文字层级、色彩和摄影方向；
    - design_rules / do / avoid / negative_prompt：转译为每槽 must_show、must_avoid 和风险提示。
+   这些内部风控字段只服务策划和 N7 审查，不要把防错清单写成后续运营可见的图片提示词。
 6. 不把 market_context 当成固定国家场景模板。market_context 只决定消费者可见语言和已验证硬规则；营销场景来自商品事实、槽位购买问题、真实使用关系、项目/单品风格与 Style DNA。
-7. 先静默发散再收敛：每槽先想三个明显不同的场景族，例如真实使用、问题解决、细节信任、尺度适配、通勤/旅行/工作/户外/礼物/收纳/亲子/宠物/社交等；只保留最适合当前商品和购买问题的一种。不要把八张图都做成同一类暖色家居、桌面摆拍、固定国家生活方式或漂亮但无购买理由的 flatlay。
+7. 先静默发散再收敛：每槽先想三个明显不同的创意视觉方案，例如真实使用、问题解决、细节信任、尺度适配、通勤/旅行/工作/户外/礼物/收纳/亲子/宠物/社交、夸张广告道具、情绪化空间、类目隐喻等；只保留最适合当前商品和购买问题的一种。允许大胆的摄影角度、道具层次、色彩情绪和版式节奏，但每个方案都必须让商品事实成为画面里的购买理由。不要把八张图都做成同一类暖色家居、桌面摆拍、固定国家生活方式或漂亮但无购买理由的 flatlay。
 
 # 八个互不重复的购买决策任务
 八个营销槽位按输入职责覆盖并保持独立：第二视角与结构确认、核心收益、事实证明、使用理解、细节信任、尺度或适配、规格包装或包含物、场景体验与购买收尾。缺少规格、包装或包含物证据时，相应槽位改为尚未覆盖的低风险购买疑问，例如“怎么用、为什么更顺手、放在哪里、谁会喜欢、什么场合想带走”，不得重复既有卖点或发明事实。
@@ -554,7 +555,7 @@ N5_PLATFORM = {
 N6_CORE = """
 # 角色与任务
 你是本地化单槽图片 Prompt 编译器。一次只编译一个营销槽位，将 N5 的中文营销策划、商品身份、事实台账、市场上下文、规则指令与参考图计划压缩为严格 JSON。display_prompt 是给中国运营看的中文画面策划稿，可直接在前端编辑；prompt 是在 display_prompt 确认后编译出的英文 gpt-image-2 生图指令。你不重新策划八图、不创建事实、不改变槽位职责。
-display_prompt 必须是给中国运营直接看的“中文画面提示词”，不是策略说明。必须按画面语言写清楚：画面是什么、主体/功能部件如何出现、人物或道具如何配合、构图/光线/空间层次如何服务购买理由、图片上要显示的目标国家语言文案是什么。不要用“购买任务：”“用户价值：”“场景代入：”开头；不要写英文字段名、模型内部说明或英文生图指令。
+display_prompt 必须是给中国运营和图片模型都能直接使用的“中文广告图导演稿”，不是策略说明、字段摘要或防错清单。用自然段写成最终画面提示词，覆盖画面内容、商品呈现、人物/空间关系、镜头构图、光线、材质、色彩、版式文字和购买情绪。不要用“主体：”“动作：”“构图：”“本图防错：”“购买任务：”“用户价值：”“场景代入：”这类字段标签；不要写英文字段名、模型内部说明、英文生图指令、负向清单或“文字不遮挡/预留安全区”。
 
 # 输入优先级与冲突修正
 优先级依次为：系统安全与硬规则；identity_lock；confirmed 事实与已验证真实使用关系；当前 slot_plan 的购买决策；允许用途匹配的 observed/inferred；抽象风格。当前计划若与更高优先级冲突，静默纠正并在 trace 中保留使用的真实 ID，不得保留错误摆法、错误数量或虚构卖点。
@@ -568,11 +569,11 @@ display_prompt 必须是给中国运营直接看的“中文画面提示词”�
 6. 对套装、组合、收纳盒、托盘、包装或配件：白底、总览和包含物槽位可展示完整套装；真实使用、生活方式、情绪和细节槽位应让当前动作需要的功能部件成为主角。若多个核心件共同完成一个自然用途，最终 Prompt 要正向写出这些核心件如何共同参与动作；若当前槽位只需要一个子集，也要保证它是合理使用子集，而不是只挑最显眼单件。收纳盒、托盘、包装和额外配件只在帮助理解使用、携带、收纳或下单内容时作为辅助上下文，不要让它们自动出现在每张营销图中。
 
 # 真实使用关系、人物和宠物
-1. 第二段写 verified real-world usage relationship：商品与人物、身体部位、手、宠物、承载面、安装位置或配套物体之间已验证的佩戴、接触、握持、悬挂、收纳、放置、朝向、接触点和受力关系，并写清禁止的错误摆放。
+1. 第二段写 verified real-world usage relationship：商品与人物、身体部位、手、宠物、承载面、安装位置或配套物体之间已验证的佩戴、接触、握持、悬挂、收纳、放置、朝向、接触点和受力关系，并用正向方式写清正确摆放。
 2. 真实使用场景需要人物/身体/手/宠物才能解释用途时必须出现，动作只保留一个且必须正确执行；不能为了画面简洁把穿戴物、手持物或安装物改成桌面摆件，也不能让人物或宠物仅站在旁边。
 3. 对餐具、工具、美妆、玩具、穿戴、宠物和家居等可操作商品，使用场景要写清“谁正在用哪个功能部件做什么动作，以及这个动作解决什么购买疑虑”。不能只把整套商品平放到桌面。
 4. 静态展示只用于外观、结构、细节或规格。使用参考图支持的中性姿态、合理平放、悬浮或支撑方式；非承重功能部件不得充当底座，不得把商品表现成可自行站立的生物、机器人、家具或装饰物。
-5. usage_relationship 为空或证据不足时，使用不暗示新用途的中性展示，禁止根据形状猜危险或专业用途。普通低风险日用品可使用符合品类常识的轻量使用画面，但不能虚构性能或功效。
+5. usage_relationship 为空或证据不足时，使用中性展示或普通低风险日用品的品类常识轻量使用画面，画面只表达外观、结构、摆放和低风险接触关系，不虚构性能或功效。
 6. 真实使用场景必须包含这项英文约束：Show the product in its verified or category-obvious real-world use position and contact relationship.
 
 # 事实、推断与消费者文案
@@ -582,13 +583,13 @@ display_prompt 必须是给中国运营直接看的“中文画面提示词”�
 4. 营销图默认必须输出 1–3 行 visible_text_lines，每行短、自然、只出现一次，并且与当前画面购买理由强相关；只有 text_enabled=false、规则禁字、白底图或原图直通槽位才允许零行。text_enabled=false 或规则禁字时 localized_copy.lines 与 visible_text_lines 都为空。
 5. 逐字冻结：localized_copy.lines 是冻结文本，最终 prompt 只能把这些行作为 quoted visible text 逐字交给 gpt-image-2，不允许模型再翻译、改写、增删、替换同义词或自动生成额外文字。
 6. 英文图片控制：最终 prompt 的图片控制指令必须是英文；只有 quoted visible_text_lines 与商品本身真实品牌/型号可使用目标语言或原文。Prompt 必须明确：Only render the quoted localized copy below exactly as quoted; do not translate, rewrite, add, omit, or render field labels, site codes, language names, internal instructions, or any other text.
-7. 文案区只能有一个，保持移动端可读，不遮挡商品关键结构。不要把 Headline、Subheadline、Callouts、slot_id、role、screen、module、layout 等字段名渲染进图。
+7. 文案只作为一个清楚的版式层融入自然背景、柔焦空间、台面、墙面或空气感区域，保持移动端第一眼可读，并与商品轮廓和购买焦点形成统一视觉层级。不要把 Headline、Subheadline、Callouts、slot_id、role、screen、module、layout 等字段名渲染进图。
 
 # Style DNA 转译框架
 1. 若 slot_plan 或输入风格包含 style_fidelity_anchors、source_content_to_avoid、visual_deconstruction、composition、typography、color_palette、photographic_direction、design_rules、do、avoid、negative_prompt，最终英文 Prompt 必须把这些拆成可执行的图片语言。
 2. style_fidelity_anchors 只保留可迁移的抽象锚点：光线、层次、商业密度、材质、版式节奏、镜头和色彩关系；不得保留源图商品、品牌、具体人物、原文案、源故事或可识别布局。
-3. source_content_to_avoid 与 negative_prompt 转为明确排除项，优先阻断源内容复刻、Logo、平台标识、二维码、乱码、无关品类和未经证实的 claims。
-4. visual_deconstruction 用于说明画面层级、主体落点、购买心理和空间组织；composition 控制主体占比、前中后景、文字/道具安全区；typography 只在允许可见文字时控制文字层级和质感；color_palette 与 photographic_direction 控制色彩、光线、镜头、材质和真实商业摄影感。
+3. source_content_to_avoid 与 negative_prompt 进入内部风险审查和最短必要合规边界，display_prompt 只写正向设计目标，避免把源内容和错误示例重新放进运营可见提示词。
+4. visual_deconstruction 用于说明画面层级、主体落点、购买心理和空间组织；composition 控制主体占比、前中后景和版式呼吸；typography 只在允许可见文字时控制文字层级和质感；color_palette 与 photographic_direction 控制色彩、光线、镜头、材质和真实商业摄影感。
 5. market_context 不提供固定国家场景。它只约束消费者可见语言、禁字和硬规则；Location、Background 和 props 应从商品用途、slot_plan、项目/单品风格与 Style DNA 中选择。
 
 # 单一场景、动作与差异化执行
@@ -600,7 +601,7 @@ display_prompt 必须是给中国运营直接看的“中文画面提示词”�
 第一段：参考图优先级、商品身份、主外观、结构，以及当前槽位应展示的核心部件或完整套装范围。
 第二段：真实对象关系、接触点、朝向、支撑关系和唯一主要动作。
 第三段：唯一主场景、构图、机位、主体占比、光线、材质和必要道具。
-第四段：唯一允许显示的本地化文字；无文字时明确 no added text。
+第四段：本地化文字如何作为画面版式层出现；无文字时让商品、场景和光影承担转化。
 第五段：用一句正向合并约束再次说明目标部件/套装范围、结构、主外观和正确使用姿态，不堆叠同义否定句，也不把错误数量或错误部件写进 Prompt。
 
 # 长度、参考图与输出

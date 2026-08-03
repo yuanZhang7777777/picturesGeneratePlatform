@@ -109,25 +109,43 @@ test("shows localized copy and visual prompt without exposing strategy labels", 
   expect(screen.queryByText(/localized_copy|creative_strategy|back_translation/)).not.toBeInTheDocument();
 });
 
-test("converts internal English prompts into Chinese visual prompt drafts", () => {
+test("shows backend final Chinese image prompt without inventing a field summary", () => {
+  const finalPrompt = "生成一张 1:1 Shopee 商品细节营销图。画面主体是参考图中的商品，镜头采用近景微俯视角，柔和侧光突出材质纹理，文字以轻巧标题融入背景区域。";
   render(<PromptEditor sku={{
     ...sku,
     prompts: [{
       slotOrder: 3,
       slot: "Product detail",
       text: "Create a polished ecommerce listing image. Scene: a detail fills most of the frame. Only render these exact visible text lines.",
+      displayPrompt: finalPrompt,
       decisionTask: "让买家相信产品细节经得起近看",
       localizedCopy: { language: "th", lines: ["พร้อมใช้ทุกวัน"], backTranslation: "每天都适合使用" },
     }],
   }} onSave={() => undefined} />);
 
   const field = screen.getByLabelText("03 商品细节图提示词") as HTMLTextAreaElement;
-  expect(field.value).toContain("画面：");
-  expect(field.value).toContain("主体：商品清晰可见");
-  expect(field.value).toContain("图片文案：พร้อมใช้ทุกวัน");
-  expect(field.value).not.toContain("购买任务：");
+  expect(field.value).toBe(finalPrompt);
+  expect(field.value).not.toContain("主体：");
+  expect(field.value).not.toContain("动作：");
+  expect(field.value).not.toContain("构图：");
   expect(field.value).not.toContain("Create a polished ecommerce");
   expect(screen.getAllByText(/พร้อมใช้ทุกวัน/).length).toBeGreaterThan(0);
+});
+
+test("does not invent editable prompt text when backend has only internal English", () => {
+  render(<PromptEditor sku={{
+    ...sku,
+    prompts: [{
+      slotOrder: 4,
+      slot: "Function",
+      text: "Create a polished ecommerce listing image. Scene: a real use scene selected from buyer motivation.",
+      localizedCopy: { language: "en", lines: ["Useful right when it matters"] },
+    }],
+  }} onSave={() => undefined} />);
+
+  const field = screen.getByLabelText("04 功能说明图提示词") as HTMLTextAreaElement;
+  expect(field.value).toBe("");
+  expect(field.placeholder).toContain("预备生成后显示");
 });
 
 test("uses placeholders instead of editable fake prompt text before preparation", () => {

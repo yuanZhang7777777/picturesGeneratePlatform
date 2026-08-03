@@ -3556,7 +3556,10 @@ def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs,
     main_action = _required_string(payload, "main_action")
     display_prompt = str(payload.get("display_prompt") or "").strip()
     if not display_prompt:
-        display_prompt = f"画面：{main_scene}；动作：{main_action}"
+        display_prompt = (
+            "生成一张 1:1 Shopee 商品营销图。画面围绕参考图中的商品展开，"
+            "用真实商业摄影的镜头、光线、材质层次和版式文字服务当前购买理由。"
+        )
     visible_text_lines = _required_string_list(payload, "visible_text_lines")
     if len(visible_text_lines) > 3 or (hero and visible_text_lines):
         raise ValueError("visible_text_lines violate the slot limit")
@@ -4142,6 +4145,54 @@ def _fallback_marketing_copy_lines(plan, product_name, language):
     return copy_bank["en"][index]
 
 
+def _fallback_display_prompt(plan, visible_text_lines):
+    slot_order = int(plan.get("slot_order") or 2)
+    concepts = {
+        2: "把商品放在第一眼能理解用途和收益的购买瞬间，画面有明确的视觉钩子。",
+        3: "用近景展示最能建立信任的材质纹理、边缘细节或结构触点。",
+        4: "用一个清楚的使用瞬间说明商品怎么参与生活里的小任务。",
+        5: "把商品放进买家容易代入的生活场景，氛围有温度但商品仍是视觉中心。",
+        6: "通过人物、手部、空间或日常物件建立尺度感和使用关系。",
+        7: "把套装、尺寸、包含物或下单所得整理成清楚的商业摄影画面。",
+        8: "用更有点击欲的广告化场景收束核心购买理由，画面节奏更鲜明。",
+        9: "补上一张带情绪触发的收尾转化图，让买家感到今天就能用上。",
+    }
+    camera = {
+        2: "中近景三分之四视角",
+        3: "近景微距视角",
+        4: "平视中近景",
+        5: "略带环境层次的中景",
+        6: "带尺度参照的平视或轻俯视角",
+        7: "清爽俯视或三分之四陈列视角",
+        8: "更有张力的低机位或斜向构图",
+        9: "带留白呼吸感的生活方式镜头",
+    }
+    lighting = {
+        2: "柔和主光突出轮廓，边缘保留干净高光",
+        3: "侧光打出材质纹理和细节阴影",
+        4: "自然窗光呈现真实使用触感",
+        5: "柔和环境光营造真实生活氛围",
+        6: "均匀柔光让商品比例和接触关系清楚",
+        7: "顶光加轻微侧光让数量和边缘层次清楚",
+        8: "更鲜明的广告主光强化点击感和质感",
+        9: "温和自然光配合浅景深营造轻松收尾情绪",
+    }
+    copy = "、".join(f"“{line}”" for line in visible_text_lines)
+    copy_sentence = (
+        f"图片文字作为轻巧标题融入背景层次，使用{copy}。"
+        if copy
+        else "画面依靠商品、场景和光影完成转化。"
+    )
+    return (
+        "生成一张 1:1 Shopee 商品营销图。"
+        "画面围绕参考图中的商品展开，保持可见外形、颜色比例、材质质感和关键结构。"
+        f"{concepts.get(slot_order, concepts[8])}"
+        f"镜头采用{camera.get(slot_order, camera[8])}，商品占据主要视觉重量，前景、中景和背景形成清楚层次。"
+        f"使用真实商业摄影风格，{lighting.get(slot_order, lighting[8])}，质感清晰、边缘锐利、色彩通透。"
+        f"{copy_sentence}"
+    )
+
+
 def _append_visible_copy_lock(prompt, visible_text_lines):
     tail = (
         " Final visible copy lock: render only these exact localized copy lines once: "
@@ -4204,13 +4255,7 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
             "slot_id": str(slot_input["slot_order"]),
             "main_scene": plan["main_scene"],
             "main_action": plan["main_action"],
-            "display_prompt": (
-                f"画面：{plan['main_scene']}。"
-                "主体：商品清晰可见，按当前槽位展示完整套装或合理使用子集。"
-                f"动作：{plan['main_action']}。"
-                f"构图：{plan['composition']}。"
-                f"图片文案：{' / '.join(visible_text_lines) if visible_text_lines else '无'}。"
-            ),
+            "display_prompt": _fallback_display_prompt(plan, visible_text_lines),
             "visible_text_lines": visible_text_lines,
             "localized_copy": {
                 "language": language,

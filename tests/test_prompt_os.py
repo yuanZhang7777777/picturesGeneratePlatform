@@ -3633,8 +3633,15 @@ def test_fallback_n6_creates_target_language_marketing_copy_for_named_product():
     assert all("奶龙" not in line for line in compiled["visible_text_lines"])
     assert "ภาพ" not in " ".join(compiled["visible_text_lines"])
     assert "购买任务" not in compiled["display_prompt"]
-    assert "画面：" in compiled["display_prompt"]
-    assert "图片文案：" in compiled["display_prompt"]
+    assert compiled["display_prompt"].startswith("生成一张 1:1")
+    assert "真实商业摄影" in compiled["display_prompt"]
+    assert "镜头" in compiled["display_prompt"]
+    assert "光" in compiled["display_prompt"]
+    assert "主体：" not in compiled["display_prompt"]
+    assert "动作：" not in compiled["display_prompt"]
+    assert "构图：" not in compiled["display_prompt"]
+    assert "禁止" not in compiled["display_prompt"]
+    assert "do not" not in compiled["display_prompt"].lower()
     assert "Only render the quoted localized copy" in compiled["prompt"]
     assert "no extra" not in compiled["prompt"].lower()
     assert "missing" not in compiled["prompt"].lower()
