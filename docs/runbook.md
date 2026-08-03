@@ -118,7 +118,7 @@ curl -fsS http://127.0.0.1:18083/health/ready
 docker compose logs --tail=100 web generation-worker prompt-worker proxy
 ```
 
-`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认 Worker 只领取显式进入 `pending` 的商品，`draft` 商品绝不调用 AI，并保存 N1–N7 节点快照、推断台账和 9 槽 PromptVersion。Prompt OS v3 的 N5 只接受严格 `plans` 包络；缺槽或 Schema 不合格时只修复一次，禁止无限付费重试。
+`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认 Worker 只领取显式进入 `pending` 的商品，`draft` 商品绝不调用 AI，并保存 N1–N7 节点快照、推断台账和 9 槽 PromptVersion。Prompt OS 4.1 的 N5/N6 优先消费 DeepSeek 非空输出；JSON 不合法、缺字段或普通空泛文本不触发 deterministic fallback，只有模型调用失败或空响应才失败或在显式 `PROMPT_OS_ALLOW_FALLBACK=true` 时 fallback。
 
 不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 尚未实现跨进程任务原子认领；并发 one-shot 调试可能在真实付费模式重复提交。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 
@@ -157,5 +157,5 @@ HTTP 的 IP:端口入口仅供测试账号和非敏感素材。正式入口不�
 - 镜像构建包含 React 静态产物，Caddy 同源入口能返回前端并代理 Django 健康检查。
 - Django 检查、迁移状态、Web/数据库健康、两个 worker 的容器状态和日志已记录。
 - 假模式端到端路径、对象权限回归、真实 APIMart 三节点 smoke、真实 OSS 写读删和真实 1+8 付费生图 smoke 已通过。
-- 未审核结果导出应返回 400；人工审核通过后 ZIP 只包含通过版本。
+- 结果导出以员工勾选的 completed 且有结果文件版本为准；审核状态不再阻断 ZIP，未完成或无文件版本不得进入 ZIP。
 - 真实 ERP 员工账号成功登录和 SKU 导入如未验收，发布记录必须明确标注，不能以网络可达替代业务证明。
