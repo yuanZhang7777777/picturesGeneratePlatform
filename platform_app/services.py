@@ -5458,11 +5458,7 @@ def _claim_prompt_cluster(candidate):
 
 
 def _claim_next_prompt_cluster():
-    base = Cluster.objects.select_related(
-        "batch",
-        "batch__owner",
-        "batch__output_template",
-    ).filter(
+    base = Cluster.objects.filter(
         preparation_status=Cluster.PreparationStatus.PENDING,
         archived_at__isnull=True,
     ).order_by("updated_at", "created_at", "id")
@@ -5490,7 +5486,11 @@ def _claim_next_prompt_cluster():
                     "updated_at",
                 ]
             )
-            return candidate
+            return Cluster.objects.select_related(
+                "batch",
+                "batch__owner",
+                "batch__output_template",
+            ).get(id=candidate.id)
         claimed = Cluster.objects.filter(
             id=candidate.id,
             preparation_status=Cluster.PreparationStatus.PENDING,
