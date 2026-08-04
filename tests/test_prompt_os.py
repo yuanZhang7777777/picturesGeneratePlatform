@@ -679,10 +679,7 @@ def test_n6_marketing_slots_use_one_product_level_call(tmp_path, settings):
     assert PromptVersion.objects.filter(cluster=cluster).count() == 5
 
 
-def test_prompt_os_observes_product_images_concurrently(tmp_path, settings):
-    import threading
-    import time
-
+def test_prompt_os_observes_only_primary_image_but_keeps_support_references(tmp_path, settings):
     from platform_app.models import Asset, Batch, ClusterAsset, OutputTemplate
     from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
 
@@ -715,70 +712,58 @@ def test_prompt_os_observes_product_images_concurrently(tmp_path, settings):
         )
     request_cluster_preparation(cluster, auto_generate=False)
 
-    class SlowN1Client(FakeAPIMartClient):
+    class PrimaryOnlyClient(FakeAPIMartClient):
         def __init__(self):
-            self.lock = threading.Lock()
-            self.active = 0
-            self.max_active = 0
+            self.calls = []
 
         def observe_images(self, instruction, image_paths):
-            with self.lock:
-                self.active += 1
-                self.max_active = max(self.max_active, self.active)
-            try:
-                time.sleep(0.05)
-                return super().observe_images(instruction, image_paths)
-            finally:
-                with self.lock:
-                    self.active -= 1
+            self.calls.append((instruction, list(image_paths)))
+            return super().observe_images(instruction, image_paths)
 
-    client = SlowN1Client()
+    client = PrimaryOnlyClient()
     assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
-    assert client.max_active > 1
+    cluster.refresh_from_db()
+    assert len(client.calls) == 1
+    assert "ASSET_ID=" + str(cluster.cluster_assets.order_by("order").first().asset_id) in client.calls[0][0]
+    identity = cluster.analysis_snapshot["identity"]
+    assert identity["supporting_asset_ids"]
+    prompt = cluster.prompt_versions.get(output_slot__order=1)
+    assert len(prompt.input_snapshot["reference_snapshot"]) == 3
 
 
-def test_prompt_os_runs_white_hero_and_marketing_plan_concurrently(tmp_path, settings):
-    import threading
-    import time
-
+def test_prompt_os_uses_local_n2_n3_n4_for_white_only_product(tmp_path, settings):
     from platform_app.models import Batch, OutputTemplate
     from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
 
     settings.MEDIA_ROOT = tmp_path
     settings.PROMPT_OS_SLOT_CONCURRENCY = 3
     user = make_user()
-    template = OutputTemplate.objects.create(platform="global", site="", name="Concurrent N4 N5")
+    template = OutputTemplate.objects.create(platform="global", site="", name="Local white")
     template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
-    template.slots.create(order=2, name="核心卖点图", purpose="main benefit")
-    batch = Batch.objects.create(owner=user, name="Concurrent N4 N5", output_template=template)
+    batch = Batch.objects.create(owner=user, name="Local white", output_template=template)
     cluster = make_cluster(batch)
     (tmp_path / "originals").mkdir(parents=True, exist_ok=True)
     (tmp_path / "originals" / "source.png").write_bytes(b"png-bytes")
     request_cluster_preparation(cluster, auto_generate=False)
 
-    class SlowN4N5Client(FakeAPIMartClient):
+    class NoTextNodeClient(FakeAPIMartClient):
         def __init__(self):
-            self.lock = threading.Lock()
-            self.active = 0
-            self.max_active = 0
+            self.text_calls = []
 
         def optimize_prompt(self, payload):
-            text = payload.get("text", "")
-            if "NODE N4" not in text and "NODE N5" not in text:
-                return super().optimize_prompt(payload)
-            with self.lock:
-                self.active += 1
-                self.max_active = max(self.max_active, self.active)
-            try:
-                time.sleep(0.05)
-                return super().optimize_prompt(payload)
-            finally:
-                with self.lock:
-                    self.active -= 1
+            self.text_calls.append(payload.get("text", ""))
+            raise AssertionError(payload.get("text", ""))
 
-    client = SlowN4N5Client()
+    client = NoTextNodeClient()
     assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
-    assert client.max_active > 1
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == "ready"
+    assert client.text_calls == []
+    nodes = [item["node_id"] for item in cluster.analysis_snapshot["prompt_os"]]
+    assert nodes == ["N1", "N2", "N3", "N4", "N7.generic"]
+    assert cluster.analysis_snapshot["prompt_os"][1]["model_id"] == "local-identity-merge"
+    assert cluster.analysis_snapshot["prompt_os"][2]["model_id"] == "local-fact-ledger"
+    assert cluster.analysis_snapshot["prompt_os"][3]["model_id"] == "local-white-prompt"
 
 
 def test_shopee_prompt_os_uses_scoped_marketing_nodes(tmp_path, settings):
@@ -1677,6 +1662,7 @@ def test_prompt_worker_marks_only_current_cluster_failed_after_json_repair_fails
 
 def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts(tmp_path, settings):
     import json
+    import re
 
     from django.core.management import call_command
 
@@ -1874,48 +1860,54 @@ def test_prompt_worker_runs_versioned_nodes_and_keeps_grounding_in_final_prompts
                     ]
                 }
             elif "NODE N6" in text:
-                order = int(text.split("SLOT_ORDER=", 1)[1].splitlines()[0])
-                prompt = f"Show purchase decision scene {order}."
-                output = {
-                    "slot_id": str(order),
-                    "main_scene": f"scene-{order}",
-                    "main_action": "none",
-                    "visible_text_lines": [],
-                    "localized_copy": {
-                        "language": "en",
-                        "lines": [],
-                        "back_translation": "",
-                        "strategy_mode": "fab_value",
-                        "source_fact_refs": [],
-                        "source_inference_refs": [],
-                        "quality": {
-                            "relevance": 90,
-                            "specificity": 90,
-                            "imagery": 90,
-                            "naturalness": 90,
-                            "truthfulness": 90,
-                            "mobile_readability": 90,
-                            "generic_phrase_hits": [],
+                orders = [int(value) for value in re.findall(r'"slot_order":\s*(\d+)', text)]
+                if not orders:
+                    orders = [int(text.split("SLOT_ORDER=", 1)[1].splitlines()[0])]
+
+                def slot_output(order):
+                    prompt = f"Show purchase decision scene {order}."
+                    return {
+                        "slot_id": str(order),
+                        "main_scene": f"scene-{order}",
+                        "main_action": "none",
+                        "visible_text_lines": [],
+                        "localized_copy": {
+                            "language": "en",
+                            "lines": [],
+                            "back_translation": "",
+                            "strategy_mode": "fab_value",
+                            "source_fact_refs": [],
+                            "source_inference_refs": [],
+                            "quality": {
+                                "relevance": 90,
+                                "specificity": 90,
+                                "imagery": 90,
+                                "naturalness": 90,
+                                "truthfulness": 90,
+                                "mobile_readability": 90,
+                                "generic_phrase_hits": [],
+                            },
                         },
-                    },
-                    "prompt": prompt,
-                    "character_count": len(prompt),
-                    "reference_plan": {
-                        "primary_asset_id": str(asset.id),
-                        "supporting_asset_ids": [],
-                        "completed_white_result_id": None,
-                    },
-                    "fact_trace": ["fact.name.001", "fact.color.001"],
-                    "inference_trace": [],
-                    "rule_refs": [],
-                    "generation_parameters": {
-                        "model": "gpt-image-2",
-                        "n": 1,
-                        "size": "1:1",
-                        "resolution": "1k",
-                    },
-                    "review_required": True,
-                }
+                        "prompt": prompt,
+                        "character_count": len(prompt),
+                        "reference_plan": {
+                            "primary_asset_id": str(asset.id),
+                            "supporting_asset_ids": [],
+                            "completed_white_result_id": None,
+                        },
+                        "fact_trace": [],
+                        "inference_trace": [],
+                        "rule_refs": [],
+                        "generation_parameters": {
+                            "model": "gpt-image-2",
+                            "n": 1,
+                            "size": "1:1",
+                            "resolution": "1k",
+                        },
+                        "review_required": True,
+                    }
+
+                output = {"slots": [slot_output(order) for order in sorted(set(orders))]}
             elif "NODE N7" in text:
                 self.n7_calls.append(text.splitlines()[0])
                 output = {
@@ -3121,7 +3113,7 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
     assert cluster.analysis_snapshot["readiness"]["code"] == "configuration_required"
     assert [item["node_id"] for item in cluster.analysis_snapshot["prompt_os"]] == ["N1", "N2"]
     assert provider.n1_calls == 1
-    assert provider.n2_calls == 1
+    assert provider.n2_calls == 0
     assert provider.later_calls == []
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
 
@@ -3145,8 +3137,8 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
     cluster.refresh_from_db()
     assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
     assert provider.n1_calls == 1
-    assert provider.n2_calls == 1
-    assert provider.later_calls == ["N3", "N4"]
+    assert provider.n2_calls == 0
+    assert provider.later_calls == []
     prompt = PromptVersion.objects.get(cluster=cluster)
     assert prompt.input_snapshot["_preparation_revision"] == 1
     assert prompt.input_snapshot["_effective_config_signature"]
@@ -3161,7 +3153,7 @@ def test_prompt_worker_waits_for_configuration_then_reuses_current_identity(
     cluster.refresh_from_db()
     assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
     assert provider.n1_calls == 2
-    assert provider.n2_calls == 2
+    assert provider.n2_calls == 0
 
 
 def test_prompt_worker_keeps_generating_when_n2_reports_visual_identity_conflict(
@@ -3271,8 +3263,8 @@ def test_prompt_worker_keeps_generating_when_n2_reports_visual_identity_conflict
 
     assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
     assert cluster.product_name == "ERP electric kettle"
-    assert cluster.analysis_snapshot["identity"]["conflict_state"] == "conflict"
-    assert cluster.analysis_snapshot["readiness_warning"]["code"] == "identity_conflict_review"
+    assert cluster.analysis_snapshot["identity"]["conflict_state"] == "unknown"
+    assert "readiness_warning" not in cluster.analysis_snapshot
     assert PromptVersion.objects.filter(cluster=cluster).count() == 1
 
 
@@ -3841,8 +3833,8 @@ def test_prompt_worker_falls_back_to_n1_identity_when_n2_returns_schema_placehol
     cluster.refresh_from_db()
 
     assert cluster.preparation_status == Cluster.PreparationStatus.READY
-    assert cluster.product_name == "Chopsticks set"
-    assert cluster.analysis_snapshot["identity"]["product_profile"]["category"] == "chopsticks set"
+    assert cluster.product_name == "餐具套装"
+    assert "餐具" in cluster.analysis_snapshot["identity"]["product_profile"]["category"]
 
 
 @pytest.mark.parametrize(

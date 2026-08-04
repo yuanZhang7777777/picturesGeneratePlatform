@@ -5,7 +5,6 @@ import json
 import re
 import uuid
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import timedelta
 from io import BytesIO
@@ -3523,6 +3522,37 @@ def _n2_observation_fallbacks(payload, identity_input):
     return normalized
 
 
+def _local_n2_identity(identity_input, approved_asset_ids, primary_asset_id):
+    approved_asset_ids = [str(asset_id) for asset_id in approved_asset_ids if asset_id is not None]
+    primary_asset_id = str(primary_asset_id or (approved_asset_ids[0] if approved_asset_ids else ""))
+    supporting = [asset_id for asset_id in approved_asset_ids if asset_id != primary_asset_id][:3]
+    seed = _n2_observation_fallbacks({}, identity_input)
+    profile = seed.get("product_profile") if isinstance(seed.get("product_profile"), dict) else {}
+    label = (
+        _clean_schema_placeholder(profile.get("primary_appearance"))
+        or _clean_schema_placeholder(profile.get("category"))
+        or _clean_schema_placeholder(seed.get("product_name"))
+        or "可见商品"
+    )
+    seed["primary_asset_id"] = primary_asset_id
+    seed["supporting_asset_ids"] = supporting
+    seed["target_appearances"] = [
+        {
+            "appearance_id": "appearance.primary",
+            "label": label,
+            "variant_attributes": _string_list((seed.get("identity_lock") or {}).get("primary_variant_attributes")),
+            "asset_ids": [primary_asset_id, *supporting],
+            "primary_asset_id": primary_asset_id,
+        }
+    ]
+    return _normalize_n2_identity(
+        seed,
+        {primary_asset_id, *supporting},
+        required_primary_asset_id=primary_asset_id,
+        require_continue_when_valid=True,
+    )
+
+
 def _fallback_n3_ledger(ledger_input, known_evidence_refs=None):
     refs = sorted(known_evidence_refs or [])
     asset_ref = next((value for value in refs if str(value).startswith("asset:")), None)
@@ -5720,7 +5750,15 @@ def process_prompt_once(client=None, storage=None):
             node_snapshots = []
             observations = []
             observation_system, _ = _prompt_node_contract("N1")
-            references = [relation.asset.storage_path for relation in image_relations]
+            primary_relation = next(
+                (
+                    relation
+                    for relation in image_relations
+                    if relation.role == ClusterAsset.Role.PRIMARY
+                ),
+                image_relations[0],
+            )
+            references = [primary_relation.asset.storage_path]
             with storage.reference_paths(references) as image_paths:
                 def observe_relation(index, relation, image_path):
                     observation_input = {
@@ -5768,24 +5806,7 @@ def process_prompt_once(client=None, storage=None):
                         )
                     return index, observation_input, observation
 
-                n1_jobs = list(enumerate(zip(image_relations, image_paths)))
-                n1_workers = min(
-                    len(n1_jobs),
-                    max(1, int(getattr(settings, "PROMPT_OS_SLOT_CONCURRENCY", 1))),
-                )
-                if n1_workers <= 1:
-                    n1_results = [
-                        observe_relation(index, relation, image_path)
-                        for index, (relation, image_path) in n1_jobs
-                    ]
-                else:
-                    with ThreadPoolExecutor(max_workers=n1_workers) as executor:
-                        futures = [
-                            executor.submit(observe_relation, index, relation, image_path)
-                            for index, (relation, image_path) in n1_jobs
-                        ]
-                        n1_results = [future.result() for future in as_completed(futures)]
-                    n1_results.sort(key=lambda item: item[0])
+                n1_results = [observe_relation(0, primary_relation, image_paths[0])]
                 for _, observation_input, observation in n1_results:
                     observations.append(observation)
                     node_snapshots.append(
@@ -5843,43 +5864,22 @@ def process_prompt_once(client=None, storage=None):
                 "observations": observations,
                 "max_supporting_images": 3,
             }
-            valid_asset_ids = {
-                str(item["asset_id"])
-                for item in observations
-                if item.get("contains_target_product")
-                and item.get("target_is_physical_product")
-            }
-            required_primary_asset_id = next(
-                (
-                    relation.asset_id
+            required_primary_asset_id = primary_relation.asset_id
+            approved_asset_ids = [
+                str(primary_relation.asset_id),
+                *[
+                    str(relation.asset_id)
                     for relation in image_relations
-                    if str(relation.asset_id) in valid_asset_ids
-                ),
-                None,
-            )
+                    if relation.asset_id != primary_relation.asset_id
+                ][:3],
+            ]
             _set_preparation_progress(cluster.id, claimed_revision, "N2", 1)
-            try:
-                identity = _prompt_node_json(
-                    client,
-                    "N2",
-                    "Merge owned observations into one product identity. Report ERP/visual conflict_state, select one primary asset, at most three supporting assets, and an identity lock.",
-                    identity_input,
-                    normalize=lambda value: _normalize_n2_identity(
-                        _n2_observation_fallbacks(value, identity_input),
-                        valid_asset_ids,
-                        required_primary_asset_id=required_primary_asset_id,
-                        require_continue_when_valid=True,
-                    ),
-                )
-                n2_model = settings.APIMART_PROMPT_MODEL
-            except Exception:
-                identity = _normalize_n2_identity(
-                    _n2_observation_fallbacks({}, identity_input),
-                    valid_asset_ids,
-                    required_primary_asset_id=required_primary_asset_id,
-                    require_continue_when_valid=True,
-                )
-                n2_model = "deterministic-rule-engine"
+            identity = _local_n2_identity(
+                identity_input,
+                approved_asset_ids,
+                required_primary_asset_id,
+            )
+            n2_model = "local-identity-merge"
             node_snapshots.append(
                 _node_snapshot("N2", n2_model, identity_input, identity)
             )
@@ -6018,21 +6018,8 @@ def process_prompt_once(client=None, storage=None):
                 if snapshot.get("node_id") == "N1"
             ],
         }
-        try:
-            ledger = _prompt_node_json(
-                client,
-                "N3",
-                "Classify every fact as confirmed, observed, or inferred with confidence, risk, evidence, and allowed uses.",
-                ledger_input,
-                normalize=lambda value: _normalize_n3_ledger(
-                    value,
-                    known_evidence_refs,
-                ),
-            )
-            n3_model = settings.APIMART_PROMPT_MODEL
-        except Exception:
-            ledger = _fallback_n3_ledger(ledger_input, known_evidence_refs)
-            n3_model = "deterministic-rule-engine"
+        ledger = _fallback_n3_ledger(ledger_input, known_evidence_refs)
+        n3_model = "local-fact-ledger"
         node_snapshots.append(
             _node_snapshot("N3", n3_model, ledger_input, ledger)
         )
@@ -6085,24 +6072,8 @@ def process_prompt_once(client=None, storage=None):
         }
 
         def run_n4_prompt():
-            try:
-                hero_plan = _prompt_node_json(
-                    _parallel_prompt_client(client),
-                    "N4",
-                    "Compile the standard white-background product hero. One scene, no action, no new visible text.",
-                    hero_input,
-                    normalize=lambda value: _normalize_n4_prompt(
-                        value,
-                        hero_slot.order,
-                        identity,
-                        ledger,
-                        hero_rule_refs,
-                    ),
-                )
-                n4_model = settings.APIMART_PROMPT_MODEL
-            except Exception:
-                hero_plan = _fallback_n4_prompt(hero_input, identity, ledger, hero_rule_refs)
-                n4_model = "deterministic-rule-engine"
+            hero_plan = _fallback_n4_prompt(hero_input, identity, ledger, hero_rule_refs)
+            n4_model = "local-white-prompt"
             return hero_plan, n4_model
 
         n4_snapshot_index = len(node_snapshots)
@@ -6130,14 +6101,8 @@ def process_prompt_once(client=None, storage=None):
             compiled_by_slot[hero_slot.id]["prompt_source"] = hero_plan.get("prompt_source", "deepseek")
 
         _set_preparation_progress(cluster.id, claimed_revision, "N4", 3)
-        n4_executor = None
-        n4_future = None
-        if marketing_slots and int(getattr(settings, "PROMPT_OS_SLOT_CONCURRENCY", 1)) > 1:
-            n4_executor = ThreadPoolExecutor(max_workers=1)
-            n4_future = n4_executor.submit(run_n4_prompt)
-        else:
-            hero_plan, n4_model = run_n4_prompt()
-            store_n4_result(hero_plan, n4_model)
+        hero_plan, n4_model = run_n4_prompt()
+        store_n4_result(hero_plan, n4_model)
 
         marketing_plan = {"plans": []}
         plans = {}
@@ -6298,13 +6263,6 @@ def process_prompt_once(client=None, storage=None):
                 ] = slot_references
                 compiled_by_slot[slot.id]["node_output"] = slot_plan
                 compiled_by_slot[slot.id]["prompt_source"] = slot_plan.get("prompt_source", "deepseek")
-
-        if n4_future is not None:
-            try:
-                hero_plan, n4_model = n4_future.result()
-            finally:
-                n4_executor.shutdown(wait=True)
-            store_n4_result(hero_plan, n4_model)
 
         _set_preparation_progress(cluster.id, claimed_revision, "N7", 6)
         gate_blocks = []
