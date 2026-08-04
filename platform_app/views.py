@@ -45,6 +45,7 @@ from .services import (
     request_generation_revision,
     safe_storage_path,
     serialize_project,
+    serialize_project_progress,
     StorageError,
     UploadError,
     update_cluster_content,
@@ -228,6 +229,13 @@ def api_project_snapshot(request, batch_id):
 
 @login_required
 @password_change_required
+@require_http_methods(["GET"])
+def api_project_progress(request, batch_id):
+    return JsonResponse(serialize_project_progress(_batch_for_user(request.user, batch_id)))
+
+
+@login_required
+@password_change_required
 @require_http_methods(["PATCH"])
 def api_project_settings(request, batch_id):
     batch = _batch_for_user(request.user, batch_id)
@@ -281,9 +289,23 @@ def api_project_prepare(request, batch_id):
                     "stage": "ready",
                 }
             )
+        elif cluster.preparation_status in {
+            Cluster.PreparationStatus.PENDING,
+            Cluster.PreparationStatus.PREPARING,
+        }:
+            items.append(
+                {
+                    "cluster_id": cluster_id,
+                    "status": (
+                        "preparing"
+                        if cluster.preparation_status == Cluster.PreparationStatus.PREPARING
+                        else "queued"
+                    ),
+                    "stage": cluster.preparation_stage,
+                }
+            )
         else:
-            if cluster.preparation_status != Cluster.PreparationStatus.PREPARING:
-                cluster = request_cluster_preparation(cluster, auto_generate=False)
+            cluster = request_cluster_preparation(cluster, auto_generate=False)
             items.append(
                 {
                     "cluster_id": cluster_id,

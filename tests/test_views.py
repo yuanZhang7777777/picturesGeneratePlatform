@@ -111,6 +111,38 @@ def test_current_user_api_returns_role_without_workspace_payload(client):
     assert response.json() == {"role": "operator"}
 
 
+def test_project_progress_api_returns_lightweight_active_state(client, tmp_path, settings):
+    from platform_app.models import Batch, Cluster
+
+    settings.MEDIA_ROOT = tmp_path
+    make_global_baseline()
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Progress project")
+    client.force_login(user)
+    client.post(reverse("api_upload_assets", args=[batch.id]), {"files": [image_file("a.png")]})
+    cluster = batch.clusters.get()
+    cluster.preparation_status = Cluster.PreparationStatus.PREPARING
+    cluster.preparation_stage = "N3"
+    cluster.preparation_current = 3
+    cluster.preparation_total = 7
+    cluster.analysis_snapshot = {"identity": {"product_name": "heavy"}, "fact_ledger": {"facts": ["heavy"]}}
+    cluster.save()
+
+    response = client.get(reverse("api_project_progress", args=[batch.id]))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == str(batch.id)
+    assert "assets" not in payload
+    assert "preflight" not in payload
+    sku = payload["skus"][0]
+    assert sku["id"] == str(cluster.id)
+    assert sku["preparation"] == {"status": "preparing", "stage": "N3", "current": 3, "total": 7, "error": ""}
+    assert sku["generationProgress"]["total"] == 0
+    assert "analysisSnapshot" not in sku
+    assert "identity" not in sku
+
+
 def test_upload_api_creates_assets_and_default_clusters(client, tmp_path, settings):
     from platform_app.models import Batch
 
@@ -338,6 +370,41 @@ def test_project_generate_api_is_cluster_scoped_and_idempotent(client, tmp_path,
     ]
     assert first.generations.count() == 1
     assert second.generations.count() == 0
+
+
+def test_project_prepare_does_not_requeue_pending_cluster(client, tmp_path, settings):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from platform_app.models import Cluster
+    from platform_app.services import create_batch, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = create_batch(user, "Prepare queue")
+    cluster = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png").clusters.get()
+    queued_at = timezone.now() - timedelta(minutes=10)
+    Cluster.objects.filter(id=cluster.id).update(
+        preparation_status=Cluster.PreparationStatus.PENDING,
+        preparation_stage="queued",
+        updated_at=queued_at,
+    )
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_project_prepare", args=[batch.id]),
+        data=__import__("json").dumps({"cluster_ids": [str(cluster.id)]}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {"cluster_id": str(cluster.id), "status": "queued", "stage": "queued"}
+    ]
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.updated_at == queued_at
 
 
 def test_project_generate_api_isolates_queued_waiting_and_blocked_products(
@@ -738,6 +805,44 @@ def test_update_cluster_rejects_stringified_or_invalid_slot_prompts(client, tmp_
     assert unknown_slot.status_code == 400
     assert invalid_relation.status_code == 400
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
+
+
+def test_project_generate_reuses_completed_outputs_instead_of_requeueing(
+    client,
+    tmp_path,
+    settings,
+):
+    from platform_app.models import Generation, OutputSlot, OutputTemplate
+    from platform_app.services import create_batch, ensure_cluster_generations, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Editable template")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = create_batch(user, "Batch 1")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    cluster = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png").clusters.get()
+    approve_view_prompt(cluster, user, slot)
+    first = ensure_cluster_generations(cluster, user)[0]
+    first.status = Generation.Status.COMPLETED
+    first.save(update_fields=["status", "updated_at"])
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_project_generate", args=[batch.id]),
+        {
+            "cluster_ids": [str(cluster.id)],
+            "slot_orders": [1],
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 202
+    assert response.json()["generation_count"] == 0
+    assert response.json()["items"] == [{"cluster_id": str(cluster.id), "status": "queued"}]
+    assert Generation.objects.filter(cluster=cluster).count() == 1
+    assert Generation.objects.get(cluster=cluster).id == first.id
 
 
 def test_optimize_prompt_returns_draft_without_saving(client, tmp_path, settings):

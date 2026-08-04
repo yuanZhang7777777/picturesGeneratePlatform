@@ -643,6 +643,19 @@ class APIMartClient:
             "Content-Type": "application/json",
         }
 
+    @property
+    def deepseek_auth_headers(self):
+        if not settings.DEEPSEEK_API_KEY:
+            raise ProviderError("DeepSeek 官方接口密钥未配置，请配置 DEEPSEEK_API_KEY 后重试")
+        return {"Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}"}
+
+    @property
+    def deepseek_headers(self):
+        return {
+            **self.deepseek_auth_headers,
+            "Content-Type": "application/json",
+        }
+
     def _json(self, response):
         if response.status_code >= 400:
             _raise_provider_error(response)
@@ -661,6 +674,10 @@ class APIMartClient:
         base = settings.APIMART_BASE_URL.rstrip("/")
         if base.endswith("/v1"):
             base = base[:-3]
+        return f"{base}{path}"
+
+    def _deepseek_url(self, path):
+        base = settings.DEEPSEEK_BASE_URL.rstrip("/")
         return f"{base}{path}"
 
     def upload_image(self, path):
@@ -737,19 +754,23 @@ class APIMartClient:
         return response.content
 
     def complete_chat(self, messages, *, model=None, temperature=None):
-        temperature = _validate_prompt_temperature(
-            settings.APIMART_PROMPT_TEMPERATURE if temperature is None else temperature
-        )
+        payload = {
+            "model": model or settings.DEEPSEEK_PROMPT_MODEL,
+            "stream": False,
+            "messages": messages,
+        }
+        if temperature is not None:
+            payload["temperature"] = _validate_prompt_temperature(temperature)
+        reasoning_effort = str(getattr(settings, "DEEPSEEK_REASONING_EFFORT", "") or "").strip()
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
+        if getattr(settings, "DEEPSEEK_THINKING_ENABLED", True):
+            payload["thinking"] = {"type": "enabled"}
         try:
             response = self.session.post(
-                self._api_url("/api/v1/chat/completions"),
-                json={
-                    "model": model or settings.APIMART_PROMPT_MODEL,
-                    "stream": False,
-                    "temperature": temperature,
-                    "messages": messages,
-                },
-                headers=self.headers,
+                self._deepseek_url("/chat/completions"),
+                json=payload,
+                headers=self.deepseek_headers,
                 timeout=settings.APIMART_PROMPT_TIMEOUT_SECONDS,
             )
         except requests.Timeout as exc:
@@ -9065,4 +9086,80 @@ def serialize_project(batch):
                 "rule_profile",
             )
         },
+    }
+
+
+def serialize_project_progress(batch):
+    skus = []
+    for cluster in batch.clusters.filter(archived_at__isnull=True).order_by("created_at", "id"):
+        cluster_template, _, _ = _effective_cluster_resources(batch, cluster)
+        latest_prompts = {}
+        for prompt in cluster.prompt_versions.select_related("output_slot").order_by(
+            "output_slot__order", "-created_at", "-id"
+        ):
+            if prompt.output_slot_id:
+                latest_prompts.setdefault(prompt.output_slot_id, prompt)
+        prompt_slots = []
+        for slot in cluster_template.slots.order_by("order", "id"):
+            latest_prompt = latest_prompts.get(slot.id)
+            prompt_slots.append({
+                "slotOrder": slot.order,
+                "slot": slot.name,
+                "text": latest_prompt.prompt_text if latest_prompt else "",
+                "promptVersionId": str(latest_prompt.id) if latest_prompt else None,
+                "readOnly": is_source_product_photo_slot(slot),
+                **_prompt_slot_metadata(latest_prompt),
+            })
+        outputs = []
+        for generation in cluster.generations.select_related("output_slot", "prompt_version").prefetch_related(
+            "result_assets"
+        ).order_by("output_slot__order", "attempt", "id"):
+            result = next(iter(generation.result_assets.all()), None)
+            output = {
+                "id": str(generation.id),
+                "name": generation.output_slot.name,
+                "slot": generation.output_slot.name,
+                "slotId": str(generation.output_slot_id),
+                "slotOrder": generation.output_slot.order,
+                "attempt": generation.attempt,
+                "version": generation.attempt,
+                "status": _generation_status(generation.status),
+                "reviewStatus": (
+                    Generation.ReviewStatus.CHANGES_REQUESTED
+                    if generation.review_status == Generation.ReviewStatus.REJECTED
+                    else generation.review_status
+                ),
+                "prompt": generation.prompt_text,
+                "promptVersionId": str(generation.prompt_version_id) if generation.prompt_version_id else None,
+            }
+            failure_message = generation_failure_message(generation)
+            if failure_message:
+                output["failureReason"] = failure_message
+            if result is not None:
+                output["imageUrl"] = reverse("api_result_media", args=[result.id])
+            outputs.append(output)
+        skus.append({
+            "id": str(cluster.id),
+            "preparationStatus": cluster.preparation_status,
+            "preparation": {
+                "status": cluster.preparation_status,
+                "stage": cluster.preparation_stage,
+                "current": cluster.preparation_current,
+                "total": cluster.preparation_total,
+                "error": cluster.preparation_error,
+            },
+            "prompts": prompt_slots,
+            "generationProgress": {
+                "completed": sum(item["status"] == "completed" for item in outputs),
+                "active": sum(item["status"] in {"queued", "running"} for item in outputs),
+                "failed": sum(item["status"] == "failed" for item in outputs),
+                "total": len(outputs),
+            },
+            "outputs": outputs,
+        })
+    return {
+        "id": str(batch.id),
+        "status": _project_status(batch.status),
+        "updatedAt": batch.updated_at.isoformat(),
+        "skus": skus,
     }

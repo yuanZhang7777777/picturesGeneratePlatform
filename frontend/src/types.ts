@@ -208,6 +208,22 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface ProductSkuProgress {
+  id: string;
+  preparationStatus?: string;
+  preparation?: ProductSku["preparation"];
+  generationProgress?: ProductSku["generationProgress"];
+  prompts?: ProductPrompt[];
+  outputs: OutputImage[];
+}
+
+export interface ProjectProgress {
+  id: string;
+  status: GenerationStatus;
+  updatedAt: string;
+  skus: ProductSkuProgress[];
+}
+
 export interface WorkspaceSnapshot {
   projects: Project[];
   currentUser?: CurrentUser;

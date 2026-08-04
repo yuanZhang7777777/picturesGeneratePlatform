@@ -155,7 +155,15 @@ test("keeps an unsaved project style when saving fails and the project snapshot 
 });
 
 test("prepares only selected products through the explicit preparation endpoint", async () => {
-  const fetchMock = stubFetch();
+  const draftProject = {
+    ...project,
+    skus: project.skus.map((sku) => ({
+      ...sku,
+      preparationStatus: "draft",
+      preparation: { status: "draft", stage: "draft", current: 0, total: 7, error: "" },
+    })),
+  };
+  const fetchMock = stubFetch({ projectSnapshot: draftProject });
   renderApp();
 
   fireEvent.click(await screen.findByRole("checkbox", { name: "选择 折叠椅" }));
@@ -166,14 +174,34 @@ test("prepares only selected products through the explicit preparation endpoint"
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({ cluster_ids: ["one"] });
 });
 
+test("does not requeue preparation while selected products already have active work", async () => {
+  const fetchMock = stubFetch();
+  renderApp();
+
+  const prepareButton = await screen.findByRole("button", { name: "预备生成（2）" });
+  expect(prepareButton).toBeDisabled();
+  fireEvent.click(prepareButton);
+
+  expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/prepare/")).toBe(false);
+  expect(screen.getByRole("button", { name: "暂停所选（2）" })).not.toBeDisabled();
+});
+
 test("keeps preparation click responsive while a card save is pending", async () => {
+  const draftProject = {
+    ...project,
+    skus: project.skus.map((sku) => ({
+      ...sku,
+      preparationStatus: "draft",
+      preparation: { status: "draft", stage: "draft", current: 0, total: 7, error: "" },
+    })),
+  };
   let releaseSave: (() => void) | undefined;
-  const fetchMock = stubFetch({ projectSnapshot: project });
+  const fetchMock = stubFetch({ projectSnapshot: draftProject });
   fetchMock.mockImplementation(async (input: string | URL | Request) => {
     const url = String(input);
     if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf" });
-    if (url === "/api/projects/project-1/snapshot/") return response(200, project);
-    if (url === "/api/workspace/snapshot/") return response(200, { currentUser: { role: "operator" }, projects: [project] });
+    if (url === "/api/projects/project-1/snapshot/") return response(200, draftProject);
+    if (url === "/api/workspace/snapshot/") return response(200, { currentUser: { role: "operator" }, projects: [draftProject] });
     if (url === "/api/clusters/one/") {
       return new Promise((resolve) => {
         releaseSave = () => resolve(response(200, { id: "one", version: 2 }));
@@ -295,6 +323,47 @@ test("does not submit generation while selected products are still preparing", a
   expect(screen.getByRole("button", { name: "暂停所选（1）" })).not.toBeDisabled();
 });
 
+test("does not submit generation while selected products already have active output work", async () => {
+  const runningProject = {
+    ...project,
+    skus: [{
+      ...project.skus[0],
+      preparationStatus: "ready" as const,
+      preparation: { status: "ready", stage: "N7", current: 7, total: 7, error: "" },
+      generationProgress: { status: "running", current: 1, completed: 1, active: 2, failed: 0, total: 9 },
+    }],
+  };
+  const fetchMock = stubFetch({ projectSnapshot: runningProject });
+  renderApp();
+
+  const generateButton = await screen.findByRole("button", { name: "正式生成（1）" });
+  expect(generateButton).toBeDisabled();
+  fireEvent.click(generateButton);
+
+  expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/generate/")).toBe(false);
+  expect(screen.getByRole("button", { name: "暂停所选（1）" })).not.toBeDisabled();
+});
+
+test("does not offer pause when selected products have no active work", async () => {
+  const idleProject = {
+    ...project,
+    skus: [{
+      ...project.skus[0],
+      preparationStatus: "ready" as const,
+      preparation: { status: "ready", stage: "N7", current: 7, total: 7, error: "" },
+      generationProgress: { status: "completed", current: 9, completed: 9, active: 0, failed: 0, total: 9 },
+    }],
+  };
+  const fetchMock = stubFetch({ projectSnapshot: idleProject });
+  renderApp();
+
+  const pauseButton = await screen.findByRole("button", { name: "暂停所选（1）" });
+  expect(pauseButton).toBeDisabled();
+  fireEvent.click(pauseButton);
+
+  expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/pause/")).toBe(false);
+});
+
 test("submits generation for the real editable prompt slots only", async () => {
   const vnSlots = [
     "Seller original product photo",
@@ -338,6 +407,41 @@ test("does not load the full workspace snapshot on the new-project page", async 
   expect(await screen.findByRole("heading", { name: "创建出图项目" })).toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/current-user/")).toBe(true);
   expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/workspace/snapshot/")).toBe(false);
+});
+
+test("polls project progress instead of repeating the full active project snapshot", async () => {
+  const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("/csrf/")) return response(200, { csrf_token: "csrf" });
+    if (url === "/api/current-user/") return response(200, { role: "operator" });
+    if (url === "/api/projects/project-1/snapshot/") return response(200, project);
+    if (url === "/api/projects/project-1/progress/") return response(200, {
+      id: project.id,
+      status: "running",
+      updatedAt: "2026-07-31T00:00:01Z",
+      skus: project.skus.map((sku) => ({
+        id: sku.id,
+        preparationStatus: "preparing",
+        preparation: { status: "preparing", stage: "N4", current: 4, total: 7, error: "" },
+        generationProgress: { status: "idle", current: 0, completed: 0, active: 0, failed: 0, total: 0 },
+        prompts: sku.prompts,
+        outputs: [],
+      })),
+    });
+    return response(404, { error: "not found" });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  renderApp();
+
+  expect(await screen.findByRole("heading", { name: "夏日上新" })).toBeInTheDocument();
+  vi.useFakeTimers();
+  await act(async () => {
+    vi.advanceTimersByTime(3100);
+  });
+  vi.useRealTimers();
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/projects/project-1/progress/")).toBe(true));
+  expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/projects/project-1/snapshot/")).toHaveLength(1);
 });
 
 test("shows product name source only for AI recognition and ERP", async () => {

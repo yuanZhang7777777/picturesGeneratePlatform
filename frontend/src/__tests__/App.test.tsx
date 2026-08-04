@@ -553,6 +553,29 @@ test("requests a new version for a successful result", async () => {
   ));
 });
 
+test("does not submit duplicate result regeneration while the request is pending", async () => {
+  let finishRegenerate: (() => void) | undefined;
+  const fetchMock = stubFetch((url) => {
+    if (url.includes("/csrf/")) return Promise.resolve(response(200, { csrf_token: "csrf-for-test" }));
+    if (url.includes("/workspace/")) return Promise.resolve(response(200, { projects: [project] }));
+    if (url === "/api/generations/generation-1/regenerate/") {
+      return new Promise((resolve) => {
+        finishRegenerate = () => resolve(response(200, { id: "generation-new", attempt: 2, status: "queued" }));
+      });
+    }
+    return Promise.resolve(response(200, project));
+  });
+  renderApp("/projects/project-demo/results");
+
+  const button = await screen.findByRole("button", { name: "再生成 标准白底产品图" });
+  fireEvent.click(button);
+  await waitFor(() => expect(button).toBeDisabled());
+  fireEvent.click(button);
+
+  expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/generations/generation-1/regenerate/")).toHaveLength(1);
+  finishRegenerate?.();
+});
+
 test("pauses one active result from the result page", async () => {
   const activeProject = {
     ...project,

@@ -27,7 +27,7 @@
 ## 3. 节点变量线
 
 不允许用 `string`、空对象、旧 Prompt、`builtin-v1` 或通用兜底补洞。
-N5/N6 的 DeepSeek 输出可以是宽松文本：只要模型调用返回了非空文本，即使不是合法 JSON，也要以 `prompt_source="deepseek"` 包进下游 `raw_model_text`，让后续节点继续接收原始营销/生图设计。JSON 格式、字段缺失、普通空泛表达不触发 deterministic fallback；只有模型调用异常或空响应才进入失败/显式 fallback 分支。
+DeepSeek 文本节点走官方 OpenAI-compatible 接口，当前执行模型为 `deepseek-v4-flash`，鉴权使用 `DEEPSEEK_API_KEY`，不复用 APIMart key。N5/N6 的 DeepSeek 输出可以是宽松文本：只要模型调用返回了非空文本，即使不是合法 JSON，也要以 `prompt_source="deepseek"` 包进下游 `raw_model_text`，让后续节点继续接收原始营销/生图设计。JSON 格式、字段缺失、普通空泛表达不触发 deterministic fallback；只有模型调用异常或空响应才进入失败/显式 fallback 分支。
 
 ```text
 N1 owned_observations / valid_asset_ids

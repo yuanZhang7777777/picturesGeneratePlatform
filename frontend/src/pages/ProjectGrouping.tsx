@@ -22,6 +22,19 @@ function generationSlotOrders(skus: ProductSku[]) {
   return Array.from(new Set(orders)).sort((a, b) => a - b);
 }
 
+function skuHasActivePreparation(sku: ProductSku) {
+  return ["pending", "preparing"].includes(sku.preparation?.status ?? sku.preparationStatus ?? "");
+}
+
+function skuHasActiveGeneration(sku: ProductSku) {
+  const generation = sku.generationProgress;
+  return Boolean(
+    (generation?.active ?? 0) > 0
+    || ["queued", "running"].includes(generation?.status ?? "")
+    || sku.outputs.some((output) => ["queued", "running"].includes(output.status)),
+  );
+}
+
 export default function ProjectGrouping() {
   const { projectId } = useParams();
   const projectQuery = useProjectSnapshot(projectId);
@@ -31,7 +44,9 @@ export default function ProjectGrouping() {
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const project = projectQuery.data;
   const selectedClusters = useMemo(() => project?.skus.filter((sku) => !deselectedIds.has(sku.id)) ?? [], [project, deselectedIds]);
-  const selectedPreparing = selectedClusters.some((sku) => ["pending", "preparing"].includes(sku.preparation?.status ?? sku.preparationStatus ?? ""));
+  const selectedPreparing = selectedClusters.some(skuHasActivePreparation);
+  const selectedGenerating = selectedClusters.some(skuHasActiveGeneration);
+  const selectedActiveWork = selectedPreparing || selectedGenerating;
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor));
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
@@ -192,7 +207,7 @@ export default function ProjectGrouping() {
       return <ProductCard key={sku.id} sku={sku} assets={assets} selected={!deselectedIds.has(sku.id)} expanded={expandedId === sku.id} disabled={removeAsset.isPending || removeCluster.isPending} onOpen={() => setExpandedId(sku.id)} onClose={() => setExpandedId(null)} onSave={(payload, expectedVersion) => save.mutateAsync({ skuId: sku.id, expectedVersion, payload })} onReload={() => projectQuery.refetch()} onDeleteAsset={(assetId) => removeAsset.mutate(assetId)} onDelete={() => removeCluster.mutate(sku.id)} onPause={() => pause.mutate([sku.id])} onSelect={(next) => setDeselectedIds((current) => { const copy = new Set(current); if (next) copy.delete(sku.id); else copy.add(sku.id); return copy; })} />;
     })}</ProductGrid></DndContext>
     {!project.skus.length && <EmptyState title="还没有商品素材" description="在上方导入图片、文件夹或 ERP SKU。" />}
-    <FloatingActions projectId={project.id} selectedCount={selectedClusters.length} busy={actionBusy} preparing={selectedPreparing} onSelectAll={() => setDeselectedIds(new Set())} onDeselectAll={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))} onInvert={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))} onPrepare={() => prepare.mutate()} onGenerate={() => { if (!selectedPreparing) generate.mutate(); }} onPause={() => pause.mutate(selectedClusters.map((sku) => sku.id))} />
+    <FloatingActions projectId={project.id} selectedCount={selectedClusters.length} busy={actionBusy} preparing={selectedPreparing} generating={selectedGenerating} activeWork={selectedActiveWork} onSelectAll={() => setDeselectedIds(new Set())} onDeselectAll={() => setDeselectedIds(new Set(project.skus.map((sku) => sku.id)))} onInvert={() => setDeselectedIds(new Set(project.skus.filter((sku) => !deselectedIds.has(sku.id)).map((sku) => sku.id)))} onPrepare={() => { if (!selectedActiveWork) prepare.mutate(); }} onGenerate={() => { if (!selectedActiveWork) generate.mutate(); }} onPause={() => { if (selectedActiveWork) pause.mutate(selectedClusters.map((sku) => sku.id)); }} />
   </Shell>;
 }
 
@@ -245,15 +260,15 @@ function ProjectToolbar({ project, pending, onSave }: { project: { id: string; n
   </section>;
 }
 
-function FloatingActions({ projectId, selectedCount, busy, preparing, onSelectAll, onDeselectAll, onInvert, onPrepare, onGenerate, onPause }: { projectId: string; selectedCount: number; busy: boolean; preparing: boolean; onSelectAll: () => void; onDeselectAll: () => void; onInvert: () => void; onPrepare: () => void; onGenerate: () => void; onPause: () => void }) {
+function FloatingActions({ projectId, selectedCount, busy, preparing, generating, activeWork, onSelectAll, onDeselectAll, onInvert, onPrepare, onGenerate, onPause }: { projectId: string; selectedCount: number; busy: boolean; preparing: boolean; generating: boolean; activeWork: boolean; onSelectAll: () => void; onDeselectAll: () => void; onInvert: () => void; onPrepare: () => void; onGenerate: () => void; onPause: () => void }) {
   return <div className="fixed bottom-5 right-5 z-50 flex max-w-[calc(100vw-2.5rem)] flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-2xl shadow-slate-300/70 backdrop-blur" aria-label="滚动常驻生成动作">
     <button className="toolbar-choice min-h-9 px-3" type="button" onClick={onSelectAll}>全选</button>
     <button className="toolbar-choice min-h-9 px-3" type="button" onClick={onDeselectAll}>取消全选</button>
     <button className="toolbar-choice min-h-9 px-3" type="button" onClick={onInvert}>反选</button>
     <span className="px-2 text-xs font-semibold text-slate-600">已选 {selectedCount}</span>
-    <button className="secondary-button min-h-9 px-3" type="button" disabled={busy || !selectedCount} onClick={onPrepare}>预备生成（{selectedCount}）</button>
-    <button className="primary-button min-h-9 px-3" type="button" disabled={busy || preparing || !selectedCount} title={preparing ? "预备生成完成后才能正式生成" : undefined} onClick={onGenerate}>正式生成（{selectedCount}）</button>
-    <button className="secondary-button min-h-9 px-3" type="button" disabled={busy || !selectedCount} onClick={onPause}>暂停所选（{selectedCount}）</button>
+    <button className="secondary-button min-h-9 px-3" type="button" disabled={busy || activeWork || !selectedCount} onClick={onPrepare}>预备生成（{selectedCount}）</button>
+    <button className="primary-button min-h-9 px-3" type="button" disabled={busy || activeWork || !selectedCount} title={preparing ? "预备生成完成后才能正式生成" : generating ? "已有出图任务正在执行" : undefined} onClick={onGenerate}>正式生成（{selectedCount}）</button>
+    <button className="secondary-button min-h-9 px-3" type="button" disabled={busy || !activeWork || !selectedCount} onClick={onPause}>暂停所选（{selectedCount}）</button>
     <Link className="secondary-button min-h-9 px-3" to={`/projects/${projectId}/results`}>生产结果</Link>
   </div>;
 }

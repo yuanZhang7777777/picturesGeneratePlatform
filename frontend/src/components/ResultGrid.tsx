@@ -163,8 +163,8 @@ export function ResultGrid({ project }: { project: Project }) {
                       </label>
                     )}
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {(output.status === "completed" || output.status === "failed") && <button className="text-sm font-semibold text-indigo-700" onClick={() => regenerate.mutate(output.id)}>再生成 {outputName}</button>}
-                      {["queued", "running"].includes(output.status) && <button className="text-sm font-semibold text-amber-700" onClick={() => pause.mutate(output.id)}>暂停 {outputName}</button>}
+                      {(output.status === "completed" || output.status === "failed") && <button className="text-sm font-semibold text-indigo-700 disabled:text-slate-400" disabled={regenerate.isPending} onClick={() => regenerate.mutate(output.id)}>再生成 {outputName}</button>}
+                      {["queued", "running"].includes(output.status) && <button className="text-sm font-semibold text-amber-700 disabled:text-slate-400" disabled={pause.isPending} onClick={() => pause.mutate(output.id)}>暂停 {outputName}</button>}
                       {history.map((item) => <button className="text-sm text-slate-500" key={item.id} onClick={() => setSelectedOutputId(item.id)}>历史版本 {displaySlotName(item)} v{item.attempt}</button>)}
                     </div>
                   </article>

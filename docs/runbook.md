@@ -21,7 +21,7 @@ Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worke
 - `CATALOG_ALLOWED_IMAGE_HOSTS`
 - `DJANGO_CSRF_TRUSTED_ORIGINS`，仅在同源以外的受信来源确有需要时设置
 
-预览默认值必须保持 `APIMART_FAKE_MODE=1`，`APIMART_API_KEY` 可以为空。以下全部满足前，不得设为 `0`：服务器 Secret 已配置、主 Agent 明确的付费授权、供应商契约测试、真实任务限流/重试验收、私有存储验收和发布记录。
+预览默认值必须保持 `APIMART_FAKE_MODE=1`，`APIMART_API_KEY` 和 `DEEPSEEK_API_KEY` 可以为空。以下全部满足前，不得设为 `0`：服务器 Secret 已配置、主 Agent 明确的付费授权、供应商契约测试、真实任务限流/重试验收、私有存储验收和发布记录。
 
 `MAX_ACTIVE_GENERATIONS` 表示同时提交给供应商并处于运行中的图片任务数；供应商 API 上限为 **500**，有效值必须在 `1..500`，预览默认 `50`。`GENERATION_USER_ACTIVE_SOFT_LIMIT` 默认 `10`：同一用户达到软限制后，其他有排队任务的用户优先；如果没有其他用户排队，该用户继续借用空闲容量。
 
@@ -33,9 +33,9 @@ SKU 商品资料导入使用当前登录用户的 ERP Token 调用 `CATALOG_QUER
 
 正式素材存储使用 `STORAGE_BACKEND=oss`，并配置 `OSS_ENDPOINT`、`OSS_BUCKET`、`OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` 和 `OSS_PREFIX=independent-image-platform`。原图、SKU 拉取图、生成结果和历史版本写入该 OSS 私有前缀；导出 ZIP 临时生成后由浏览器下载到员工本地，不在服务器或 OSS 长期保留。`LOCAL_MEDIA_ROOT` 仅用于开发和假模式回退。
 
-APIMart 中文文档与受限账户的最小契约测试是唯一接入事实来源：测试精确模型 ID、`/v1/responses` 图片输入、结构化输出封装、错误语义、限流和账务。上游模型文档仅帮助判断能力方向，不能代替 APIMart 参数或可用性结论。当前服务器真实 smoke 已验证：`deepseek-v4-pro` 文本节点走非流式 Chat Completions，`gpt-5-nano-2025-08-07` 视觉观察走 Responses 并从 `output[].content[].text` 提取文本，`gpt-image-2` 先通过 `/v1/uploads/images` 上传我方参考图，再用字符串数组 `image_urls` 提交 `/v1/images/generations`，任务完成后必须下载结果并归档到受控存储；一个真实 1+8 付费项目已完成 9 张结果、人工审核通过和 ZIP 导出。
+DeepSeek 文本节点使用官方 OpenAI-compatible Chat Completions：`DEEPSEEK_BASE_URL=https://api.deepseek.com`、`DEEPSEEK_PROMPT_MODEL=deepseek-v4-flash`、`DEEPSEEK_REASONING_EFFORT=high`、`DEEPSEEK_THINKING_ENABLED=1`，鉴权只读 `DEEPSEEK_API_KEY`，不再复用 `APIMART_API_KEY`。APIMart 仍负责视觉观察和图片生成：`gpt-5-nano-2025-08-07` 走 `/v1/responses` 并从 `output[].content[].text` 提取文本；`gpt-image-2` 先通过 `/v1/uploads/images` 上传我方参考图，再用字符串数组 `image_urls` 提交 `/v1/images/generations`，任务完成后必须下载结果并归档到受控存储。真实模式下两组 key 都必须按用途配置，日志不得打印任一 key。
 
-本地 APIMart 三节点 smoke 命令：
+本地 APIMart/DeepSeek 三节点 smoke 命令：
 
 ```powershell
 $env:APIMART_FAKE_MODE='1'
@@ -150,6 +150,10 @@ bridge_needed=no
 持有 `.codex_locks/global.lock` 后，在目标目录执行 Compose 静态解析、构建、迁移、健康检查和人工验收，并把命令输出与镜像版本写入发布记录。只有主 Agent 可以签核该发布。
 
 发布顺序必须保持稳定：先 `docker compose stop prompt-worker generation-worker`，再设置 `APP_IMAGE_TAG` 并用同一个 app 镜像构建 `web`，构建时用 `COMPOSE_PARALLEL_LIMIT=1` 限制并发；迁移和 `manage.py check` 通过后先启动 `web` 与 `proxy`，确认 `/health/ready` 和外部入口健康，再启动 `prompt-worker` 与 `generation-worker`。如果任一 worker 进入重启循环，先停掉该 worker 查日志，不让它持续拖慢整机。并发先按 `.env` 当前值运行，稳定后再提高，不在健康检查失败时继续加压。
+
+活动项目页不得用 3 秒全量 snapshot 轮询。完整 `/api/projects/<id>/snapshot/` 只用于页面初始化、用户保存/导入后的刷新和任务结束后的确认；运行中进度使用 `/api/projects/<id>/progress/`，该接口只返回项目状态、商品预备进度、槽位 Prompt 和出图状态，不返回素材列表、`analysisSnapshot` 或 `preflight`。工作台/生产队列的全量 workspace 轮询前台不短于 15 秒、后台不短于 60 秒。
+
+默认并发以保护 Web 可用为准：`PROMPT_WORKER_CONCURRENCY=16`、`PROMPT_OS_SLOT_CONCURRENCY=3`、`GENERATION_WORKER_CONCURRENCY=16`、`MAX_ACTIVE_GENERATIONS=32`、`GENERATION_USER_ACTIVE_SOFT_LIMIT=5`。如果页面变慢、数据库连接接近上限、worker 重启或供应商错误率升高，先降低或停止对应 worker；不要停 `web`/`proxy`，除非正在做迁移或镜像切换。
 
 HTTP 的 IP:端口入口仅供测试账号和非敏感素材。正式入口不使用来源 IP 白名单，但必须具备域名 HTTPS、账号安全、备份恢复、私有存储和真实供应商契约测试，才可向 100 名员工开放真实素材或付费生成。
 

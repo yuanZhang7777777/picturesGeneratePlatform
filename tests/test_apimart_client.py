@@ -135,13 +135,14 @@ def test_rate_limit_error_is_sanitized():
 
 
 @override_settings(
-    APIMART_API_KEY="secret-key",
+    DEEPSEEK_API_KEY="deepseek-key",
+    DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    DEEPSEEK_PROMPT_MODEL="deepseek-v4-flash",
     APIMART_BASE_URL="https://api.apimart.ai",
-    APIMART_PROMPT_MODEL="deepseek-v4-pro",
     APIMART_PROMPT_TEMPERATURE=1.6,
     APIMART_PROMPT_TIMEOUT_SECONDS=20,
 )
-def test_optimize_prompt_posts_deepseek_chat_completions_payload():
+def test_optimize_prompt_posts_official_deepseek_flash_payload():
     from platform_app.services import APIMartClient
 
     session = Session(
@@ -167,10 +168,13 @@ def test_optimize_prompt_posts_deepseek_chat_completions_payload():
     assert data["output_text"] == "{\"suggested_prompt\":\"ok\"}"
     method, url, kwargs = session.calls[0]
     assert method == "POST"
-    assert url == "https://api.apimart.ai/api/v1/chat/completions"
-    assert kwargs["json"]["model"] == "deepseek-v4-pro"
+    assert url == "https://api.deepseek.com/chat/completions"
+    assert kwargs["headers"]["Authorization"] == "Bearer deepseek-key"
+    assert kwargs["json"]["model"] == "deepseek-v4-flash"
     assert kwargs["json"]["stream"] is False
-    assert kwargs["json"]["temperature"] == 1.6
+    assert "temperature" not in kwargs["json"]
+    assert kwargs["json"]["reasoning_effort"] == "high"
+    assert kwargs["json"]["thinking"] == {"type": "enabled"}
     assert kwargs["timeout"] == 20
     assert kwargs["json"]["messages"][0] == {
         "role": "system",
@@ -180,24 +184,23 @@ def test_optimize_prompt_posts_deepseek_chat_completions_payload():
 
 @pytest.mark.parametrize("temperature", [-0.1, 2.1])
 @override_settings(
-    APIMART_API_KEY="secret-key",
-    APIMART_BASE_URL="https://api.apimart.ai",
-    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    DEEPSEEK_API_KEY="deepseek-key",
+    DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    DEEPSEEK_PROMPT_MODEL="deepseek-v4-flash",
 )
-def test_optimize_prompt_rejects_temperature_outside_apimart_range(settings, temperature):
+def test_optimize_prompt_rejects_explicit_temperature_outside_range(temperature):
     from platform_app.services import APIMartClient, ProviderError
 
-    settings.APIMART_PROMPT_TEMPERATURE = temperature
     client = APIMartClient(session=Session([]))
 
     with pytest.raises(ProviderError, match="temperature"):
-        client.optimize_prompt({"text": "make prompt"})
+        client.optimize_prompt({"text": "make prompt", "temperature": temperature})
 
 
 @override_settings(
-    APIMART_API_KEY="secret-key",
-    APIMART_BASE_URL="https://api.apimart.ai",
-    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    DEEPSEEK_API_KEY="deepseek-key",
+    DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    DEEPSEEK_PROMPT_MODEL="deepseek-v4-flash",
     APIMART_PROMPT_TEMPERATURE=0.4,
 )
 def test_complete_chat_uses_explicit_temperature():
@@ -219,9 +222,9 @@ def test_complete_chat_uses_explicit_temperature():
 
 
 @override_settings(
-    APIMART_API_KEY="secret-key",
-    APIMART_BASE_URL="https://api.apimart.ai",
-    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    DEEPSEEK_API_KEY="deepseek-key",
+    DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    DEEPSEEK_PROMPT_MODEL="deepseek-v4-flash",
     APIMART_PROMPT_TEMPERATURE=0.4,
 )
 def test_complete_chat_reports_timeout_in_chinese():
@@ -234,9 +237,9 @@ def test_complete_chat_reports_timeout_in_chinese():
 
 
 @override_settings(
-    APIMART_API_KEY="secret-key",
-    APIMART_BASE_URL="https://api.apimart.ai",
-    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    DEEPSEEK_API_KEY="deepseek-key",
+    DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    DEEPSEEK_PROMPT_MODEL="deepseek-v4-flash",
     APIMART_PROMPT_TEMPERATURE=0.4,
 )
 def test_complete_chat_extracts_list_message_content():
@@ -257,11 +260,21 @@ def test_complete_chat_extracts_list_message_content():
     assert data["output_text"] == "节点返回文本"
 
 
+@override_settings(DEEPSEEK_API_KEY="")
+def test_complete_chat_reports_missing_deepseek_key_in_chinese():
+    from platform_app.services import APIMartClient, ProviderError
+
+    client = APIMartClient(session=Session([]))
+
+    with pytest.raises(ProviderError, match="DeepSeek 官方接口密钥未配置"):
+        client.complete_chat([{"role": "user", "content": "hello"}])
+
+
 @pytest.mark.parametrize("temperature", [-0.1, 2.1])
 @override_settings(
-    APIMART_API_KEY="secret-key",
-    APIMART_BASE_URL="https://api.apimart.ai",
-    APIMART_PROMPT_MODEL="deepseek-v4-pro",
+    DEEPSEEK_API_KEY="deepseek-key",
+    DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    DEEPSEEK_PROMPT_MODEL="deepseek-v4-flash",
     APIMART_PROMPT_TEMPERATURE=0.4,
 )
 def test_complete_chat_rejects_explicit_temperature_outside_range(temperature):
