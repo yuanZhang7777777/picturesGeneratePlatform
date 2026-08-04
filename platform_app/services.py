@@ -5013,10 +5013,10 @@ def _node_snapshot(node_id, model_id, input_snapshot, output_snapshot, *, slot_i
         if model_id == "deterministic-rule-engine"
         else "builtin-v2.0.0"
     )
-    input_hash = _snapshot_hash(input_snapshot)
-    output_hash = _snapshot_hash(output_snapshot)
     stored_input = _compact_prompt_trace_value(input_snapshot)
     stored_output = _compact_prompt_trace_value(output_snapshot)
+    input_hash = _snapshot_hash(stored_input)
+    output_hash = _snapshot_hash(stored_output)
     snapshot = {
         "snapshot_id": str(uuid.uuid4()),
         "trace_id": str(uuid.uuid4()),

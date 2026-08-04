@@ -58,6 +58,21 @@ MAX_EXPORT_RESULT_BYTES = 25 * 1024 * 1024
 MAX_EXPORT_TOTAL_BYTES = 500 * 1024 * 1024
 
 
+PROMPT_READINESS_REQUEUE_MARKERS = (
+    "PromptVersion",
+    "same-slot N7 record",
+    "Current approved PromptVersion",
+    "Current source PromptVersion",
+    "Product Prompt OS preparation is not ready",
+    "fallback PromptVersion",
+)
+
+
+def _is_prompt_readiness_error(exc):
+    message = str(exc)
+    return isinstance(exc, ValueError) and any(marker in message for marker in PROMPT_READINESS_REQUEUE_MARKERS)
+
+
 def require_owner_or_admin(user, obj):
     owner_id = getattr(obj, "owner_id", None)
     if owner_id is None and hasattr(obj, "batch"):
@@ -772,6 +787,17 @@ def api_project_generate(request, batch_id):
                 generation_count += len(created_ids)
                 items.append({"cluster_id": str(cluster.id), "status": "queued"})
             except Exception as exc:
+                if _is_prompt_readiness_error(exc):
+                    request_cluster_preparation(cluster, auto_generate=True)
+                    items.append(
+                        {
+                            "cluster_id": str(cluster.id),
+                            "status": "preparing",
+                            "code": "prompt_preparation_started",
+                            "message": "Product preparation will queue generation automatically.",
+                        }
+                    )
+                    continue
                 items.append(
                     {
                         "cluster_id": str(cluster.id),

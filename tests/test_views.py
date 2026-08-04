@@ -759,6 +759,59 @@ def test_project_generate_keeps_record_intent_database_error_local(
     assert clusters[1].auto_generate is True
 
 
+def test_project_generate_requeues_stale_prompt_readiness(
+    client,
+    tmp_path,
+    settings,
+    monkeypatch,
+):
+    from platform_app.models import Cluster
+    from platform_app.services import create_batch, register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = create_batch(user, "Stale prompt generation")
+    cluster = register_uploaded_asset(
+        batch,
+        "source.png",
+        image_file("source.png").read(),
+        "image/png",
+    ).clusters.get()
+    Cluster.objects.filter(id=cluster.id).update(
+        preparation_status=Cluster.PreparationStatus.READY,
+        preparation_stage="ready",
+        preparation_current=7,
+        preparation_total=7,
+    )
+
+    monkeypatch.setattr("platform_app.views.cluster_preparation_is_current", lambda cluster: True)
+
+    def stale_prompt(*args, **kwargs):
+        raise ValueError("same-slot N7 record content hash is invalid")
+
+    monkeypatch.setattr("platform_app.views.ensure_cluster_generations", stale_prompt)
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_project_generate", args=[batch.id]),
+        data=__import__("json").dumps({"cluster_ids": [str(cluster.id)]}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 202
+    assert response.json()["items"] == [
+        {
+            "cluster_id": str(cluster.id),
+            "status": "preparing",
+            "code": "prompt_preparation_started",
+            "message": "Product preparation will queue generation automatically.",
+        }
+    ]
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.auto_generate is True
+
+
 def test_update_cluster_prompt_requires_current_version(client, tmp_path, settings):
     from platform_app.models import OutputSlot, OutputTemplate, PromptVersion
     from platform_app.services import create_batch, register_uploaded_asset

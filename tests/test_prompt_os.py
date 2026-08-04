@@ -847,6 +847,21 @@ def test_n6_model_payload_compacts_verbose_slot_plan():
     assert len(json.dumps(compact_plan, ensure_ascii=False, sort_keys=True)) < 20000
 
 
+def test_node_snapshot_hashes_match_stored_compacted_content():
+    from platform_app.services import _node_snapshot, _snapshot_hash
+
+    long_text = "很长的中间提示词。" * 5000
+    snapshot = _node_snapshot(
+        "N7.shopee",
+        "deepseek-v4-flash",
+        {"prompt": long_text},
+        {"decision": "pass", "warnings": [long_text]},
+    )
+
+    assert snapshot["input_hash"] == _snapshot_hash(snapshot["input_snapshot"])
+    assert snapshot["output_hash"] == _snapshot_hash(snapshot["output_snapshot"])
+
+
 def test_raw_n5_text_is_split_by_slot_without_copying_full_trace():
     from types import SimpleNamespace
 
