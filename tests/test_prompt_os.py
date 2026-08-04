@@ -581,8 +581,7 @@ def test_n6_validation_exception_keeps_returned_deepseek_text(monkeypatch):
     assert "生成一张 1:1 Shopee 商品营销图" in result["raw_model_text"]
 
 
-def test_n6_marketing_slots_run_concurrently(tmp_path, settings):
-    import threading
+def test_n6_marketing_slots_use_one_product_level_call(tmp_path, settings):
     import time
 
     from platform_app.models import Asset, Batch, OutputTemplate, PromptVersion
@@ -615,29 +614,21 @@ def test_n6_marketing_slots_run_concurrently(tmp_path, settings):
 
     class SlowN6Client(FakeAPIMartClient):
         def __init__(self):
-            self.lock = threading.Lock()
-            self.active = 0
-            self.max_active = 0
+            self.n6_calls = 0
 
         def optimize_prompt(self, payload):
             if "NODE N6" not in payload.get("text", ""):
                 return super().optimize_prompt(payload)
-            with self.lock:
-                self.active += 1
-                self.max_active = max(self.max_active, self.active)
-            try:
-                time.sleep(0.05)
-                return super().optimize_prompt(payload)
-            finally:
-                with self.lock:
-                    self.active -= 1
+            self.n6_calls += 1
+            time.sleep(0.05)
+            return super().optimize_prompt(payload)
 
     client = SlowN6Client()
     assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
     cluster.refresh_from_db()
 
     assert cluster.preparation_status == cluster.PreparationStatus.READY, cluster.preparation_error
-    assert client.max_active > 1
+    assert client.n6_calls == 1
     assert PromptVersion.objects.filter(cluster=cluster).count() == 5
 
 

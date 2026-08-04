@@ -546,55 +546,61 @@ class FakeAPIMartClient:
                 ]
             }
         elif "NODE N6" in text:
-            slot_order = node_input.get("slot_order")
+            slot_inputs = node_input.get("slots")
+            if not isinstance(slot_inputs, list):
+                slot_inputs = [node_input]
             fact_ids = [
                 item.get("fact_id")
-                for item in node_input.get("fact_ledger", {}).get("facts", [])
+                for item in (slot_inputs[0] if slot_inputs else {}).get("fact_ledger", {}).get("facts", [])
                 if item.get("fact_id")
             ]
-            prompt = f"Create demo ecommerce product image slot {slot_order}."
-            display_prompt = f"生成一张 1:1 商品营销图，槽位 {slot_order} 用清楚的商品主体、具体使用画面、自然光线、材质细节和简洁目标语言标题表达当前卖点。"
-            output = {
-                "slot_id": str(slot_order),
-                "main_scene": node_input.get("slot_plan", {}).get("main_scene", "clean ecommerce scene"),
-                "main_action": node_input.get("slot_plan", {}).get("main_action", "none"),
-                "display_prompt": display_prompt,
-                "visible_text_lines": node_input.get("slot_plan", {}).get("visible_text_lines", []),
-                "localized_copy": {
-                    "language": node_input.get("market_context", {}).get("language", "en"),
-                    "lines": node_input.get("slot_plan", {}).get("visible_text_lines", []),
-                    "back_translation": "",
-                    "strategy_mode": node_input.get("slot_plan", {}).get("creative_strategy", {}).get("mode", "fab_value"),
-                    "source_fact_refs": [],
-                    "source_inference_refs": [],
-                    "quality": {
-                        "relevance": 90,
-                        "specificity": 90,
-                        "imagery": 90,
-                        "naturalness": 90,
-                        "truthfulness": 100,
-                        "mobile_readability": 90,
-                        "generic_phrase_hits": [],
+            def n6_output_for(slot_input):
+                slot_order = slot_input.get("slot_order")
+                prompt = f"Create demo ecommerce product image slot {slot_order}."
+                display_prompt = f"生成一张 1:1 商品营销图，槽位 {slot_order} 用清楚的商品主体、具体使用画面、自然光线、材质细节和简洁目标语言标题表达当前卖点。"
+                return {
+                    "slot_id": str(slot_order),
+                    "main_scene": slot_input.get("slot_plan", {}).get("main_scene", "clean ecommerce scene"),
+                    "main_action": slot_input.get("slot_plan", {}).get("main_action", "none"),
+                    "display_prompt": display_prompt,
+                    "visible_text_lines": slot_input.get("slot_plan", {}).get("visible_text_lines", []),
+                    "localized_copy": {
+                        "language": slot_input.get("market_context", {}).get("language", "en"),
+                        "lines": slot_input.get("slot_plan", {}).get("visible_text_lines", []),
+                        "back_translation": "",
+                        "strategy_mode": slot_input.get("slot_plan", {}).get("creative_strategy", {}).get("mode", "fab_value"),
+                        "source_fact_refs": [],
+                        "source_inference_refs": [],
+                        "quality": {
+                            "relevance": 90,
+                            "specificity": 90,
+                            "imagery": 90,
+                            "naturalness": 90,
+                            "truthfulness": 100,
+                            "mobile_readability": 90,
+                            "generic_phrase_hits": [],
+                        },
                     },
-                },
-                "prompt": prompt,
-                "character_count": len(prompt),
-                "reference_plan": {
-                    "primary_asset_id": node_input.get("primary_asset_id"),
-                    "supporting_asset_ids": node_input.get("supporting_asset_ids", []),
-                    "completed_white_result_id": None,
-                },
-                "fact_trace": fact_ids,
-                "inference_trace": [],
-                "rule_refs": node_input.get("rule_refs", []),
-                "generation_parameters": {
-                    "model": "gpt-image-2",
-                    "n": 1,
-                    "size": node_input.get("size", "1:1"),
-                    "resolution": node_input.get("resolution", "1k"),
-                },
-                "review_required": True,
-            }
+                    "prompt": prompt,
+                    "character_count": len(prompt),
+                    "reference_plan": {
+                        "primary_asset_id": slot_input.get("primary_asset_id"),
+                        "supporting_asset_ids": slot_input.get("supporting_asset_ids", []),
+                        "completed_white_result_id": None,
+                    },
+                    "fact_trace": fact_ids,
+                    "inference_trace": [],
+                    "rule_refs": slot_input.get("rule_refs", []),
+                    "generation_parameters": {
+                        "model": "gpt-image-2",
+                        "n": 1,
+                        "size": slot_input.get("size", "1:1"),
+                        "resolution": slot_input.get("resolution", "1k"),
+                    },
+                    "review_required": True,
+                }
+            outputs = [n6_output_for(slot_input) for slot_input in slot_inputs]
+            output = {"slots": outputs} if isinstance(node_input.get("slots"), list) else outputs[0]
         elif "NODE N7" in text:
             deterministic = node_input.get("deterministic_gate", {})
             hard_blocks = list(deterministic.get("hard_blocks", []))
@@ -5053,6 +5059,36 @@ def _prompt_node_n6_plan(client, node_id, instruction, payload, identity, ledger
     return _normalize_n6_model_text(text, node_id, None, payload, identity, ledger, rule_refs)
 
 
+def _n6_set_schema(single_slot_schema):
+    item_schema = copy.deepcopy(single_slot_schema) if single_slot_schema else {"type": "object"}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"slots": {"type": "array", "items": item_schema}},
+        "required": ["slots"],
+    }
+
+
+def _n6_slot_order(payload):
+    raw_slot = payload.get("slot_id", payload.get("slot_order"))
+    try:
+        return int(raw_slot)
+    except (TypeError, ValueError):
+        return None
+
+
+def _n6_slot_items(payload):
+    if not isinstance(payload, dict):
+        return []
+    for key in ("slots", "slot_prompts", "prompts", "items", "results"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    if "prompt" in payload or "slot_id" in payload or "slot_order" in payload:
+        return [payload]
+    return []
+
+
 def _normalize_n6_model_text(text, node_id, output_schema, payload, identity, ledger, rule_refs):
     try:
         value = _json_object(text)
@@ -5066,6 +5102,86 @@ def _normalize_n6_model_text(text, node_id, output_schema, payload, identity, le
     result["prompt_source"] = "deepseek"
     result.setdefault("raw_model_text", text)
     return result
+
+
+def _normalize_n6_slot_set_model_text(text, output_schema, payload, identity, ledger, rule_refs_by_order):
+    slot_inputs = {
+        int(item["slot_order"]): item
+        for item in payload.get("slots", [])
+        if isinstance(item, dict) and item.get("slot_order") is not None
+    }
+    results = {}
+    try:
+        value = _json_object(text)
+        for item in _n6_slot_items(value):
+            order = _n6_slot_order(item)
+            if order not in slot_inputs:
+                continue
+            try:
+                result = _normalize_n6_prompt(
+                    item,
+                    order,
+                    identity,
+                    ledger,
+                    rule_refs_by_order.get(order, set()),
+                )
+            except Exception:
+                result = _deepseek_text_n6_prompt(
+                    text,
+                    slot_inputs[order],
+                    identity,
+                    ledger,
+                    rule_refs_by_order.get(order, set()),
+                )
+            result["prompt_source"] = "deepseek"
+            result.setdefault("raw_model_text", text)
+            results[order] = result
+    except Exception:
+        pass
+    for order, slot_input in slot_inputs.items():
+        if order not in results:
+            results[order] = _deepseek_text_n6_prompt(
+                text,
+                slot_input,
+                identity,
+                ledger,
+                rule_refs_by_order.get(order, set()),
+            )
+            results[order]["prompt_source"] = "deepseek"
+            results[order].setdefault("raw_model_text", text)
+    return results
+
+
+def _prompt_node_n6_plan_set(client, node_id, instruction, payload, identity, ledger, rule_refs_by_order):
+    system_instruction, _ = _prompt_node_contract(node_id)
+    node_template = _published_prompt_node(node_id)
+    single_schema = copy.deepcopy(node_template.output_schema) if node_template is not None else {}
+    output_schema = _n6_set_schema(single_schema)
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    node_text = "\n".join(
+        [
+            f"NODE {node_id}",
+            instruction,
+            "本次 N6 仍然是图片 Prompt 编译节点，但要一次性编译 input_json.slots 中的全部营销槽位。",
+            "输出顶层必须是 slots 数组；每个数组项都是一个完整单槽 N6 输出，slot_id 必须对应输入 slot_order。",
+            "不要合并 N5，不重新策划槽位，不输出摘要；每个槽位都要有独立 display_prompt、localized_copy、prompt 和 reference_plan。",
+            f"OUTPUT_SCHEMA={json.dumps(output_schema, ensure_ascii=False, sort_keys=True)}",
+            "Return exactly one JSON object without Markdown or commentary.",
+            serialized,
+        ]
+    )
+    text = _prompt_node_text_from_rendered(
+        client,
+        "\n\n".join(
+            [
+                system_instruction,
+                "# 本次批量编译覆盖\n这次输入包含 slots 数组；按同一个 N6 角色一次完成全部槽位，并返回 slots 数组。",
+            ]
+        ),
+        node_text,
+        _prompt_node_temperature(node_id),
+    )
+    return _normalize_n6_slot_set_model_text(text, output_schema, payload, identity, ledger, rule_refs_by_order)
 
 
 def _prompt_node_n6_plan_from_rendered(client, node_id, rendered, payload, identity, ledger, rule_refs):
@@ -6056,10 +6172,6 @@ def process_prompt_once(client=None, storage=None):
             )
             plans = {plan["slot_order"]: plan for plan in marketing_plan["plans"]}
             _set_preparation_progress(cluster.id, claimed_revision, "N6", 5)
-            n6_system_instruction, _ = _prompt_node_contract(n6_node)
-            n6_template = _published_prompt_node(n6_node)
-            n6_output_schema = copy.deepcopy(n6_template.output_schema) if n6_template is not None else {}
-            n6_temperature = _prompt_node_temperature(n6_node)
             n6_jobs = []
             for slot in marketing_slots:
                 slot_rules = _applicable_rules(
@@ -6105,48 +6217,32 @@ def process_prompt_once(client=None, storage=None):
                 }
                 n6_inputs_by_slot[slot.id] = copy.deepcopy(slot_input)
                 n6_rule_refs_by_slot[slot.id] = set(slot_rule_refs)
-                n6_instruction = (
-                    f"SLOT_ORDER={slot.order}\n"
-                    "Compile one localized image instruction for this slot with one scene, one main action, and at most three visible text lines."
-                )
-                n6_rendered = (
-                    n6_system_instruction,
-                    _render_node_user_message(n6_node, n6_instruction, slot_input),
-                    n6_temperature,
-                    n6_output_schema,
-                )
-                n6_jobs.append((slot, slot_input, slot_rule_refs, n6_rendered))
+                n6_jobs.append((slot, slot_input, slot_rule_refs))
 
-            def run_n6_slot(slot, slot_input, slot_rule_refs, n6_rendered):
-                try:
-                    slot_plan = _prompt_node_n6_plan_from_rendered(
-                        _parallel_prompt_client(client),
-                        n6_node,
-                        n6_rendered,
-                        slot_input,
-                        identity,
-                        ledger,
-                        slot_rule_refs,
-                    )
-                    n6_model = settings.APIMART_PROMPT_MODEL
-                except Exception as exc:
-                    if not _prompt_os_allow_fallback():
-                        raise RuntimeError(_sanitize_provider_text(str(exc))) from None
-                    slot_plan = _fallback_n6_prompt(slot_input, identity, ledger, slot_rule_refs)
-                    n6_model = "deterministic-rule-engine"
-                return slot, slot_input, slot_rule_refs, slot_plan, n6_model
+            try:
+                n6_plans = _prompt_node_n6_plan_set(
+                    client,
+                    n6_node,
+                    "Compile one complete N6 result for every supplied marketing slot in this product card.",
+                    {"slots": [slot_input for _, slot_input, _ in n6_jobs]},
+                    identity,
+                    ledger,
+                    {slot.order: set(slot_rule_refs) for slot, _, slot_rule_refs in n6_jobs},
+                )
+                n6_model = settings.APIMART_PROMPT_MODEL
+            except Exception as exc:
+                if not _prompt_os_allow_fallback():
+                    raise RuntimeError(_sanitize_provider_text(str(exc))) from None
+                n6_plans = {
+                    slot.order: _fallback_n6_prompt(slot_input, identity, ledger, slot_rule_refs)
+                    for slot, slot_input, slot_rule_refs in n6_jobs
+                }
+                n6_model = "deterministic-rule-engine"
 
-            n6_workers = min(
-                len(n6_jobs),
-                max(1, int(getattr(settings, "PROMPT_OS_SLOT_CONCURRENCY", 1))),
-            )
-            if n6_workers <= 1:
-                n6_results = [run_n6_slot(*job) for job in n6_jobs]
-            else:
-                with ThreadPoolExecutor(max_workers=n6_workers) as executor:
-                    futures = [executor.submit(run_n6_slot, *job) for job in n6_jobs]
-                    n6_results = [future.result() for future in as_completed(futures)]
-                n6_results.sort(key=lambda item: item[0].order)
+            n6_results = [
+                (slot, slot_input, slot_rule_refs, n6_plans[slot.order], n6_model)
+                for slot, slot_input, slot_rule_refs in n6_jobs
+            ]
 
             for slot, slot_input, slot_rule_refs, slot_plan, n6_model in n6_results:
                 node_snapshots.append(

@@ -344,7 +344,7 @@ APIMart 当前文档对 base64、`n` 和 4K 比例存在不一致：
 生成 worker 保留一个服务，但使用线程池同时提交、轮询和归档多个供应商异步任务：
 
 - `PROMPT_WORKER_CONCURRENCY=16`：N1–N7 商品预备并发。
-- `PROMPT_OS_SLOT_CONCURRENCY=3`：同一商品 N1 多图识别、N4 白底 Prompt 与 N5 营销导演并行、以及 N6 槽位内 DeepSeek 并发。
+- `PROMPT_OS_SLOT_CONCURRENCY=3`：同一商品 N1 多图识别，以及 N4 白底 Prompt 与 N5 营销导演并行；N5 一次生成整套营销计划，N6 一次生成整套营销槽位图片 Prompt。
 - `GENERATION_WORKER_CONCURRENCY=16`：图片任务提交、轮询、归档并发。
 - `MAX_ACTIVE_GENERATIONS=32`：默认真实活跃出图任务数。
 - `GENERATION_PROVIDER_ACTIVE_LIMIT=500`：APIMart API 配置硬上限；`MAX_ACTIVE_GENERATIONS` 必须在 `1..500` 内。
