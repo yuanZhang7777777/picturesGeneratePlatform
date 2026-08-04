@@ -105,3 +105,38 @@ def test_prompt_claim_locks_cluster_without_related_joins(monkeypatch):
     monkeypatch.setattr(QuerySet, "select_for_update", guarded_select_for_update)
 
     assert _claim_next_prompt_cluster().id == cluster.id
+
+
+@pytest.mark.django_db
+def test_stale_preparing_restore_advances_revision(settings):
+    from datetime import timedelta
+
+    from django.contrib.auth import get_user_model
+    from django.utils import timezone
+
+    from platform_app.models import Batch, Cluster
+    from platform_app.services import _restore_stale_preparations
+
+    settings.PROMPT_PREPARATION_STALE_SECONDS = 300
+    user = get_user_model().objects.create_user(
+        username="prompt-worker-stale",
+        password="long-enough-password",
+        must_change_password=False,
+    )
+    batch = Batch.objects.create(owner=user, name="Stale prompt")
+    cluster = Cluster.objects.create(
+        batch=batch,
+        name="Stale",
+        preparation_status=Cluster.PreparationStatus.PREPARING,
+        preparation_stage="N6",
+        preparation_current=5,
+        analysis_snapshot={"_preparation_revision": 4, "identity": {"product_name": "old"}},
+    )
+    Cluster.objects.filter(id=cluster.id).update(updated_at=timezone.now() - timedelta(seconds=301))
+
+    _restore_stale_preparations()
+
+    cluster.refresh_from_db()
+    assert cluster.preparation_status == Cluster.PreparationStatus.PENDING
+    assert cluster.preparation_stage == "queued"
+    assert cluster.analysis_snapshot["_preparation_revision"] == 5

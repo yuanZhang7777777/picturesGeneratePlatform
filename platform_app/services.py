@@ -57,6 +57,16 @@ SUPPORTED_PLATFORMS = {"generic", "shopee", "tiktok", "tiktok_shop"}
 SUPPORTED_SIZES = {"1:1", "3:4"}
 SUPPORTED_RESOLUTIONS = {"1k", "2k"}
 PROMPT_GENERATION_FAILED_MESSAGE = "提示词生成失败，请重试预备生成"
+PROMPT_MODEL_TEXT_LIMIT = 12000
+PROMPT_MODEL_FIELD_LIMIT = 2400
+PROMPT_TRACE_TEXT_LIMIT = 20000
+PROMPT_MODEL_DROP_KEYS = {
+    "_preparation_history",
+    "prompt_os",
+    "raw_model_text",
+    "source_snapshot",
+    "structured_output",
+}
 STYLE_DNA_VALUES = {
     "composition": {"centered", "top-left", "top-right", "bottom-left", "bottom-right", "rule-of-thirds", "symmetrical", "negative-space"},
     "lighting": {"soft daylight", "natural daylight", "diffused studio", "softbox", "high key", "low key"},
@@ -215,6 +225,8 @@ def _sanitize_provider_text(text):
         text = text.replace(settings.APIMART_API_KEY, "[redacted]")
     text = re.sub(r"Bearer\s+[A-Za-z0-9._-]+", "Bearer [redacted]", text)
     lower = text.lower()
+    if "maximum context length" in lower or ("requested" in lower and "tokens" in lower):
+        return "提示词请求过长，已自动精简，请重新预备生成"
     if "api key" in lower or "authentication" in lower or "unauthorized" in lower:
         return "模型服务鉴权失败，请联系管理员"
     if "read timed out" in lower or "read timeout" in lower or "timed out" in lower or "timeout" in lower:
@@ -1189,16 +1201,16 @@ def _persist_prompt_terminal(
         for values in prompt_values:
             PromptVersion.objects.create(cluster=locked, created_by=user, **values)
         previous = locked.analysis_snapshot if isinstance(locked.analysis_snapshot, dict) else {}
-        history = copy.deepcopy(previous.get("_preparation_history", []))
+        history = copy.deepcopy(previous.get("_preparation_history", []))[-2:]
         if previous.get("identity") or previous.get("prompt_os"):
             history.append(
                 {
                     "preparation_revision": _preparation_revision(previous),
-                    "observations": copy.deepcopy(previous.get("observations", [])),
-                    "identity": copy.deepcopy(previous.get("identity", {})),
-                    "fact_ledger": copy.deepcopy(previous.get("fact_ledger", {})),
-                    "marketing_plan": copy.deepcopy(previous.get("marketing_plan", {})),
-                    "prompt_os": copy.deepcopy(previous.get("prompt_os", [])),
+                    "observations": _compact_prompt_trace_value(previous.get("observations", [])),
+                    "identity": _compact_prompt_trace_value(previous.get("identity", {})),
+                    "fact_ledger": _compact_prompt_trace_value(previous.get("fact_ledger", {})),
+                    "marketing_plan": _compact_prompt_trace_value(previous.get("marketing_plan", {})),
+                    "prompt_os": _compact_prompt_trace_value(previous.get("prompt_os", [])),
                 }
             )
         if history:
@@ -2341,6 +2353,40 @@ def _prompt_node_contract(node_name):
     return instruction, "test-v1"
 
 
+def _base_prompt_node(node_name):
+    return str(node_name or "").split(".", 1)[0]
+
+
+def _compact_prompt_model_value(value):
+    if isinstance(value, dict):
+        compact = {}
+        for key, item in value.items():
+            if key in PROMPT_MODEL_DROP_KEYS:
+                continue
+            compact[key] = _compact_prompt_model_value(item)
+        return compact
+    if isinstance(value, list):
+        return [_compact_prompt_model_value(item) for item in value]
+    if isinstance(value, str) and len(value) > PROMPT_MODEL_FIELD_LIMIT:
+        return value[:PROMPT_MODEL_FIELD_LIMIT].rstrip()
+    return value
+
+
+def _compact_prompt_trace_value(value):
+    if isinstance(value, dict):
+        compact = {}
+        for key, item in value.items():
+            if key == "raw_model_text":
+                text = str(item or "")
+                compact[key] = text[:PROMPT_TRACE_TEXT_LIMIT].rstrip()
+            else:
+                compact[key] = _compact_prompt_trace_value(item)
+        return compact
+    if isinstance(value, list):
+        return [_compact_prompt_trace_value(item) for item in value]
+    return value
+
+
 def _render_node_user_message(node_name, instruction, payload):
     node_template = _published_prompt_node(node_name)
     template = (
@@ -2348,10 +2394,12 @@ def _render_node_user_message(node_name, instruction, payload):
         if node_template is not None
         else ""
     )
+    compact_contract = _base_prompt_node(node_name) in {"N5", "N6"}
+    payload = _compact_prompt_model_value(payload) if compact_contract else payload
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     output_schema = (
         json.dumps(node_template.output_schema, ensure_ascii=False, sort_keys=True)
-        if node_template is not None and node_template.output_schema
+        if not compact_contract and node_template is not None and node_template.output_schema
         else ""
     )
     if "{{input_json}}" in template:
@@ -2367,7 +2415,11 @@ def _render_node_user_message(node_name, instruction, payload):
             instruction,
             template,
             f"OUTPUT_SCHEMA={output_schema}" if output_schema else "",
-            "Return exactly one JSON object without Markdown or commentary.",
+            (
+                "输出紧凑 JSON；字段缺失时后端会用模型文本补齐，不要复制输入里的长字段。"
+                if compact_contract
+                else "Return exactly one JSON object without Markdown or commentary."
+            ),
             serialized,
         )
         if part
@@ -4861,6 +4913,10 @@ def _node_snapshot(node_id, model_id, input_snapshot, output_snapshot, *, slot_i
         if model_id == "deterministic-rule-engine"
         else "builtin-v2.0.0"
     )
+    input_hash = _snapshot_hash(input_snapshot)
+    output_hash = _snapshot_hash(output_snapshot)
+    stored_input = _compact_prompt_trace_value(input_snapshot)
+    stored_output = _compact_prompt_trace_value(output_snapshot)
     snapshot = {
         "snapshot_id": str(uuid.uuid4()),
         "trace_id": str(uuid.uuid4()),
@@ -4870,10 +4926,10 @@ def _node_snapshot(node_id, model_id, input_snapshot, output_snapshot, *, slot_i
         "prompt_template_version": prompt_version,
         "model_id": model_id,
         "slot_id": str(slot_id) if slot_id else None,
-        "input_hash": _snapshot_hash(input_snapshot),
-        "output_hash": _snapshot_hash(output_snapshot),
-        "input_snapshot": input_snapshot,
-        "output_snapshot": output_snapshot,
+        "input_hash": input_hash,
+        "output_hash": output_hash,
+        "input_snapshot": stored_input,
+        "output_snapshot": stored_output,
         "status": "succeeded",
         "created_at": timezone.now().isoformat(),
     }
@@ -4945,6 +5001,31 @@ def _prompt_node_text_from_rendered(client, system_instruction, node_text, tempe
     return text
 
 
+def _limit_prompt_model_text(text, limit=PROMPT_MODEL_TEXT_LIMIT):
+    text = str(text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip()
+
+
+def _slot_text_from_model_text(text, slot_order):
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    matches = list(
+        re.finditer(
+            r"(?m)^\s*(?:槽位\s*)?0?(\d{1,2})(?:\s|[.、:：)\-])",
+            text,
+        )
+    )
+    sections = {}
+    for index, match in enumerate(matches):
+        order = int(match.group(1))
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        sections[order] = text[match.start() : end].strip()
+    return _limit_prompt_model_text(sections.get(int(slot_order)) or text)
+
+
 def _deepseek_text_n5_plans(raw_text, marketing_input, marketing_slots, fact_ids, inference_ids, target_appearance_ids):
     text = str(raw_text or "").strip()
     fact_ref = next(iter(fact_ids), "")
@@ -4960,41 +5041,41 @@ def _deepseek_text_n5_plans(raw_text, marketing_input, marketing_slots, fact_ids
             if index == len(marketing_slots) - 1:
                 selected = list(dict.fromkeys([*selected, *(set(appearances) - covered)]))
         fact_refs = [fact_ref] if fact_ref else []
+        slot_text = _slot_text_from_model_text(text, slot.order)
         theme = f"DeepSeek 原文方案 {slot.order}"
         plan = {
             "slot_order": slot.order,
             "role": slot.purpose or slot.name or theme,
             "appearance_ids": selected,
             "scene_family": f"deepseek-text-{slot.order}",
-            "environment": f"槽位 {slot.order} 按 DeepSeek 原文设计：{text}",
+            "environment": f"槽位 {slot.order} 按 DeepSeek 原文设计：{slot_text}",
             "camera": f"按 DeepSeek 原文镜头执行，槽位 {slot.order}",
             "visual_theme": theme,
-            "specific_moment": text,
-            "aesthetic_point_of_view": text,
-            "typography_direction": text,
-            "decision_task": text,
-            "conversion_goal": text,
+            "specific_moment": slot_text,
+            "aesthetic_point_of_view": slot_text,
+            "typography_direction": slot_text,
+            "decision_task": slot_text,
+            "conversion_goal": slot_text,
             "fact_refs": fact_refs,
             "inference_refs": [],
-            "main_scene": text,
+            "main_scene": slot_text,
             "main_action": f"按 DeepSeek 原文动作执行，槽位 {slot.order}",
-            "subject_relationship": text,
+            "subject_relationship": slot_text,
             "composition": f"按 DeepSeek 原文构图执行，槽位 {slot.order}",
-            "copy_intent": text,
+            "copy_intent": slot_text,
             "text_mode": "up_to_3_lines",
             "visible_text_lines": [],
             "localization_notes": [],
             "must_show": [],
             "must_avoid": [],
             "prompt_source": "deepseek",
-            "raw_model_text": text,
             "creative_strategy": _fallback_creative_strategy(
                 {
                     "fact_refs": fact_refs,
-                    "decision_task": text,
-                    "copy_intent": text,
-                    "subject_relationship": text,
-                    "main_scene": text,
+                    "decision_task": slot_text,
+                    "copy_intent": slot_text,
+                    "subject_relationship": slot_text,
+                    "main_scene": slot_text,
                     "must_show": [],
                 },
                 modes[index % len(modes)],
@@ -5008,7 +5089,7 @@ def _deepseek_text_n5_plans(raw_text, marketing_input, marketing_slots, fact_ids
         inference_ids,
         target_appearance_ids,
     )
-    result["raw_model_text"] = text
+    result["raw_model_text"] = _limit_prompt_model_text(text, PROMPT_TRACE_TEXT_LIMIT)
     return result
 
 
@@ -5077,10 +5158,10 @@ def _prompt_node_n5_plan(client, node_id, instruction, payload, marketing_slots,
             target_appearance_ids,
         )
     result["prompt_source"] = "deepseek"
-    result.setdefault("raw_model_text", text)
+    result.setdefault("raw_model_text", _limit_prompt_model_text(text, PROMPT_TRACE_TEXT_LIMIT))
     for plan in result["plans"]:
         plan["prompt_source"] = "deepseek"
-        plan.setdefault("raw_model_text", text)
+        plan.pop("raw_model_text", None)
     return result
 
 
@@ -5149,7 +5230,7 @@ def _normalize_n6_model_text(text, node_id, output_schema, payload, identity, le
     except Exception:
         result = _deepseek_text_n6_prompt(text, payload, identity, ledger, rule_refs)
     result["prompt_source"] = "deepseek"
-    result.setdefault("raw_model_text", text)
+    result.setdefault("raw_model_text", _limit_prompt_model_text(text, PROMPT_TRACE_TEXT_LIMIT))
     return result
 
 
@@ -5184,7 +5265,7 @@ def _normalize_n6_slot_set_model_text(text, output_schema, payload, identity, le
                     rule_refs_by_order.get(order, set()),
                 )
             result["prompt_source"] = "deepseek"
-            result.setdefault("raw_model_text", text)
+            result.setdefault("raw_model_text", _limit_prompt_model_text(text, PROMPT_TRACE_TEXT_LIMIT))
             results[order] = result
     except Exception:
         pass
@@ -5199,7 +5280,7 @@ def _normalize_n6_slot_set_model_text(text, output_schema, payload, identity, le
                 rule_refs_by_order.get(order, set()),
             )
             results[order]["prompt_source"] = "deepseek"
-            results[order].setdefault("raw_model_text", text)
+            results[order].setdefault("raw_model_text", _limit_prompt_model_text(text, PROMPT_TRACE_TEXT_LIMIT))
     return results
 
 
@@ -5208,16 +5289,15 @@ def _prompt_node_n6_plan_set(client, node_id, instruction, payload, identity, le
     node_template = _published_prompt_node(node_id)
     single_schema = copy.deepcopy(node_template.output_schema) if node_template is not None else {}
     output_schema = _n6_set_schema(single_schema)
-    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    request_payload = _compact_prompt_model_value(payload)
+    serialized = json.dumps(request_payload, ensure_ascii=False, sort_keys=True)
     node_text = "\n".join(
         [
             f"NODE {node_id}",
             instruction,
             "本次 N6 仍然是图片 Prompt 编译节点，但要一次性编译 input_json.slots 中的全部营销槽位。",
-            "输出顶层必须是 slots 数组；每个数组项都是一个完整单槽 N6 输出，slot_id 必须对应输入 slot_order。",
-            "不要合并 N5，不重新策划槽位，不输出摘要；每个槽位都要有独立 display_prompt、localized_copy、prompt 和 reference_plan。",
-            f"OUTPUT_SCHEMA={json.dumps(output_schema, ensure_ascii=False, sort_keys=True)}",
-            "Return exactly one JSON object without Markdown or commentary.",
+            "输出顶层 JSON 对象，字段为 slots；每项对应输入 slot_order，并尽量包含 display_prompt、localized_copy、prompt 和 reference_plan。",
+            "字段不完整时后端会按模型文本补齐；不要复制 raw trace、历史快照或整套提示词到每个槽位。",
             serialized,
         ]
     )
@@ -5232,7 +5312,7 @@ def _prompt_node_n6_plan_set(client, node_id, instruction, payload, identity, le
         node_text,
         _prompt_node_temperature(node_id),
     )
-    return _normalize_n6_slot_set_model_text(text, output_schema, payload, identity, ledger, rule_refs_by_order)
+    return _normalize_n6_slot_set_model_text(text, output_schema, request_payload, identity, ledger, rule_refs_by_order)
 
 
 def _prompt_node_n6_plan_from_rendered(client, node_id, rendered, payload, identity, ledger, rule_refs):
@@ -5699,16 +5779,24 @@ def _claim_next_prompt_cluster():
 
 def _restore_stale_preparations():
     stale_before = timezone.now() - timedelta(seconds=settings.PROMPT_PREPARATION_STALE_SECONDS)
-    Cluster.objects.filter(
+    stale = Cluster.objects.filter(
         preparation_status=Cluster.PreparationStatus.PREPARING,
         updated_at__lt=stale_before,
         archived_at__isnull=True,
-    ).update(
-        preparation_status=Cluster.PreparationStatus.PENDING,
-        preparation_stage="queued",
-        preparation_error="",
-        updated_at=timezone.now(),
-    )
+    ).only("id", "analysis_snapshot")
+    for cluster in stale:
+        snapshot = copy.deepcopy(cluster.analysis_snapshot) if isinstance(cluster.analysis_snapshot, dict) else {}
+        snapshot["_preparation_revision"] = _preparation_revision(snapshot) + 1
+        Cluster.objects.filter(
+            id=cluster.id,
+            preparation_status=Cluster.PreparationStatus.PREPARING,
+        ).update(
+            analysis_snapshot=snapshot,
+            preparation_status=Cluster.PreparationStatus.PENDING,
+            preparation_stage="queued",
+            preparation_error="",
+            updated_at=timezone.now(),
+        )
 
 
 def process_prompt_once(client=None, storage=None):

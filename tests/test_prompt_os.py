@@ -679,6 +679,100 @@ def test_n6_marketing_slots_use_one_product_level_call(tmp_path, settings):
     assert PromptVersion.objects.filter(cluster=cluster).count() == 5
 
 
+def test_marketing_model_requests_omit_schema_and_raw_trace(settings):
+    import json
+
+    from django.core.management import call_command
+
+    from platform_app.services import (
+        _platform_prompt_node,
+        _prompt_node_contract,
+        _prompt_node_n6_plan_set,
+        _render_node_user_message,
+    )
+
+    call_command("seed_platform_templates")
+    n5_node = _platform_prompt_node("N5", "shopee")
+    n6_node = _platform_prompt_node("N6", "shopee")
+
+    n5_text = _render_node_user_message(n5_node, "plan slots", {"slots": []})
+    assert "OUTPUT_SCHEMA=" not in n5_text
+
+    class CaptureClient:
+        def __init__(self):
+            self.text = ""
+
+        def optimize_prompt(self, payload):
+            self.text = payload["text"]
+            return {"output_text": "02：一张具体的商品营销画面提示词。"}
+
+    client = CaptureClient()
+    huge_trace = "raw-trace-" * 1000
+    _prompt_node_n6_plan_set(
+        client,
+        n6_node,
+        "compile slots",
+        {
+            "slots": [
+                {
+                    "slot_order": 2,
+                    "slot_plan": {
+                        "visual_theme": "清晨使用瞬间",
+                        "main_scene": "清晨桌面",
+                        "main_action": "手部拿起商品",
+                        "raw_model_text": huge_trace,
+                    },
+                    "product_name": "商品",
+                    "product_profile": {},
+                    "identity_lock": {},
+                    "fact_ledger": {"facts": []},
+                    "market_context": {"language": "vi"},
+                    "primary_asset_id": "asset-1",
+                    "supporting_asset_ids": [],
+                    "target_appearances": [],
+                    "appearance_ids": [],
+                    "resolved_rule_directives": [],
+                    "rule_refs": [],
+                    "size": "1:1",
+                    "resolution": "1k",
+                }
+            ]
+        },
+        {"primary_asset_id": "asset-1", "supporting_asset_ids": []},
+        {"facts": []},
+        {2: set()},
+    )
+
+    assert "OUTPUT_SCHEMA=" not in client.text
+    assert "raw_model_text" not in client.text
+    assert huge_trace not in client.text
+    assert json.loads(client.text.rsplit("\n", 1)[-1])["slots"][0]["slot_plan"]["visual_theme"] == "清晨使用瞬间"
+
+
+def test_raw_n5_text_is_split_by_slot_without_copying_full_trace():
+    from types import SimpleNamespace
+
+    from platform_app.services import _deepseek_text_n5_plans
+
+    slots = [
+        SimpleNamespace(order=2, name="商品结构图", purpose="structure"),
+        SimpleNamespace(order=3, name="商品细节图", purpose="detail"),
+    ]
+    result = _deepseek_text_n5_plans(
+        "02 商品结构图\n只写第二张的结构画面。\n03 商品细节图\n只写第三张的细节画面。",
+        {},
+        slots,
+        set(),
+        set(),
+        set(),
+    )
+
+    plan2, plan3 = result["plans"]
+    assert "raw_model_text" not in plan2
+    assert "第三张" not in plan2["specific_moment"]
+    assert "第二张" not in plan3["specific_moment"]
+
+
 def test_prompt_os_observes_only_primary_image_but_keeps_support_references(tmp_path, settings):
     from platform_app.models import Asset, Batch, ClusterAsset, OutputTemplate
     from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
