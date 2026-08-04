@@ -59,6 +59,8 @@ SUPPORTED_RESOLUTIONS = {"1k", "2k"}
 PROMPT_GENERATION_FAILED_MESSAGE = "提示词生成失败，请重试预备生成"
 PROMPT_MODEL_TEXT_LIMIT = 12000
 PROMPT_MODEL_FIELD_LIMIT = 2400
+PROMPT_N6_SLOT_PLAN_FIELD_LIMIT = 420
+PROMPT_N6_SLOT_PLAN_LIST_LIMIT = 6
 PROMPT_TRACE_TEXT_LIMIT = 20000
 PROMPT_MODEL_DROP_KEYS = {
     "_preparation_history",
@@ -67,6 +69,38 @@ PROMPT_MODEL_DROP_KEYS = {
     "source_snapshot",
     "structured_output",
 }
+PROMPT_N6_SLOT_PLAN_MODEL_KEYS = (
+    "slot_order",
+    "role",
+    "appearance_ids",
+    "creative_strategy",
+    "copywriting_chain",
+    "scene_family",
+    "environment",
+    "camera",
+    "visual_theme",
+    "specific_moment",
+    "aesthetic_point_of_view",
+    "typography_direction",
+    "text_layout_theme",
+    "subject_plan",
+    "composition_plan",
+    "style_plan",
+    "decision_task",
+    "conversion_goal",
+    "fact_refs",
+    "inference_refs",
+    "main_scene",
+    "main_action",
+    "subject_relationship",
+    "composition",
+    "copy_intent",
+    "text_mode",
+    "localization_notes",
+    "must_show",
+    "must_avoid",
+    "visible_text_lines",
+)
 STYLE_DNA_VALUES = {
     "composition": {"centered", "top-left", "top-right", "bottom-left", "bottom-right", "rule-of-thirds", "symmetrical", "negative-space"},
     "lighting": {"soft daylight", "natural daylight", "diffused studio", "softbox", "high key", "low key"},
@@ -2357,19 +2391,38 @@ def _base_prompt_node(node_name):
     return str(node_name or "").split(".", 1)[0]
 
 
-def _compact_prompt_model_value(value):
+def _compact_prompt_model_value(value, *, field_limit=PROMPT_MODEL_FIELD_LIMIT, list_limit=None):
     if isinstance(value, dict):
         compact = {}
         for key, item in value.items():
             if key in PROMPT_MODEL_DROP_KEYS:
                 continue
-            compact[key] = _compact_prompt_model_value(item)
+            compact[key] = _compact_prompt_model_value(item, field_limit=field_limit, list_limit=list_limit)
         return compact
     if isinstance(value, list):
-        return [_compact_prompt_model_value(item) for item in value]
-    if isinstance(value, str) and len(value) > PROMPT_MODEL_FIELD_LIMIT:
-        return value[:PROMPT_MODEL_FIELD_LIMIT].rstrip()
+        items = value[:list_limit] if list_limit is not None else value
+        return [_compact_prompt_model_value(item, field_limit=field_limit, list_limit=list_limit) for item in items]
+    if isinstance(value, str) and len(value) > field_limit:
+        return value[:field_limit].rstrip()
     return value
+
+
+def _compact_n6_slot_plan_for_model(slot_plan):
+    if not isinstance(slot_plan, dict):
+        return _compact_prompt_model_value(
+            slot_plan,
+            field_limit=PROMPT_N6_SLOT_PLAN_FIELD_LIMIT,
+            list_limit=PROMPT_N6_SLOT_PLAN_LIST_LIMIT,
+        )
+    return {
+        key: _compact_prompt_model_value(
+            slot_plan[key],
+            field_limit=PROMPT_N6_SLOT_PLAN_FIELD_LIMIT,
+            list_limit=PROMPT_N6_SLOT_PLAN_LIST_LIMIT,
+        )
+        for key in PROMPT_N6_SLOT_PLAN_MODEL_KEYS
+        if key in slot_plan
+    }
 
 
 def _compact_n6_model_payload(payload):
@@ -2404,7 +2457,11 @@ def _compact_n6_model_payload(payload):
         compact["common"] = common
     compact["slots"] = [
         {
-            key: _compact_prompt_model_value(value)
+            key: (
+                _compact_n6_slot_plan_for_model(value)
+                if key == "slot_plan"
+                else _compact_prompt_model_value(value)
+            )
             for key, value in slot.items()
             if key not in common
         }
@@ -2425,6 +2482,8 @@ def _compact_prompt_trace_value(value):
         return compact
     if isinstance(value, list):
         return [_compact_prompt_trace_value(item) for item in value]
+    if isinstance(value, str) and len(value) > PROMPT_TRACE_TEXT_LIMIT:
+        return value[:PROMPT_TRACE_TEXT_LIMIT].rstrip()
     return value
 
 

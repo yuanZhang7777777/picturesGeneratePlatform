@@ -774,6 +774,79 @@ def test_marketing_model_requests_omit_schema_and_raw_trace(settings):
     assert "product_profile" not in request_json["slots"][0]
 
 
+def test_n6_model_payload_compacts_verbose_slot_plan():
+    import json
+
+    from platform_app.services import _compact_n6_model_payload
+
+    verbose = "这个槽位的导演推演很长。" * 1000
+    slot_plan = {
+        "slot_order": 2,
+        "role": "商品结构图",
+        "appearance_ids": ["a1"],
+        "creative_strategy": {
+            "mode": verbose,
+            "mental_simulation": verbose,
+            "selection_reason": verbose,
+        },
+        "copywriting_chain": {
+            "raw_fact": verbose,
+            "feature": verbose,
+            "advantage": verbose,
+            "user_result": verbose,
+            "emotion_hook": verbose,
+        },
+        "scene_family": verbose,
+        "environment": verbose,
+        "camera": verbose,
+        "visual_theme": verbose,
+        "specific_moment": verbose,
+        "aesthetic_point_of_view": verbose,
+        "typography_direction": verbose,
+        "text_layout_theme": verbose,
+        "subject_plan": {
+            "product_scope": verbose,
+            "person_presence": verbose,
+            "usage_relationship": verbose,
+            "reason": verbose,
+        },
+        "composition_plan": {
+            "camera": verbose,
+            "canvas": verbose,
+            "text_area": verbose,
+            "diversity_signature": verbose,
+        },
+        "style_plan": {
+            "lighting": verbose,
+            "palette": verbose,
+            "material_focus": verbose,
+            "props": [verbose, verbose],
+        },
+        "decision_task": verbose,
+        "conversion_goal": verbose,
+        "fact_refs": ["f1"],
+        "inference_refs": [],
+        "main_scene": verbose,
+        "main_action": verbose,
+        "subject_relationship": verbose,
+        "composition": verbose,
+        "copy_intent": verbose,
+        "text_mode": "localized",
+        "localization_notes": verbose,
+        "must_show": [verbose, verbose],
+        "must_avoid": [verbose, verbose],
+        "visible_text_lines": [verbose, verbose],
+        "unused_model_rambling": verbose,
+    }
+
+    compact = _compact_n6_model_payload({"slots": [{"slot_order": 2, "slot_plan": slot_plan}]})
+    compact_plan = compact["slots"][0]["slot_plan"]
+
+    assert "unused_model_rambling" not in compact_plan
+    assert compact_plan["specific_moment"]
+    assert len(json.dumps(compact_plan, ensure_ascii=False, sort_keys=True)) < 20000
+
+
 def test_raw_n5_text_is_split_by_slot_without_copying_full_trace():
     from types import SimpleNamespace
 
