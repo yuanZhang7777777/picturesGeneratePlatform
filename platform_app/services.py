@@ -766,38 +766,47 @@ class APIMartClient:
             payload["reasoning_effort"] = reasoning_effort
         if getattr(settings, "DEEPSEEK_THINKING_ENABLED", True):
             payload["thinking"] = {"type": "enabled"}
-        try:
-            response = self.session.post(
-                self._deepseek_url("/chat/completions"),
-                json=payload,
-                headers=self.deepseek_headers,
-                timeout=settings.APIMART_PROMPT_TIMEOUT_SECONDS,
-            )
-        except requests.Timeout as exc:
-            raise ProviderError("模型服务响应超时，请重试预备生成") from exc
-        except requests.RequestException as exc:
-            raise ProviderError(_sanitize_provider_text(str(exc))) from exc
-        payload = self._json(response)
-        content = self._chat_output_text(payload)
-        if not content:
-            raise ProviderError("模型服务返回内容为空或格式异常，请重试预备生成")
-        return {"output_text": content, "raw": payload}
+        last_timeout = None
+        last_payload = {}
+        for _attempt in range(2):
+            try:
+                response = self.session.post(
+                    self._deepseek_url("/chat/completions"),
+                    json=payload,
+                    headers=self.deepseek_headers,
+                    timeout=settings.APIMART_PROMPT_TIMEOUT_SECONDS,
+                )
+            except requests.Timeout as exc:
+                last_timeout = exc
+                continue
+            except requests.RequestException as exc:
+                raise ProviderError(_sanitize_provider_text(str(exc))) from exc
+            last_payload = self._json(response)
+            content = self._chat_output_text(last_payload)
+            if content:
+                return {"output_text": content, "raw": last_payload}
+        if last_timeout is not None:
+            raise ProviderError("模型服务响应超时，请重试预备生成") from last_timeout
+        raise ProviderError("模型服务暂时没有返回正文，请重试预备生成")
 
     def _content_text(self, content):
         if isinstance(content, str):
             return content.strip()
+        if isinstance(content, dict):
+            return self._content_text(
+                content.get("text")
+                or content.get("content")
+                or content.get("output_text")
+                or content.get("reasoning_content")
+                or content.get("reasoning")
+            )
         if not isinstance(content, list):
             return ""
         parts = []
         for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                text = item.get("text")
-                if not isinstance(text, str):
-                    text = item.get("content")
-                if isinstance(text, str):
-                    parts.append(text)
+            text = self._content_text(item)
+            if text:
+                parts.append(text)
         return "\n".join(part.strip() for part in parts if part and part.strip())
 
     def _chat_output_text(self, payload):
@@ -809,11 +818,19 @@ class APIMartClient:
                 if not isinstance(choice, dict):
                     continue
                 message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
-                text = self._content_text(message.get("content"))
-                if not text:
-                    text = self._content_text(choice.get("text"))
-                if text:
-                    return text
+                for value in (
+                    message.get("content"),
+                    message.get("reasoning_content"),
+                    message.get("reasoning"),
+                    message.get("text"),
+                    message.get("output_text"),
+                    choice.get("text"),
+                    choice.get("content"),
+                    choice.get("output_text"),
+                ):
+                    text = self._content_text(value)
+                    if text:
+                        return text
         return self._responses_output_text(payload).strip()
 
     def _responses_output_text(self, payload):
@@ -5568,7 +5585,7 @@ def process_prompt_once(client=None, storage=None):
             observation_system, _ = _prompt_node_contract("N1")
             references = [relation.asset.storage_path for relation in image_relations]
             with storage.reference_paths(references) as image_paths:
-                for relation, image_path in zip(image_relations, image_paths):
+                def observe_relation(index, relation, image_path):
                     observation_input = {
                         "asset_id": str(relation.asset_id),
                         "asset_kind": "owned_product",
@@ -5612,6 +5629,27 @@ def process_prompt_once(client=None, storage=None):
                             relation.asset_id,
                             fallback_name,
                         )
+                    return index, observation_input, observation
+
+                n1_jobs = list(enumerate(zip(image_relations, image_paths)))
+                n1_workers = min(
+                    len(n1_jobs),
+                    max(1, int(getattr(settings, "PROMPT_OS_SLOT_CONCURRENCY", 1))),
+                )
+                if n1_workers <= 1:
+                    n1_results = [
+                        observe_relation(index, relation, image_path)
+                        for index, (relation, image_path) in n1_jobs
+                    ]
+                else:
+                    with ThreadPoolExecutor(max_workers=n1_workers) as executor:
+                        futures = [
+                            executor.submit(observe_relation, index, relation, image_path)
+                            for index, (relation, image_path) in n1_jobs
+                        ]
+                        n1_results = [future.result() for future in as_completed(futures)]
+                    n1_results.sort(key=lambda item: item[0])
+                for _, observation_input, observation in n1_results:
                     observations.append(observation)
                     node_snapshots.append(
                         _node_snapshot(
@@ -5876,7 +5914,6 @@ def process_prompt_once(client=None, storage=None):
         n6_rule_refs_by_slot = {}
         fact_ids = {item["fact_id"] for item in ledger["facts"]}
 
-        _set_preparation_progress(cluster.id, claimed_revision, "N4", 3)
         hero_rules = _applicable_rules(
             cluster.batch,
             hero_slot,
@@ -5909,43 +5946,61 @@ def process_prompt_once(client=None, storage=None):
                 "max_main_actions": 1,
             },
         }
-        try:
-            hero_plan = _prompt_node_json(
-                client,
-                "N4",
-                "Compile the standard white-background product hero. One scene, no action, no new visible text.",
-                hero_input,
-                normalize=lambda value: _normalize_n4_prompt(
-                    value,
-                    hero_slot.order,
-                    identity,
-                    ledger,
-                    hero_rule_refs,
-                ),
+
+        def run_n4_prompt():
+            try:
+                hero_plan = _prompt_node_json(
+                    _parallel_prompt_client(client),
+                    "N4",
+                    "Compile the standard white-background product hero. One scene, no action, no new visible text.",
+                    hero_input,
+                    normalize=lambda value: _normalize_n4_prompt(
+                        value,
+                        hero_slot.order,
+                        identity,
+                        ledger,
+                        hero_rule_refs,
+                    ),
+                )
+                n4_model = settings.APIMART_PROMPT_MODEL
+            except Exception:
+                hero_plan = _fallback_n4_prompt(hero_input, identity, ledger, hero_rule_refs)
+                n4_model = "deterministic-rule-engine"
+            return hero_plan, n4_model
+
+        n4_snapshot_index = len(node_snapshots)
+
+        def store_n4_result(hero_plan, n4_model):
+            node_snapshots.insert(
+                n4_snapshot_index,
+                _node_snapshot("N4", n4_model, hero_input, hero_plan, slot_id=hero_slot.id),
             )
-            n4_model = settings.APIMART_PROMPT_MODEL
-        except Exception:
-            hero_plan = _fallback_n4_prompt(hero_input, identity, ledger, hero_rule_refs)
-            n4_model = "deterministic-rule-engine"
-        node_snapshots.append(
-            _node_snapshot("N4", n4_model, hero_input, hero_plan, slot_id=hero_slot.id)
-        )
-        compiled_by_slot[hero_slot.id] = compile_slot_prompt(
-            cluster,
-            hero_slot,
-            batch=cluster.batch,
-            template=template,
-            slot_directive=hero_plan.get("prompt"),
-            visible_text_lines=hero_plan.get("visible_text_lines"),
-            main_scene=hero_plan.get("main_scene"),
-            main_action=hero_plan.get("main_action"),
-            node_name="N4",
-            preserve_directive_language=True,
-        )
-        compiled_by_slot[hero_slot.id]["reference_snapshot"] = approved_references
-        compiled_by_slot[hero_slot.id]["input_snapshot"]["reference_snapshot"] = approved_references
-        compiled_by_slot[hero_slot.id]["node_output"] = hero_plan
-        compiled_by_slot[hero_slot.id]["prompt_source"] = hero_plan.get("prompt_source", "deepseek")
+            compiled_by_slot[hero_slot.id] = compile_slot_prompt(
+                cluster,
+                hero_slot,
+                batch=cluster.batch,
+                template=template,
+                slot_directive=hero_plan.get("prompt"),
+                visible_text_lines=hero_plan.get("visible_text_lines"),
+                main_scene=hero_plan.get("main_scene"),
+                main_action=hero_plan.get("main_action"),
+                node_name="N4",
+                preserve_directive_language=True,
+            )
+            compiled_by_slot[hero_slot.id]["reference_snapshot"] = approved_references
+            compiled_by_slot[hero_slot.id]["input_snapshot"]["reference_snapshot"] = approved_references
+            compiled_by_slot[hero_slot.id]["node_output"] = hero_plan
+            compiled_by_slot[hero_slot.id]["prompt_source"] = hero_plan.get("prompt_source", "deepseek")
+
+        _set_preparation_progress(cluster.id, claimed_revision, "N4", 3)
+        n4_executor = None
+        n4_future = None
+        if marketing_slots and int(getattr(settings, "PROMPT_OS_SLOT_CONCURRENCY", 1)) > 1:
+            n4_executor = ThreadPoolExecutor(max_workers=1)
+            n4_future = n4_executor.submit(run_n4_prompt)
+        else:
+            hero_plan, n4_model = run_n4_prompt()
+            store_n4_result(hero_plan, n4_model)
 
         marketing_plan = {"plans": []}
         plans = {}
@@ -6126,6 +6181,13 @@ def process_prompt_once(client=None, storage=None):
                 ] = slot_references
                 compiled_by_slot[slot.id]["node_output"] = slot_plan
                 compiled_by_slot[slot.id]["prompt_source"] = slot_plan.get("prompt_source", "deepseek")
+
+        if n4_future is not None:
+            try:
+                hero_plan, n4_model = n4_future.result()
+            finally:
+                n4_executor.shutdown(wait=True)
+            store_n4_result(hero_plan, n4_model)
 
         _set_preparation_progress(cluster.id, claimed_revision, "N7", 6)
         gate_blocks = []
@@ -6393,6 +6455,8 @@ def process_prompt_once(client=None, storage=None):
             )
         return 1
     except Exception as exc:
+        if "n4_executor" in locals() and n4_executor is not None:
+            n4_executor.shutdown(wait=False, cancel_futures=True)
         with transaction.atomic():
             locked = Cluster.objects.select_for_update().get(id=cluster.id)
             if locked.preparation_status == Cluster.PreparationStatus.PREPARING and _preparation_revision(locked.analysis_snapshot) == claimed_revision:
@@ -8020,7 +8084,8 @@ def process_generation_once(client=None, storage=None):
         .order_by("created_at", "id")
     )
     if active_count < active_limit:
-        queued_candidates = list(queued_candidates)
+        scan_limit = max(1, int(getattr(settings, "GENERATION_QUEUE_CANDIDATE_SCAN_LIMIT", 200)))
+        queued_candidates = list(queued_candidates[:scan_limit])
         active_by_user = _active_generation_user_counts()
         queued_owner_ids = [_generation_owner_id(candidate) for candidate in queued_candidates]
         fair_candidates = []

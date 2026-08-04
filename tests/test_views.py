@@ -372,6 +372,24 @@ def test_project_generate_api_is_cluster_scoped_and_idempotent(client, tmp_path,
     assert second.generations.count() == 0
 
 
+def test_project_generate_requires_explicit_cluster_ids(client, tmp_path, settings):
+    from platform_app.services import create_batch
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = create_batch(user, "Batch 1")
+    client.force_login(user)
+
+    response = client.post(
+        reverse("api_project_generate", args=[batch.id]),
+        data="{}",
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert "cluster_ids" in response.json()["error"]
+
+
 def test_project_prepare_does_not_requeue_pending_cluster(client, tmp_path, settings):
     from datetime import timedelta
 

@@ -706,11 +706,12 @@ def api_project_generate(request, batch_id):
         if not isinstance(payload, dict):
             raise ValueError("request body must be an object")
         cluster_ids = payload.get("cluster_ids") or []
+        if not isinstance(cluster_ids, list) or not cluster_ids:
+            raise ValueError("cluster_ids must be a non-empty array")
+        if any(not isinstance(cluster_id, str) for cluster_id in cluster_ids):
+            raise ValueError("cluster_ids must contain strings")
         slot_orders = payload.get("slot_orders") or None
-        if cluster_ids:
-            clusters = batch.clusters.filter(id__in=cluster_ids, archived_at__isnull=True)
-        else:
-            clusters = batch.clusters.filter(archived_at__isnull=True)
+        clusters = batch.clusters.filter(id__in=cluster_ids, archived_at__isnull=True)
         generation_count = 0
         items = []
         for cluster in clusters:

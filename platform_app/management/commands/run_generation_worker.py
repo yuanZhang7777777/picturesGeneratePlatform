@@ -14,7 +14,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--once", action="store_true")
         parser.add_argument("--sleep", type=float, default=5.0)
-        parser.add_argument("--concurrency", type=int, default=int(os.getenv("GENERATION_WORKER_CONCURRENCY", "32")))
+        parser.add_argument("--concurrency", type=int, default=int(os.getenv("GENERATION_WORKER_CONCURRENCY", "16")))
 
     def process_batch(self, concurrency):
         concurrency = generation_worker_batch_size(concurrency)

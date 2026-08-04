@@ -14,7 +14,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--once", action="store_true")
         parser.add_argument("--sleep", type=float, default=10.0)
-        parser.add_argument("--concurrency", type=int, default=int(os.getenv("PROMPT_WORKER_CONCURRENCY", "64")))
+        parser.add_argument("--concurrency", type=int, default=int(os.getenv("PROMPT_WORKER_CONCURRENCY", "16")))
 
     def process_batch(self, concurrency):
         if concurrency <= 1:
@@ -30,11 +30,26 @@ class Command(BaseCommand):
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             return sum(executor.map(run_once, range(concurrency)))
 
-    def handle(self, *args, **options):
+    def worker_loop(self, sleep):
         while True:
-            processed = self.process_batch(max(1, options["concurrency"]))
-            if options["once"]:
-                self.stdout.write(f"processed={processed}")
-                return
+            close_old_connections()
+            try:
+                processed = process_prompt_once()
+            finally:
+                close_old_connections()
             if processed == 0:
-                time.sleep(options["sleep"])
+                time.sleep(sleep)
+
+    def handle(self, *args, **options):
+        concurrency = max(1, options["concurrency"])
+        if not options["once"]:
+            if concurrency <= 1:
+                self.worker_loop(options["sleep"])
+                return
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = [executor.submit(self.worker_loop, options["sleep"]) for _ in range(concurrency)]
+                for future in futures:
+                    future.result()
+            return
+        processed = self.process_batch(concurrency)
+        self.stdout.write(f"processed={processed}")

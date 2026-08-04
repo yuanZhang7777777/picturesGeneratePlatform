@@ -22,6 +22,40 @@ def test_prompt_worker_once_uses_configured_concurrency(monkeypatch):
     assert "processed=3" in stdout.getvalue()
 
 
+def test_prompt_worker_daemon_starts_independent_loops(monkeypatch):
+    from platform_app.management.commands import run_prompt_worker
+
+    submitted = []
+
+    class StopWorker(Exception):
+        pass
+
+    class Future:
+        def result(self):
+            raise StopWorker()
+
+    class Executor:
+        def __init__(self, max_workers):
+            assert max_workers == 3
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def submit(self, fn, sleep):
+            submitted.append((fn.__name__, sleep))
+            return Future()
+
+    monkeypatch.setattr(run_prompt_worker, "ThreadPoolExecutor", Executor)
+
+    with pytest.raises(StopWorker):
+        run_prompt_worker.Command().handle(once=False, sleep=7, concurrency=3)
+
+    assert submitted == [("worker_loop", 7), ("worker_loop", 7), ("worker_loop", 7)]
+
+
 @pytest.mark.django_db
 def test_prompt_claims_distinct_pending_clusters():
     from django.contrib.auth import get_user_model

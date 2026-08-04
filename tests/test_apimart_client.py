@@ -260,6 +260,53 @@ def test_complete_chat_extracts_list_message_content():
     assert data["output_text"] == "节点返回文本"
 
 
+@override_settings(
+    DEEPSEEK_API_KEY="deepseek-key",
+    DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    DEEPSEEK_PROMPT_MODEL="deepseek-v4-flash",
+    APIMART_PROMPT_TEMPERATURE=0.4,
+)
+def test_complete_chat_extracts_deepseek_reasoning_content_when_content_is_empty():
+    from platform_app.services import APIMartClient
+
+    session = Session(
+        [
+            Response(
+                200,
+                {"choices": [{"message": {"content": "", "reasoning_content": "节点返回文本"}}]},
+            )
+        ]
+    )
+    client = APIMartClient(session=session)
+
+    data = client.complete_chat([{"role": "user", "content": "hello"}])
+
+    assert data["output_text"] == "节点返回文本"
+
+
+@override_settings(
+    DEEPSEEK_API_KEY="deepseek-key",
+    DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    DEEPSEEK_PROMPT_MODEL="deepseek-v4-flash",
+    APIMART_PROMPT_TEMPERATURE=0.4,
+)
+def test_complete_chat_retries_once_when_deepseek_returns_empty_content():
+    from platform_app.services import APIMartClient
+
+    session = Session(
+        [
+            Response(200, {"choices": [{"message": {"content": ""}}]}),
+            Response(200, {"choices": [{"message": {"content": "第二次返回文本"}}]}),
+        ]
+    )
+    client = APIMartClient(session=session)
+
+    data = client.complete_chat([{"role": "user", "content": "hello"}])
+
+    assert data["output_text"] == "第二次返回文本"
+    assert len(session.calls) == 2
+
+
 @override_settings(DEEPSEEK_API_KEY="")
 def test_complete_chat_reports_missing_deepseek_key_in_chinese():
     from platform_app.services import APIMartClient, ProviderError

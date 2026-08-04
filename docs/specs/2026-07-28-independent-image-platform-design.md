@@ -344,9 +344,11 @@ APIMart 当前文档对 base64、`n` 和 4K 比例存在不一致：
 生成 worker 保留一个服务，但使用线程池同时提交、轮询和归档多个供应商异步任务：
 
 - `PROMPT_WORKER_CONCURRENCY=16`：N1–N7 商品预备并发。
-- `GENERATION_WORKER_CONCURRENCY=32`：图片任务提交、轮询、归档并发。
-- `MAX_ACTIVE_GENERATIONS=50`：默认真实活跃出图任务数。
+- `PROMPT_OS_SLOT_CONCURRENCY=3`：同一商品 N1 多图识别、N4 白底 Prompt 与 N5 营销导演并行、以及 N6 槽位内 DeepSeek 并发。
+- `GENERATION_WORKER_CONCURRENCY=16`：图片任务提交、轮询、归档并发。
+- `MAX_ACTIVE_GENERATIONS=32`：默认真实活跃出图任务数。
 - `GENERATION_PROVIDER_ACTIVE_LIMIT=500`：APIMart API 配置硬上限；`MAX_ACTIVE_GENERATIONS` 必须在 `1..500` 内。
+- `GENERATION_QUEUE_CANDIDATE_SCAN_LIMIT=200`：单轮只扫描前 200 个排队任务，避免大队列全表遍历。
 - 到达 500 前，每级都必须验证无重复提交、429/5xx 退避、归档完整、P95 延迟、数据库连接与内存；任一指标退化立即降回上一级。
 
 供应商返回明确 `429` 时遵从重试时间并降低提交速率。提交网络超时且不知道是否受理时进入 `submit_unknown`，禁止自动重新 POST。
@@ -354,7 +356,7 @@ APIMart 当前文档对 base64、`n` 和 4K 比例存在不一致：
 ### 6.3 公平性
 
 - 全局按创建时间排队，且先生成每个商品的白底图；同一商品的营销图等待白底完成，不阻塞其他商品。
-- 每名用户默认软占用 `GENERATION_USER_ACTIVE_SOFT_LIMIT=10` 个活跃供应商任务；有空闲容量时可临时借用更多槽位。其他用户出现待处理任务时，系统停止为已借用用户分配新槽位，优先恢复公平轮转；已提交给供应商的任务不强制取消。
+- 每名用户默认软占用 `GENERATION_USER_ACTIVE_SOFT_LIMIT=5` 个活跃供应商任务；有空闲容量时可临时借用更多槽位。其他用户出现待处理任务时，系统停止为已借用用户分配新槽位，优先恢复公平轮转；已提交给供应商的任务不强制取消。
 - 管理员不能通过界面任意插队；动态借用由队列服务决定并记录审计事件。
 - 队列暂停只阻止新提交，已有 `provider_task_id` 继续查询和归档。
 

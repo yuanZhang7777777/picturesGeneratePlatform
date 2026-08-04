@@ -317,6 +317,12 @@ class Cluster(models.Model):
         return super().delete(*args, **kwargs)
 
     class Meta:
+        indexes = [
+            models.Index(
+                fields=["preparation_status", "updated_at", "created_at"],
+                name="cluster_prep_queue_idx",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(fields=["batch", "sku"], name="unique_batch_sku"),
         ]
@@ -565,6 +571,10 @@ class Generation(models.Model):
 
     class Meta:
         ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(fields=["status", "created_at", "id"], name="generation_queue_idx"),
+            models.Index(fields=["status", "submitted_at", "created_at"], name="generation_poll_idx"),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["cluster", "output_slot", "attempt"],

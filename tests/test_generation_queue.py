@@ -140,6 +140,34 @@ def test_preflight_counts_clusters_and_quota(tmp_path, settings):
     assert result["blocking_errors"] == []
 
 
+def test_generation_worker_limits_queued_candidate_scan(tmp_path, settings, monkeypatch):
+    from platform_app.models import Generation, OutputTemplate
+    from platform_app.services import LocalStorage, process_generation_once
+
+    user, batch = make_batch_with_images(tmp_path, settings, count=1)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    slot = template.slots.get(order=1)
+    settings.MAX_ACTIVE_GENERATIONS = 500
+    settings.GENERATION_QUEUE_CANDIDATE_SCAN_LIMIT = 200
+    Generation.objects.bulk_create(
+        [
+            Generation(batch=batch, cluster=cluster, output_slot=slot, created_by=user, attempt=index + 1)
+            for index in range(205)
+        ]
+    )
+    seen = {}
+
+    def capture(candidates):
+        seen["count"] = len(candidates)
+        return None
+
+    monkeypatch.setattr("platform_app.services._claim_next_generation_for_submission", capture)
+
+    assert process_generation_once(storage=LocalStorage(tmp_path)) == 0
+    assert seen["count"] == 200
+
+
 @override_settings(USER_DAILY_GENERATION_LIMIT=1, GENERATION_QUOTAS_ENABLED=False)
 def test_confirm_generation_ignores_daily_quota_when_business_quota_is_disabled(tmp_path, settings):
     from platform_app.services import confirm_generation

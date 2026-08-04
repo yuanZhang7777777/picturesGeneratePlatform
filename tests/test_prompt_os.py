@@ -641,6 +641,108 @@ def test_n6_marketing_slots_run_concurrently(tmp_path, settings):
     assert PromptVersion.objects.filter(cluster=cluster).count() == 5
 
 
+def test_prompt_os_observes_product_images_concurrently(tmp_path, settings):
+    import threading
+    import time
+
+    from platform_app.models import Asset, Batch, ClusterAsset, OutputTemplate
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_SLOT_CONCURRENCY = 3
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Concurrent N1")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    batch = Batch.objects.create(owner=user, name="Concurrent N1", output_template=template)
+    cluster = make_cluster(batch)
+    cluster.cluster_assets.all().delete()
+    for index in range(3):
+        storage_path = f"originals/{batch.id}/source-{index}.png"
+        (tmp_path / storage_path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / storage_path).write_bytes(b"png-bytes")
+        asset = Asset.objects.create(
+            batch=batch,
+            kind=Asset.Kind.IMAGE,
+            original_filename=f"source-{index}.png",
+            storage_path=storage_path,
+            sha256=f"{index}" * 64,
+            file_size=9,
+            content_type="image/png",
+        )
+        ClusterAsset.objects.create(
+            cluster=cluster,
+            asset=asset,
+            role=ClusterAsset.Role.PRIMARY if index == 0 else ClusterAsset.Role.REFERENCE,
+            order=index + 1,
+        )
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class SlowN1Client(FakeAPIMartClient):
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+
+        def observe_images(self, instruction, image_paths):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.05)
+                return super().observe_images(instruction, image_paths)
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    client = SlowN1Client()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+    assert client.max_active > 1
+
+
+def test_prompt_os_runs_white_hero_and_marketing_plan_concurrently(tmp_path, settings):
+    import threading
+    import time
+
+    from platform_app.models import Batch, OutputTemplate
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    settings.PROMPT_OS_SLOT_CONCURRENCY = 3
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Concurrent N4 N5")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    template.slots.create(order=2, name="核心卖点图", purpose="main benefit")
+    batch = Batch.objects.create(owner=user, name="Concurrent N4 N5", output_template=template)
+    cluster = make_cluster(batch)
+    (tmp_path / "originals").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "originals" / "source.png").write_bytes(b"png-bytes")
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class SlowN4N5Client(FakeAPIMartClient):
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+
+        def optimize_prompt(self, payload):
+            text = payload.get("text", "")
+            if "NODE N4" not in text and "NODE N5" not in text:
+                return super().optimize_prompt(payload)
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.05)
+                return super().optimize_prompt(payload)
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    client = SlowN4N5Client()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+    assert client.max_active > 1
+
+
 def test_shopee_prompt_os_uses_scoped_marketing_nodes(tmp_path, settings):
     from platform_app.models import Asset, Batch, OutputTemplate, PromptVersion
     from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
