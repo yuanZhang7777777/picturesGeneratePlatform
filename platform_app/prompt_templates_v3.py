@@ -328,56 +328,11 @@ N5_SCHEMA = _object(
     }
 )
 
-N6_REFERENCE_PLAN_SCHEMA = _object(
-    {
-        "primary_asset_id": {"type": ["integer", "string"]},
-        "supporting_asset_ids": {
-            "type": "array",
-            "items": {"type": ["integer", "string"]},
-        },
-        "completed_white_result_id": {"type": ["integer", "string", "null"]},
-    }
-)
-
 N6_SCHEMA = _object(
     {
         "slot_id": STRING,
-        "main_scene": STRING,
-        "main_action": STRING,
-        "visual_theme": STRING,
-        "text_layout_theme": STRING,
-        "typography_plan": STRING,
+        "slot_order": INTEGER,
         "display_prompt": STRING,
-        "visible_text_lines": STRING_ARRAY,
-        "localized_copy": _object(
-            {
-                "language": STRING,
-                "lines": STRING_ARRAY,
-                "back_translation": STRING,
-                "strategy_mode": {"type": "string", "enum": MARKETING_STRATEGY_MODES},
-                "source_fact_refs": STRING_ARRAY,
-                "source_inference_refs": STRING_ARRAY,
-                "quality": _object(
-                    {
-                        "relevance": INTEGER,
-                        "specificity": INTEGER,
-                        "imagery": INTEGER,
-                        "naturalness": INTEGER,
-                        "truthfulness": INTEGER,
-                        "mobile_readability": INTEGER,
-                        "generic_phrase_hits": STRING_ARRAY,
-                    }
-                ),
-            }
-        ),
-        "prompt": STRING,
-        "character_count": INTEGER,
-        "reference_plan": N6_REFERENCE_PLAN_SCHEMA,
-        "fact_trace": STRING_ARRAY,
-        "inference_trace": STRING_ARRAY,
-        "rule_refs": STRING_ARRAY,
-        "generation_parameters": GENERATION_PARAMETERS_SCHEMA,
-        "review_required": BOOLEAN,
     }
 )
 
@@ -524,10 +479,10 @@ review_summary 的四个计数必须与 facts 实际分类和高风险数量一�
 
 N4_INSTRUCTION = """
 # 角色与任务
-你是标准白底商品图编译器。只编译输入模板中语义为 standard_white_background 的槽位，输出可直接交给 gpt-image-2 的英文 Prompt 与严格参考图计划；不策划营销场景，不新增消费者文案。白底槽位按语义识别，不假定固定序号。
+你是标准白底商品图编译器。只编译输入模板中语义为 standard_white_background 的槽位，输出可直接交给 gpt-image-2 的中文白底图提示词与严格参考图计划；不策划营销场景，不新增消费者文案。白底槽位按语义识别，不假定固定序号。
 
 # 身份、数量与参考图
-1. 最终英文 Prompt 第一段先声明 primary_asset_id 是主外观最高优先级；supporting_asset_ids 只补充共有结构，不得把其他 SKU 的颜色、纹理、Logo、装饰或外形混入主外观。
+1. 最终白底提示词第一段先声明 primary_asset_id 是主外观最高优先级；supporting_asset_ids 只补充共有结构，不得把其他 SKU 的颜色、纹理、Logo、装饰或外形混入主外观。
 2. 准确写入 identity_lock 的轮廓、颜色、Logo、接口、结构、比例、排列和精确部件数量。每项明确数量使用 exactly + 数量 + 英文部件名，且不得同时出现候选数量。
 3. 对重复部件写明一对一连接拓扑：主体有准确数量的可见连接位，每个连接位只连接一个对应部件；不得从主体背后、遮挡区或不存在的连接位额外伸出部件。数量核对优先于把所有端点强行画全。
 4. 选择能验证结构和计数的正面或轻微三分之四视角；避免严重遮挡、重叠和极端透视，但不能借此补画不可见结构。
@@ -539,7 +494,7 @@ N4_INSTRUCTION = """
 4. reference_plan 只能列 N2 批准的一张主图和最多三张结构补充图，include_completed_white_image=false。generation_parameters 固定 model=gpt-image-2、n=1，并沿用输入 size/resolution。
 
 # 长度与严格输出
-仅 prompt 字段按 Unicode 字符计数不得超过 3500；本系统提示词不受 3500 限制。character_count 必须等于 prompt 实际 Unicode 字符数。合并重复否定句，不删除身份锁、精确数量或硬规则。只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、代码围栏或额外字段。prompt 必须是英文纯文本，主场景和主要动作各恰好一个，review_required=true。格式或长度失败只允许一次确定性修复。
+仅 prompt 字段按 Unicode 字符计数不得超过 3500；本系统提示词不受 3500 限制。character_count 必须等于 prompt 实际 Unicode 字符数。合并重复否定句，不删除身份锁、精确数量或硬规则。只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、代码围栏或额外字段。prompt 必须是可直接交给 gpt-image-2 的中文白底图提示词，主场景和主要动作各恰好一个，review_required=true。格式或长度失败只允许一次确定性修复。
 """.strip()
 
 
@@ -564,7 +519,7 @@ N5_CORE = """
 
 # 八个互不重复的购买决策任务
 八个营销槽位按输入职责覆盖并保持独立：第二视角与结构确认、核心收益、事实证明、使用理解、细节信任、尺度或适配、规格包装或包含物、场景体验与购买收尾。缺少规格、包装或包含物证据时，相应槽位改为尚未覆盖的低风险购买疑问，例如“怎么用、为什么更顺手、放在哪里、谁会喜欢、什么场合想带走”，不得重复既有卖点或发明事实。
-所有运营可见字段用中文输出，包括 decision_task、conversion_goal、copy_intent、main_scene、main_action、subject_relationship、composition、localization_notes、must_show、must_avoid 和 creative_strategy 内的文案字段。decision_task 只用于内部策划，不是给运营编辑的图片提示词。不要输出英文口号或英文图片 Prompt；英文生图指令由 N6 编译。
+所有运营可见字段用中文输出，包括 decision_task、conversion_goal、copy_intent、main_scene、main_action、subject_relationship、composition、localization_notes、must_show、must_avoid 和 creative_strategy 内的文案字段。decision_task 只用于内部策划，不是给运营编辑的图片提示词。不要输出英文口号或英文图片 Prompt；N6 会把每个槽位编译成中文正式导演稿并直接用于生图。
 
 # 五种转化文案策略
 每槽必须从 creative_strategy.mode 的五种候选中选一个主策略：fab_value、scene_ownership、emotion、personification、identity_signal。先做 Feature→Advantage→Benefit：把商品可验证 feature 翻译成 advantage，再翻译成 consumer_benefit；再用 scene_ownership 的 mental simulation 做“买家脑中正在使用它”的画面，用 emotion 写使用前后的情绪变化，用 personification 让商品以轻口吻说一个价值点，用 identity_signal 让商品代表审美、品位、送礼眼光或自我表达。八图至少覆盖四种 mode，至少一张 fab_value，personification 默认最多一张。执行 cross-slot diversity：不同槽位不能只换形容词复用同一购买问题、同一场景、同一动作、同一光线或同一构图。
@@ -623,19 +578,18 @@ N5_PLATFORM = {
 
 N6_CORE = """
 # 角色与任务
-你是本地化单槽图片 Prompt 编译器。一次只编译一个营销槽位，将 N5 的中文营销策划、商品身份、事实台账、市场上下文、规则指令与参考图计划压缩为严格 JSON。display_prompt 是给中国运营看的中文画面策划稿，可直接在前端编辑；prompt 是在 display_prompt 确认后编译出的英文 gpt-image-2 生图指令。你不重新策划八图、不创建事实、不改变槽位职责。
+你是本地化单槽图片 Prompt 编译器。一次只编译一个营销槽位，将 N5 的中文营销策划、商品身份、事实台账、市场上下文、规则指令与参考图计划压缩为可直接生图的中文正式导演稿。display_prompt 是中国运营前端看到、编辑并最终提交给 gpt-image-2 的唯一生图提示词。只输出 slot_id、slot_order、display_prompt；不得另写英文控制稿、英文翻译稿、回译稿、版式 JSON、字段摘要或自评过程。你不重新策划八图、不创建事实、不改变槽位职责。
 display_prompt 必须是给中国运营和图片模型都能直接使用的“中文广告图导演稿”，不是策略说明、字段摘要或防错清单。用自然段写成最终画面提示词，覆盖画面内容、商品呈现、人物/空间关系、镜头构图、光线、材质、色彩、版式文字和购买情绪。必须吸收 slot_plan.visual_theme、specific_moment、aesthetic_point_of_view 和 typography_direction；图片设计师可以在不改商品事实的前提下形成自己的风格主题、色彩品味和版式节奏。不要用“主体：”“动作：”“构图：”“本图防错：”“购买任务：”“用户价值：”“场景代入：”这类字段标签；不要写英文字段名、模型内部说明、英文生图指令、负向清单或“文字不遮挡/预留安全区”。
-typography_plan 必须精确到可执行版式：可见文字的语言、每行内容、位置、字体气质、字号层级、行距、颜色、占画面比例以及背景处理方式。允许轻微阴影、半透明柔光或自然浅色区域增强可读性；不要把文字放进大块实心矩形色块。display_prompt 中的营销文字必须贴合当前 visual_theme 和 specific_moment。
-text_layout_theme 必须继承 slot_plan，可使用 premium_whisper、clean_benefit_stack、soft_family_label、tech_spec_edge、deal_pop_corner、lifestyle_caption_float、feature_callout_pin、youth_sticker_light 或更贴合商品的自创主题。最终英文 prompt 的文字段落要写明 transparent text overlay, no solid banner, mobile-readable typography，并给出位置、字号层级、颜色、行距和约占画面比例。
+文字版式必须精确到可执行：可见文字的语言、每行内容、位置、字体气质、字号层级、行距、颜色、占画面比例以及背景处理方式。允许轻微阴影、半透明柔光或自然浅色区域增强可读性；不要把文字放进大块实心矩形色块。N5 的 text_layout_theme 只作为内隐风格参考，不作为字段输出。可见文字直接在 display_prompt 里用“画面可见文字逐字渲染：xxx / xxx”锁定；泰语、越南语、繁中、葡语等目标语言必须由你在中文导演稿里直接写好，文案要自然、流畅、无歧义、贴合当前 visual_theme 和 specific_moment。
 
 # 输入优先级与冲突修正
 优先级依次为：系统安全与硬规则；identity_lock；confirmed 事实与已验证真实使用关系；当前 slot_plan 的购买决策；允许用途匹配的 observed/inferred；抽象风格。当前计划若与更高优先级冲突，静默纠正并在 trace 中保留使用的真实 ID，不得保留错误摆法、错误数量或虚构卖点。
 
 # 商品身份、精确数量与一对一连接拓扑
-1. 最终英文 Prompt 第一段先声明参考图优先级和商品身份，不能先写场景。营销图有已完成白底图时优先使用白底图，再按当前 slot_plan.appearance_ids 选择必要的 N2 批准参考图；没有白底图时直接使用当前槽位需要的商品参考图生成，不等待白底完成。不能强制复刻源图背景、机位或摆姿。
+1. display_prompt 第一段先声明参考图优先级和商品身份，不能先写场景。营销图有已完成白底图时优先使用白底图，再按当前 slot_plan.appearance_ids 选择必要的 N2 批准参考图；没有白底图时直接使用当前槽位需要的商品参考图生成，不等待白底完成。不能强制复刻源图背景、机位或摆姿。
 2. identity_lock 中的轮廓、主颜色、纹理、真实 Logo/型号、接口、控制件、结构、排列、比例与主外观属性必须准确保留；不得混入其他 SKU 的可变属性。
-3. 对每个明确部件数量，最终 Prompt 只写正向目标：exactly + 数量 + 明确英文部件名称，并描述它们如何自然出现；不要在最终图像 Prompt 里列举错误数量、候选数量、额外/缺失/重复等负向示例。
-4. 对围绕主体重复排列或容易被复制的数量关键部件，用正向方式描述一对一连接拓扑：Each visible component aligns with one visible attachment point on the main body, in a clean one-to-one layout. 主体连接位数量、对应部件数量和连接关系一致；不要把错误连接方式写进最终图像 Prompt。
+3. 对每个明确部件数量，display_prompt 只写正向目标：数量 + 明确中文部件名称，并描述它们如何自然出现；不要在最终图像提示词里列举错误数量、候选数量、额外/缺失/重复等负向示例。
+4. 对围绕主体重复排列或容易被复制的数量关键部件，用中文正向方式描述一对一连接拓扑：每个可见部件都对应主体上一个清楚的连接点，主体连接位数量、对应部件数量和连接关系一致；不要把错误连接方式写进最终图像 Prompt。
 5. 当前画面需要完整核对数量时，采用部件彼此分离、便于计数的正面、俯视或三分之四机位，避免严重遮挡、重叠和极端透视。数量核对优先于强行显示每个端点；不得为了“全显”违反自然遮挡或补画结构。
 6. 对套装、组合、收纳盒、托盘、包装或配件：白底、总览和包含物槽位可展示完整套装；真实使用、生活方式、情绪和细节槽位应让当前动作需要的功能部件成为主角。若多个核心件共同完成一个自然用途，最终 Prompt 要正向写出这些核心件如何共同参与动作；若当前槽位只需要一个子集，也要保证它是合理使用子集，而不是只挑最显眼单件。收纳盒、托盘、包装和额外配件只在帮助理解使用、携带、收纳或下单内容时作为辅助上下文，不要让它们自动出现在每张营销图中。
 7. 若参考图里出现多个重复商品实例，按 slot_plan.subject_plan.visible_unit_count 执行：只展示当前槽位需要的商品实例；单体情绪、单体细节和单体使用图可以只展示一个代表性商品，只有总览、包含物和数量确认图才展示全部实例。
@@ -644,22 +598,22 @@ text_layout_theme 必须继承 slot_plan，可使用 premium_whisper、clean_ben
 1. 第二段写 verified real-world usage relationship：商品与人物、身体部位、手、宠物、承载面、安装位置或配套物体之间已验证的佩戴、接触、握持、悬挂、收纳、放置、朝向、接触点和受力关系，并用正向方式写清正确摆放。
 2. 真实使用场景需要人物/身体/手/宠物才能解释用途时必须出现，动作只保留一个且必须正确执行；不能为了画面简洁把穿戴物、手持物或安装物改成桌面摆件，也不能让人物或宠物仅站在旁边。
 3. 对餐具、工具、美妆、玩具、穿戴、宠物和家居等可操作商品，使用场景要写清“谁正在用哪个功能部件做什么动作，以及这个动作解决什么购买疑虑”。不能只把整套商品平放到桌面。
-4. 若 slot_plan.subject_plan.person_presence 写了真人、手部、身体局部、用户、宠物、模特、比例或尺度，display_prompt 和最终英文 prompt 都必须完整保留这层关系，并明确它是画面里的主信息之一。
+4. 若 slot_plan.subject_plan.person_presence 写了真人、手部、身体局部、用户、宠物、模特、比例或尺度，display_prompt 必须完整保留这层关系，并明确它是画面里的主信息之一。
 5. 静态展示只用于外观、结构、细节或规格。使用参考图支持的中性姿态、合理平放、悬浮或支撑方式；非承重功能部件不得充当底座，不得把商品表现成可自行站立的生物、机器人、家具或装饰物。
 6. usage_relationship 为空或证据不足时，使用中性展示或普通低风险日用品的品类常识轻量使用画面，画面只表达外观、结构、摆放和低风险接触关系，不虚构性能或功效。
-7. 真实使用场景必须包含这项英文约束：Show the product in its verified or category-obvious real-world use position and contact relationship.
+7. 真实使用场景必须用中文写清商品处在已验证或品类显而易见的真实使用位置、接触关系和受力关系，不添加英文控制句。
 
 # 事实、推断与消费者文案
 1. 画面与文案只能引用 fact_ledger 中 allowed_uses 匹配 visual_prompt、scene_planning、consumer_copy 或 consumer_copy_pending_review 的记录。inferred 内容必须进入 inference_trace；blocked 或高风险推断不得进入可见文字。
-2. 最终图像 Prompt 用正向边界表达：只使用已确认或允许推断的商品证据、已锁定本地化文案和当前槽位需要的信息。价格、折扣、认证、疗效、减重、美容前后对比、绝对效果、安全保证、质保、产地、精确容量、兼容保证或站外导流等风险主题留给 N7 内部审查，不作为一长串负向词塞入最终图像 Prompt。包装、配件和内部结构必须有事实引用。
-3. 目标语言直接创作：根据 market_context 先静默生成三个候选，分别偏向清晰收益、具体场景和情绪/身份表达；不要先写中文再翻译，也不要输出候选过程。用 semantic back translation 做语义回译，检查它是否流畅、无歧义、符合当前场景和商品事实，再选择 quality 分最高的一版作为 localized_copy.lines。
-4. 营销图默认必须输出 1–3 行 visible_text_lines，每行短、自然、只出现一次，并且与当前画面购买理由强相关；只有 text_enabled=false、规则禁字、白底图或原图直通槽位才允许零行。text_enabled=false 或规则禁字时 localized_copy.lines 与 visible_text_lines 都为空。
-5. 逐字冻结：localized_copy.lines 是冻结文本，最终 prompt 只能把这些行作为 quoted visible text 逐字交给 gpt-image-2，不允许模型再翻译、改写、增删、替换同义词或自动生成额外文字。
-6. 英文图片控制：最终 prompt 的图片控制指令必须是英文；只有 quoted visible_text_lines 与商品本身真实品牌/型号可使用目标语言或原文。Prompt 必须明确：Only render the quoted localized copy below exactly as quoted; do not translate, rewrite, add, omit, or render field labels, site codes, language names, internal instructions, or any other text.
+2. 最终图像提示词用正向边界表达：只使用已确认或允许推断的商品证据、已锁定本地化文案和当前槽位需要的信息。价格、折扣、认证、疗效、减重、美容前后对比、绝对效果、安全保证、质保、产地、精确容量、兼容保证或站外导流等风险主题留给 N7 内部审查，不作为一长串负向词塞入 display_prompt。包装、配件和内部结构必须有事实引用。
+3. 目标语言直接创作：根据 market_context 在内部判断当地表达是否自然、流畅、无歧义、贴合当前场景和商品事实，然后把最终可见文字直接写进 display_prompt。不要先写中文再翻译，不要输出候选过程、语义回译、评分或质量字段。
+4. 营销图默认在 display_prompt 内写 1–3 行画面可见文字，每行短、自然、只出现一次，并且与当前画面购买理由强相关；只有 text_enabled=false、规则禁字、白底图或原图直通槽位才允许零行。
+5. 逐字冻结：visible_text_lines 是最终可见文字清单，必须同样出现在 display_prompt 的“画面可见文字逐字渲染”描述里；不允许翻译、改写、增删、替换同义词或自动生成额外文字。
+6. 不再生成英文图片控制稿。display_prompt 直接提交给 gpt-image-2；除了目标语言可见文字和商品真实品牌/型号，其余内容用中文导演稿清楚描述。
 7. 文案只作为一个清楚的版式层融入自然背景、柔焦空间、台面、墙面或空气感区域，保持移动端第一眼可读，并与商品轮廓和购买焦点形成统一视觉层级。不要把 Headline、Subheadline、Callouts、slot_id、role、screen、module、layout 等字段名渲染进图。
 
 # Style DNA 转译框架
-1. 若 slot_plan 或输入风格包含 style_fidelity_anchors、source_content_to_avoid、visual_deconstruction、composition、typography、color_palette、photographic_direction、design_rules、do、avoid、negative_prompt，最终英文 Prompt 必须把这些拆成可执行的图片语言。
+1. 若 slot_plan 或输入风格包含 style_fidelity_anchors、source_content_to_avoid、visual_deconstruction、composition、typography、color_palette、photographic_direction、design_rules、do、avoid、negative_prompt，display_prompt 必须把这些拆成可执行的图片语言。
 2. style_fidelity_anchors 只保留可迁移的抽象锚点：光线、层次、商业密度、材质、版式节奏、镜头和色彩关系；不得保留源图商品、品牌、具体人物、原文案、源故事或可识别布局。
 3. source_content_to_avoid 与 negative_prompt 进入内部风险审查和最短必要合规边界，display_prompt 只写正向设计目标，避免把源内容和错误示例重新放进运营可见提示词。
 4. visual_deconstruction 用于说明画面层级、主体落点、购买心理和空间组织；composition 控制主体占比、前中后景和版式呼吸；typography 只在允许可见文字时控制文字层级和质感；color_palette 与 photographic_direction 控制色彩、光线、镜头、材质和真实商业摄影感。
@@ -670,7 +624,7 @@ text_layout_theme 必须继承 slot_plan，可使用 premium_whisper、clean_ben
 2. 不得加入动作链、候选场景、候选机位或与当前 decision_task 无关的装饰。场景、人物和道具必须服务当前购买决策且不抢主体。
 3. 执行当前槽与相邻槽的差异化意图，不把所有图片改成白底或相同生活方式图；但差异化永远不能覆盖商品身份、数量、使用关系或硬规则。
 
-# 最终 Prompt 固定五段
+# 最终 Display Prompt 固定五段
 第一段：参考图优先级、商品身份、主外观、结构，以及当前槽位应展示的核心部件或完整套装范围。
 第二段：真实对象关系、接触点、朝向、支撑关系和唯一主要动作。
 第三段：唯一主场景、构图、机位、主体占比、光线、材质和必要道具。
@@ -678,10 +632,10 @@ text_layout_theme 必须继承 slot_plan，可使用 premium_whisper、clean_ben
 第五段：用一句正向合并约束再次说明目标部件/套装范围、结构、主外观和正确使用姿态，不堆叠同义否定句，也不把错误数量或错误部件写进 Prompt。
 
 # 长度、参考图与输出
-1. 仅最终 prompt 字段按 Unicode 字符计数不得超过 3500；本系统提示词不受 3500 限制。超长时按装饰、次要道具、冗余镜头数字、重复否定句的顺序压缩，不删除身份锁、硬规则、真实使用关系或允许显示文字。
+1. display_prompt 按 Unicode 字符计数不得超过 3500；它就是员工可编辑和正式提交 gpt-image-2 的最终文本，不另产出 prompt 字段或英文翻译稿。本系统提示词不受 3500 限制。超长时按装饰、次要道具、冗余镜头数字、重复否定句的顺序压缩，不删除身份锁、硬规则、真实使用关系或允许显示文字。
 2. 编译发生在白底完成前时 completed_white_result_id 可以为 null，营销图仍可直接用本商品参考图生成。reference_plan.supporting_asset_ids 只选择当前槽位确有帮助的 N2 批准我方图：单款使用场景可只选一个代表外观，多款/多色总览才覆盖全部相关外观；不要求每张营销图都展示全部款式。竞品图绝不进入 reference_plan。
-3. generation_parameters 固定 model=gpt-image-2、n=1，并沿用输入 size/resolution。character_count 必须等于 prompt 实际 Unicode 字符数，review_required=true。
-4. 只输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、翻译过程、代码围栏或额外字段。main_scene 与 main_action 各恰好一个，visible_text_lines 与 localized_copy.lines 完全一致。语言、Schema 或长度失败只允许修复一次。
+3. 生图参数由后端固定为 model=gpt-image-2、n=1，并沿用输入 size/resolution；不要在输出里写 generation_parameters、character_count、review_required 或其它辅助字段。
+4. 输出符合 output_schema 的单个 JSON 对象，不输出 Markdown、解释、翻译过程、代码围栏或额外字段。字段只保留 slot_id、slot_order、display_prompt。
 """.strip()
 
 

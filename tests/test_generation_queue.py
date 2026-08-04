@@ -1635,6 +1635,55 @@ def test_worker_archives_result_and_marks_completed(tmp_path, settings):
     assert ResultAsset.objects.filter(generation=generation).count() == 1
 
 
+def test_generation_submission_uses_prompt_version_text_without_translation_wrapper(tmp_path, settings):
+    from platform_app.services import _generation_submission_snapshot
+
+    _, batch, cluster, generation = queue_approved_hero(tmp_path, settings)
+    prompt_text = generation.prompt_version.prompt_text
+
+    snapshot = _generation_submission_snapshot(generation, cluster, batch)
+
+    assert snapshot["request"]["prompt"] == prompt_text
+    assert "Source prompt:" not in snapshot["request"]["prompt"]
+    assert "interpret them as requirements and express the visual instruction naturally in English" not in snapshot["request"]["prompt"]
+
+
+def test_generation_submission_uses_latest_operator_edited_prompt_text(tmp_path, settings):
+    from platform_app.models import OutputTemplate
+    from platform_app.services import (
+        _generation_submission_snapshot,
+        ensure_cluster_generations,
+        update_cluster_content,
+    )
+
+    user, batch = make_batch_with_images(tmp_path, settings)
+    cluster = batch.clusters.get()
+    template = OutputTemplate.objects.get(platform="global", site="")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    slot = template.slots.get(order=1)
+    approve_prompt(cluster, user, slot)
+    cluster.refresh_from_db()
+    edited_prompt = "用户最后编辑的中文白底图提示词，直接交给 image2。"
+
+    update_cluster_content(
+        cluster,
+        user,
+        {
+            "expected_version": cluster.version,
+            "prompts": [{"slot_order": 1, "prompt": edited_prompt}],
+        },
+    )
+    generation = ensure_cluster_generations(cluster, user, slot_orders=[1])[0]
+    generation.status = "submitting"
+    generation.save(update_fields=["status", "updated_at"])
+
+    snapshot = _generation_submission_snapshot(generation, cluster, batch)
+
+    assert generation.prompt_version.prompt_text == edited_prompt
+    assert snapshot["request"]["prompt"] == edited_prompt
+
+
 def test_worker_enqueues_detail_slots_after_hero_completion(tmp_path, settings):
     from platform_app.models import (
         Generation,
@@ -2270,8 +2319,8 @@ def test_generation_cannot_be_reassigned_away_from_its_hero_before_submission(tm
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
     generation.refresh_from_db()
 
-    assert canonical_prompt in client.prompt
-    assert "Consumer-visible copy language" in client.prompt
+    assert client.prompt == canonical_prompt
+    assert "Consumer-visible copy language" not in client.prompt
     assert generation.output_slot_id == hero_slot.id
     assert generation.prompt_version_id == hero_prompt.id
 
@@ -2317,8 +2366,8 @@ def test_used_prompt_version_cannot_be_mutated_before_hero_submission(tmp_path, 
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
     generation.refresh_from_db()
 
-    assert canonical_prompt in client.prompt
-    assert "Consumer-visible copy language" in client.prompt
+    assert client.prompt == canonical_prompt
+    assert "Consumer-visible copy language" not in client.prompt
     assert generation.prompt_version_id == prompt_version.id
 
 
@@ -2480,8 +2529,8 @@ def test_worker_submits_detail_without_waiting_for_hero_polling(tmp_path, settin
     assert process_generation_once(client, LocalStorage(tmp_path)) == 1
     hero.refresh_from_db()
     assert hero.status == Generation.Status.SUBMITTED
-    assert hero.prompt_text in client.submitted_prompts[0]
-    assert "Consumer-visible copy language" in client.submitted_prompts[0]
+    assert client.submitted_prompts[0] == hero.prompt_text
+    assert "Consumer-visible copy language" not in client.submitted_prompts[0]
     detail = cluster.generations.get(output_slot=detail_slot)
     assert detail.status == Generation.Status.QUEUED
 

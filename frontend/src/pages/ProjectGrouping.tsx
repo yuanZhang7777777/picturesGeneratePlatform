@@ -41,6 +41,7 @@ export default function ProjectGrouping() {
   const queryClient = useQueryClient();
   const [deselectedIds, setDeselectedIds] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const expandedPointerStartedInside = useRef(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const project = projectQuery.data;
   const selectedClusters = useMemo(() => project?.skus.filter((sku) => !deselectedIds.has(sku.id)) ?? [], [project, deselectedIds]);
@@ -67,6 +68,10 @@ export default function ProjectGrouping() {
   };
   const markSelectedGenerating = () => {
     const ids = new Set(selectedClusters.map((sku) => sku.id));
+    const totalBySku = new Map(selectedClusters.map((sku) => [
+      sku.id,
+      (sku.prompts ?? []).filter((prompt) => !prompt.readOnly).length || sku.generationProgress?.total || 8,
+    ]));
     queryClient.setQueryData<Project>(["project", projectId], (current) => current ? {
       ...current,
       status: "queued",
@@ -74,7 +79,7 @@ export default function ProjectGrouping() {
         ...sku,
         preparationStatus: sku.preparationStatus === "ready" ? sku.preparationStatus : "preparing",
         preparation: sku.preparationStatus === "ready" ? sku.preparation : { status: "preparing", stage: "N1", current: 0, total: 7, error: "" },
-        generationProgress: { status: "queued", current: 0, completed: 0, active: 1, failed: 0, total: sku.generationProgress?.total ?? 9 },
+        generationProgress: { status: "queued", current: 0, completed: 0, active: 1, failed: 0, total: totalBySku.get(sku.id) ?? 8 },
       } : sku),
     } : current);
   };
@@ -174,15 +179,27 @@ export default function ProjectGrouping() {
 
   useEffect(() => {
     if (!expandedId) return;
+    const markPointerStart = (event: PointerEvent) => {
+      const target = event.target as HTMLElement;
+      expandedPointerStartedInside.current = Boolean(target.closest(`[data-expanded-product="${expandedId}"]`));
+    };
     const consumeOutsideClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
       if (target.closest(`[data-expanded-product="${expandedId}"]`)) return;
+      if (expandedPointerStartedInside.current) {
+        expandedPointerStartedInside.current = false;
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       setExpandedId(null);
     };
+    document.addEventListener("pointerdown", markPointerStart, true);
     document.addEventListener("click", consumeOutsideClick, true);
-    return () => document.removeEventListener("click", consumeOutsideClick, true);
+    return () => {
+      document.removeEventListener("pointerdown", markPointerStart, true);
+      document.removeEventListener("click", consumeOutsideClick, true);
+    };
   }, [expandedId]);
 
   if (projectQuery.isLoading) return <Shell><p className="text-sm text-slate-500">正在读取项目…</p></Shell>;

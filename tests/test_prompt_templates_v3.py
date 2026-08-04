@@ -95,7 +95,7 @@ def test_seeded_v3_prompts_are_full_production_instructions():
         )
         assert all(
             marker in compiler
-            for marker in ("exactly", "一对一连接拓扑", "真实使用关系", "visible_text_lines", "3500")
+            for marker in ("display_prompt", "一对一连接拓扑", "真实使用关系", "visible_text_lines", "3500")
         )
         assert all(
             marker in gate
@@ -161,12 +161,10 @@ def test_v3_output_schemas_are_strict_and_match_seed_source_and_runtime():
         "conflict_state",
     }
     assert set(PROMPT_TEMPLATES["N5.generic"]["output_schema"]["properties"]) == {"plans"}
-    assert set(PROMPT_TEMPLATES["N6.generic"]["output_schema"]["properties"]) >= {
+    assert set(PROMPT_TEMPLATES["N6.generic"]["output_schema"]["properties"]) == {
         "slot_id",
-        "localized_copy",
-        "prompt",
-        "character_count",
-        "reference_plan",
+        "slot_order",
+        "display_prompt",
     }
     assert set(PROMPT_TEMPLATES["N7.generic"]["output_schema"]["properties"]) >= {
         "decision",
@@ -255,9 +253,7 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
         },
         "N5.generic": {"plans"},
         "N6.generic": {
-            "slot_id", "main_scene", "main_action", "visual_theme", "text_layout_theme", "typography_plan", "display_prompt", "visible_text_lines", "localized_copy",
-            "prompt", "character_count", "reference_plan", "fact_trace", "inference_trace",
-            "rule_refs", "generation_parameters", "review_required",
+            "slot_id", "slot_order", "display_prompt",
         },
         "N7.generic": {
             "decision", "hard_blocks", "semantic_risks", "warnings", "copy_checks", "prompt_checks",
@@ -324,8 +320,6 @@ def test_v3_schemas_match_runtime_envelopes_and_marketing_reference_policy():
         "review_required",
     }
 
-    n6_reference = PROMPT_TEMPLATES["N6.generic"]["output_schema"]["properties"]["reference_plan"]
-    assert "maxItems" not in n6_reference["properties"]["supporting_asset_ids"]
     assert "没有白底图时直接使用当前槽位需要的商品参考图生成" in PROMPT_TEMPLATES["N6.generic"]["instruction"]
     assert "不要求每张营销图都展示全部款式" in PROMPT_TEMPLATES["N6.generic"]["instruction"]
 
@@ -344,27 +338,11 @@ def test_n5_n6_n7_publish_marketing_copy_contract():
         assert set(strategy["properties"]["mode"]["enum"]) == MARKETING_MODES
         assert set(strategy["required"]) == set(strategy["properties"])
 
-        localized = n6["output_schema"]["properties"]["localized_copy"]
-        assert set(localized["properties"]) >= {
-            "language",
-            "lines",
-            "back_translation",
-            "strategy_mode",
-            "quality",
-            "source_fact_refs",
-            "source_inference_refs",
-        }
-        quality = localized["properties"]["quality"]
-        assert quality["additionalProperties"] is False
-        assert set(quality["properties"]) >= {
-            "relevance",
-            "specificity",
-            "imagery",
-            "naturalness",
-            "truthfulness",
-            "mobile_readability",
-            "generic_phrase_hits",
-        }
+        assert set(n6["output_schema"]["properties"]) == {"slot_id", "slot_order", "display_prompt"}
+        assert "回译稿" in n6["instruction"]
+        assert "版式 JSON" in n6["instruction"]
+        assert "Show the product in its verified" not in n6["instruction"]
+        assert "Each visible component aligns" not in n6["instruction"]
 
         assert "copy_checks" in n7["output_schema"]["properties"]
 
@@ -399,8 +377,9 @@ def test_market_context_controls_language_not_fixed_country_scenes():
     assert "SG 与 PH 使用自然当地电商英语" in n6
     assert "MY 使用 Bahasa Malaysia" in n6
     assert "TW 使用台湾繁体中文" in n6
-    assert "localized_copy.lines 是冻结文本" in n6
-    assert "最终 prompt 的图片控制指令必须是英文" in n6
+    assert "visible_text_lines 是最终可见文字清单" in n6
+    assert "不再生成英文图片控制稿" in n6
+    assert "display_prompt 直接提交给 gpt-image-2" in n6
     assert "按 market_context 校验 SG/PH 英语" in n7
     assert "流畅、无歧义、符合当前场景" in n7
 
@@ -456,18 +435,17 @@ def test_marketing_copy_prompts_encode_conversion_strategy_and_copy_locking():
     assert all(
         marker in n6
         for marker in (
-            "三个候选",
             "目标语言直接创作",
-            "语义回译",
+            "display_prompt 直接提交给 gpt-image-2",
             "逐字冻结",
-            "英文图片控制",
+            "不再生成英文图片控制稿",
         )
     )
     assert all(
         marker in n7
         for marker in (
             "copy_checks",
-            "localized_copy.lines",
+            "可见文字",
             "逐字一致",
             "空泛",
             "自动重写",
@@ -512,7 +490,7 @@ def test_marketing_designer_contract_requires_concrete_theme_moment_and_typograp
         "text_layout_theme",
         "visible_unit_count",
         "copywriting_chain",
-        "typography_plan",
+        "typography_direction",
         "premium_whisper",
         "clean_benefit_stack",
         "transparent text overlay",

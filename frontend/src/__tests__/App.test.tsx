@@ -13,7 +13,6 @@ const slotNames = [
   "模特/比例图",
   "尺寸/包装/包含物图",
   "平台转化营销图",
-  "补充转化图",
 ];
 
 const backendOutputSlotNames = [
@@ -25,7 +24,6 @@ const backendOutputSlotNames = [
   "Model or scale",
   "Size, packaging, or contents",
   "Marketplace conversion",
-  "Supplemental conversion",
 ];
 
 const outputs = backendOutputSlotNames.flatMap((slot, index) => {
@@ -408,7 +406,7 @@ test("starts generation for selected products and shows product and image counts
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/generate/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/generate/"));
-  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ cluster_ids: ["sku-lamp"], slot_orders: [1, 2, 3, 4, 5, 6, 7, 8, 9] });
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ cluster_ids: ["sku-lamp"], slot_orders: [1, 2, 3, 4, 5, 6, 7, 8] });
 });
 
 test("allows the only product to be deselected", async () => {
@@ -472,7 +470,7 @@ test("renders fifty editable product cards without expanding the workbench", asy
   expect(document.querySelector(".product-card-grid")).toBeInTheDocument();
 });
 
-test("shows a nine-slot result grid for the project", async () => {
+test("shows an eight-slot result grid for the project", async () => {
   renderApp("/projects/project-demo/results");
 
   expect(await screen.findByRole("heading", { name: "生产与结果" })).toBeInTheDocument();
@@ -495,7 +493,7 @@ test("lets operators cancel one result from the ZIP selection", async () => {
   fireEvent.click(first);
 
   expect(first).not.toBeChecked();
-  expect(screen.getByRole("button", { name: "下载选中 ZIP（8 张）" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "下载选中 ZIP（7 张）" })).toBeInTheDocument();
 });
 
 test("posts only selected generation IDs when downloading the ZIP", async () => {
@@ -509,7 +507,7 @@ test("posts only selected generation IDs when downloading the ZIP", async () => 
   renderApp("/projects/project-demo/results");
 
   fireEvent.click(await screen.findByRole("checkbox", { name: "导出 标准白底产品图 v1" }));
-  fireEvent.click(screen.getByRole("button", { name: "下载选中 ZIP（8 张）" }));
+  fireEvent.click(screen.getByRole("button", { name: "下载选中 ZIP（7 张）" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/export/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/export/"));
@@ -528,13 +526,13 @@ test("exports completed results by default without approval and shows the genera
   renderApp("/projects/project-demo/results");
 
   expect(await screen.findByRole("checkbox", { name: "导出 标准白底产品图 v1" })).toBeChecked();
-  expect(screen.getByRole("button", { name: "下载选中 ZIP（9 张）" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "下载选中 ZIP（8 张）" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "通过此图，允许导出" })).not.toBeInTheDocument();
   expect(screen.queryByText("没有审核通过的图片，先在下方通过需要导出的图。")).not.toBeInTheDocument();
   expect(screen.getByText("生成提示词")).toBeInTheDocument();
   expect(screen.getByDisplayValue("Standard white-background product hero prompt")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "下载选中 ZIP（9 张）" }));
+  fireEvent.click(screen.getByRole("button", { name: "下载选中 ZIP（8 张）" }));
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/export/"))).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/export/"));

@@ -35,9 +35,5 @@ def apply_standard_product_hero_policy(slot, prompt, input_snapshot=None):
     snapshot = deepcopy(input_snapshot or {})
     if not is_standard_product_hero_slot(slot):
         return prompt, snapshot
-    prompt = prompt.strip()
-    missing_lines = [line for line in STANDARD_PRODUCT_HERO_PROMPT_LINES if line not in prompt]
-    if missing_lines:
-        prompt = "\n".join(part for part in (prompt, *missing_lines) if part)
     snapshot["standard_product_hero"] = True
-    return prompt, snapshot
+    return prompt.strip(), snapshot

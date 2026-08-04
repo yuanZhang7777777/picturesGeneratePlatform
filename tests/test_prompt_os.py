@@ -398,9 +398,108 @@ def test_n6_non_json_text_creates_deepseek_prompt_version_without_fallback(tmp_p
 
     assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
     prompt = PromptVersion.objects.get(cluster=cluster, output_slot__order=2)
-    assert raw_prompt in prompt.prompt_text
+    assert prompt.prompt_text == raw_prompt
+    assert "Only render these exact quoted visible text lines" not in prompt.prompt_text
+    assert "Product identity:" not in prompt.prompt_text
     assert prompt.structured_output["prompt_source"] == "deepseek"
     assert prompt.structured_output["node_output"]["raw_model_text"] == raw_prompt
+
+
+def test_prompt_worker_skips_paid_vision_when_product_name_is_manual(tmp_path, settings):
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Manual identity")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="8" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    cluster.product_name = "人工填写商品名"
+    cluster.product_facts = "人工填写颜色和规格"
+    cluster.save(update_fields=["product_name", "product_facts"])
+    template = OutputTemplate.objects.create(platform="global", site="", name="One white slot")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class CountingClient(FakeAPIMartClient):
+        def __init__(self):
+            self.vision_calls = 0
+
+        def observe_images(self, instruction, image_paths):
+            self.vision_calls += 1
+            return super().observe_images(instruction, image_paths)
+
+    client = CountingClient()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
+    assert client.vision_calls == 0
+    assert cluster.analysis_snapshot["product_name_source"] == "manual"
+    assert [
+        snapshot["model_id"]
+        for snapshot in cluster.analysis_snapshot["prompt_os"]
+        if snapshot["node_id"] == "N1"
+    ] == ["local-manual-product-identity"]
+
+
+def test_prompt_worker_calls_paid_vision_when_product_name_is_empty(tmp_path, settings):
+    from platform_app.models import Asset, Batch, Cluster, OutputTemplate
+    from platform_app.services import FakeAPIMartClient, LocalStorage, process_prompt_once, request_cluster_preparation
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Empty identity")
+    storage_path = f"originals/{batch.id}/source.png"
+    (tmp_path / storage_path).parent.mkdir(parents=True)
+    (tmp_path / storage_path).write_bytes(b"png-bytes")
+    asset = Asset.objects.create(
+        batch=batch,
+        kind=Asset.Kind.IMAGE,
+        original_filename="source.png",
+        storage_path=storage_path,
+        sha256="7" * 64,
+        file_size=9,
+        content_type="image/png",
+    )
+    cluster = Cluster.create_for_asset(batch, asset)
+    cluster.product_name = ""
+    cluster.product_facts = ""
+    cluster.save(update_fields=["product_name", "product_facts"])
+    template = OutputTemplate.objects.create(platform="global", site="", name="One white slot")
+    template.slots.create(order=1, name="标准白底产品图", purpose="standard white background product hero")
+    batch.output_template = template
+    batch.save(update_fields=["output_template"])
+    request_cluster_preparation(cluster, auto_generate=False)
+
+    class CountingClient(FakeAPIMartClient):
+        def __init__(self):
+            self.vision_calls = 0
+
+        def observe_images(self, instruction, image_paths):
+            self.vision_calls += 1
+            return super().observe_images(instruction, image_paths)
+
+    client = CountingClient()
+    assert process_prompt_once(client, LocalStorage(tmp_path)) == 1
+    cluster.refresh_from_db()
+
+    assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
+    assert client.vision_calls == 1
+    assert cluster.analysis_snapshot["product_name_source"] == "ai"
 
 
 def test_n6_model_call_failure_reports_specific_reason_without_fallback(tmp_path, settings):
@@ -487,7 +586,7 @@ def test_n6_empty_model_text_does_not_create_prompt_versions(tmp_path, settings)
     assert PromptVersion.objects.filter(cluster=cluster).count() == 0
 
 
-def test_n6_missing_chinese_display_prompt_triggers_one_model_rewrite(tmp_path, settings):
+def test_n6_missing_display_prompt_uses_prompt_text_without_rewrite(tmp_path, settings):
     import json
 
     from platform_app.models import Asset, Batch, Cluster, OutputTemplate, PromptVersion
@@ -497,7 +596,7 @@ def test_n6_missing_chinese_display_prompt_triggers_one_model_rewrite(tmp_path, 
     settings.PROMPT_OS_ALLOW_FALLBACK = False
     settings.PROMPT_OS_SLOT_CONCURRENCY = 1
     user = make_user()
-    batch = Batch.objects.create(owner=user, name="N6 display rewrite")
+    batch = Batch.objects.create(owner=user, name="N6 display direct")
     storage_path = f"originals/{batch.id}/source.png"
     (tmp_path / storage_path).parent.mkdir(parents=True)
     (tmp_path / storage_path).write_bytes(b"png-bytes")
@@ -538,9 +637,12 @@ def test_n6_missing_chinese_display_prompt_triggers_one_model_rewrite(tmp_path, 
     cluster.refresh_from_db()
 
     assert cluster.preparation_status == Cluster.PreparationStatus.READY, cluster.preparation_error
-    assert client.n6_calls == 2
+    assert client.n6_calls == 1
     prompt = PromptVersion.objects.get(cluster=cluster, output_slot__order=2)
-    assert "真实使用瞬间" in prompt.structured_output["node_output"]["display_prompt"]
+    assert "生成一张 1:1 商品营销图，槽位 2" in prompt.prompt_text
+    assert "自然光线" in prompt.prompt_text
+    assert not prompt.prompt_text.strip().startswith("{")
+    assert prompt.structured_output["node_output"]["display_prompt"] == prompt.prompt_text
 
 
 def test_n6_validation_exception_keeps_returned_deepseek_text(monkeypatch):
@@ -1406,8 +1508,8 @@ def test_first_output_slot_enforces_a_standard_white_background_product_hero():
 
     compiled = compile_slot_prompt(cluster, slot)
 
-    assert "Standard product hero: show the complete, accurate product on a pure white background." in compiled["prompt"]
-    assert "Hero restrictions: no promotional text, text overlay, watermark, border, price, discount, badge, or lifestyle scene." in compiled["prompt"]
+    assert "Standard product hero: show the complete, accurate product on a pure white background." not in compiled["prompt"]
+    assert "Hero restrictions: no promotional text, text overlay, watermark, border, price, discount, badge, or lifestyle scene." not in compiled["prompt"]
     assert compiled["input_snapshot"]["standard_product_hero"] is True
 
 

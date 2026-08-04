@@ -725,7 +725,7 @@ def test_changes_requested_preserves_original_and_creates_clean_revision_attempt
         }
     )
     assert revision.prompt_text.startswith(original_prompt)
-    assert "Hero restrictions: no promotional text" in revision.prompt_text
+    assert "Hero restrictions: no promotional text" not in revision.prompt_text
     assert revision.prompt_version.prompt_text == revision.prompt_text
     assert "TAMPERED mutable generation prompt" not in revision.prompt_text
     assert payload["description"] in revision.prompt_text
@@ -853,7 +853,7 @@ def test_review_validation_and_technical_retry_are_separate(client, tmp_path, se
     retry_generation = Generation.objects.get(id=retry.json()["id"])
     assert retry_generation.prompt_version_id == failed.prompt_version_id
     assert retry_generation.prompt_version.prompt_text == retry_generation.prompt_text
-    assert "Hero restrictions: no promotional text" in retry_generation.prompt_text
+    assert "Hero restrictions: no promotional text" not in retry_generation.prompt_text
     assert retry_generation.attempt == 2
     failed_batch.refresh_from_db()
     assert failed_batch.status == failed_batch.Status.QUEUED

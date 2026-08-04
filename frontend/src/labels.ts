@@ -82,7 +82,6 @@ const orderSlotLabels = [
   "模特/比例图",
   "尺寸/包装/包含物图",
   "平台转化营销图",
-  "补充转化图",
 ];
 
 export function slotLabel(value: string, order: number) {

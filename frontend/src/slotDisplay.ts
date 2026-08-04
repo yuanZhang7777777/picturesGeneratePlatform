@@ -27,7 +27,6 @@ const fallbackByOrder: Record<number, string> = {
   6: "模特/比例图",
   7: "尺寸/包装/包含物图",
   8: "平台转化营销图",
-  9: "补充转化图",
 };
 
 export function displaySlotName(output: Pick<OutputImage, "slot" | "slotOrder" | "name">) {

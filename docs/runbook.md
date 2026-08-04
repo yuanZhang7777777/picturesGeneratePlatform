@@ -25,7 +25,7 @@ Docker Compose 启动 PostgreSQL、Django Web、Generation Worker、Prompt Worke
 
 `MAX_ACTIVE_GENERATIONS` 表示同时提交给供应商并处于运行中的图片任务数；供应商 API 上限为 **500**，有效值必须在 `1..500`，预览默认 `32`。`GENERATION_USER_ACTIVE_SOFT_LIMIT` 默认 `5`：同一用户达到软限制后，其他有排队任务的用户优先；如果没有其他用户排队，该用户继续借用空闲容量。
 
-`PROMPT_WORKER_CONCURRENCY` 只控制预备生成阶段的商品并发，默认 `16`；当前成本优先运行态下，同一商品只做一次 N1 主图视觉识别，同卡其它图片不再逐张识别，只作为后续 `gpt-image-2` 参考图保留。N2 商品身份归并、N3 事实台账和 N4 白底 Prompt 都是本地规则生成，不调用 DeepSeek；N5 一次生成当前商品全部营销计划，N6 一次生成当前商品全部营销槽位图片 Prompt，再由后端按槽位拆回保存。N5/N6 发送给 DeepSeek 的请求只保留当前节点必要输入，不再附带完整输出 Schema、历史 `prompt_os`、`_preparation_history`、上游 `raw_model_text` 或旧 PromptVersion 快照；N6 请求会把商品身份、事实、语言和参考图等公共上下文放在 `common` 中只发送一次，每个 `slots[]` 只保留当前槽位差异，并把 N5 的单槽 `slot_plan` 压成 N6 需要的核心策划摘要，避免中间推演重复进入模型。后端负责把非 JSON 文本归一化成 PromptVersion。`GENERATION_WORKER_CONCURRENCY` 控制本地提交、轮询和归档线程，默认 `16`。它们与 `MAX_ACTIVE_GENERATIONS` 分开：前者调用主图视觉识别和 N5/N6 文本编译，后者控制 `gpt-image-2` 付费生图活跃任务。Prompt Worker 使用数据库行锁/原子认领分发商品，多个线程不会反复抢同一个 `pending` 商品；常驻模式下每个线程独立循环，单个 DeepSeek/N6 请求卡住时不应阻断其它线程继续领取商品或恢复 stale preparing。正式生成 API 必须传入明确商品 ID，空 `cluster_ids` 会被拒绝，避免旧入口或脚本一次性生成整个项目；按“当前最新提示词 + 槽位”幂等提交：已有 active 任务或已完成且仍匹配最新 PromptVersion 的结果时复用，不重复入队；员工编辑提示词产生新的 PromptVersion 后，再次正式生成才创建新 attempt；如果正式生成前发现 PromptVersion 或 N7 快照校验类错误，后端重新排入预备生成并设置自动续跑，不返回“已受理但实际无动作”的静默 blocked。`GENERATION_QUEUE_CANDIDATE_SCAN_LIMIT` 默认 `200`，限制 worker 单轮只扫描前 200 个排队任务，避免大队列拖慢数据库。
+`PROMPT_WORKER_CONCURRENCY` 只控制预备生成阶段的商品并发，默认 `16`；当前成本优先运行态下，商品名称为空才做一次 N1 主图视觉识别，员工已填写商品名称时跳过付费视觉识别，同卡其它图片不再逐张识别，只作为后续 `gpt-image-2` 参考图保留。N2 商品身份归并、N3 事实台账和 N4 白底 Prompt 都是本地规则生成，不调用 DeepSeek；N5 一次生成当前商品全部营销计划，N6 一次生成当前商品全部营销槽位图片 Prompt，再由后端按槽位拆回保存。N6 的 `display_prompt` 就是员工可见和正式 Image2 提交的最终中文导演稿；不再生成英文 Image2 控制稿、中文转英文、英文回译或 `text_layout_theme` JSON 展示。N5/N6 发送给 DeepSeek 的请求只保留当前节点必要输入，不再附带完整输出 Schema、历史 `prompt_os`、`_preparation_history`、上游 `raw_model_text` 或旧 PromptVersion 快照；N6 请求会把商品身份、事实、语言和参考图等公共上下文放在 `common` 中只发送一次，每个 `slots[]` 只保留当前槽位差异，并把 N5 的单槽 `slot_plan` 压成 N6 需要的核心策划摘要，避免中间推演重复进入模型。后端负责把非 JSON 文本归一化成 PromptVersion。`GENERATION_WORKER_CONCURRENCY` 控制本地提交、轮询和归档线程，默认 `16`。它们与 `MAX_ACTIVE_GENERATIONS` 分开：前者调用主图视觉识别和 N5/N6 文本编译，后者控制 `gpt-image-2` 付费生图活跃任务。Prompt Worker 使用数据库行锁/原子认领分发商品，多个线程不会反复抢同一个 `pending` 商品；常驻模式下每个线程独立循环，单个 DeepSeek/N6 请求卡住时不应阻断其它线程继续领取商品或恢复 stale preparing。正式生成 API 必须传入明确商品 ID，空 `cluster_ids` 会被拒绝，避免旧入口或脚本一次性生成整个项目；按“当前最新提示词 + 槽位”幂等提交：已有 active 任务或已完成且仍匹配最新 PromptVersion 的结果时复用，不重复入队；员工编辑提示词产生新的 PromptVersion 后，再次正式生成才创建新 attempt；如果正式生成前发现 PromptVersion 或 N7 快照校验类错误，后端重新排入预备生成并设置自动续跑，不返回“已受理但实际无动作”的静默 blocked。`GENERATION_QUEUE_CANDIDATE_SCAN_LIMIT` 默认 `200`，限制 worker 单轮只扫描前 200 个排队任务，避免大队列拖慢数据库。
 
 登录使用 ERP：`ERP_LOGIN_URL` 接收用户输入的用户名和密码，平台只把返回的 Token 保存在服务端 session 中，不保存 ERP 密码。所有 ERP 登录成功用户都可进入平台；`PLATFORM_ADMIN_ERP_USERS` 用逗号分隔管理员 ERP 登录名，默认仅配置刘学城的登录名。
 
@@ -46,7 +46,7 @@ python manage.py smoke_apimart_nodes
 
 ## 出站网络与连通性
 
-生产服务器统一通过 SSH 别名 `hermes-remote` 操作，仓库文档不记录服务器公网 IP。2026-07-30 迁移后已确认该服务器能够解析并访问 `api.apimart.ai`，并完成 APIMart 三节点真实 smoke、OSS 写读删 smoke 和真实 1+8 付费生图 smoke。
+生产服务器统一通过 SSH 别名 `hermes-remote` 操作，仓库文档不记录服务器公网 IP。2026-07-30 迁移后已确认该服务器能够解析并访问 `api.apimart.ai`，并完成 APIMart 三节点真实 smoke、OSS 写读删 smoke 和历史真实 1+8 付费生图 smoke；当前默认验收口径改为 8 张生成图。
 
 不要把“入站访问端口”和“出站目的端口”混在一起：安全组里开放 `18000/19000` 是允许员工浏览器访问本服务器的预览入口；APIMart 的 `443` 是本服务器主动访问外部 HTTPS API 时的目的端口。当前 APIMart 出站网络阻塞已解除。
 
@@ -118,19 +118,19 @@ curl -fsS http://127.0.0.1:18083/health/ready
 docker compose logs --tail=100 web generation-worker prompt-worker proxy
 ```
 
-`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认 Worker 只领取显式进入 `pending` 的商品，`draft` 商品绝不调用 AI，并保存 N1–N7 节点快照、推断台账和 9 槽 PromptVersion。Prompt OS 4.1 的 N5/N6 优先消费 DeepSeek 非空输出；JSON 不合法、缺字段或普通空泛文本不触发 deterministic fallback；模型调用失败或空响应在生产直接失败并保存中文业务原因，只有显式 `PROMPT_OS_ALLOW_FALLBACK=true` 的测试/demo/无模型开发环境才允许 fallback。
+`web` 的 Docker health check 调用 `/health/live`；`/health/ready` 当前只验证数据库。发布验收还必须确认 `generation-worker` 和 `prompt-worker` 均为持续运行状态、日志没有重复退出或未处理异常。`run_prompt_worker --once` 在空队列应输出 `processed=0`；真实队列验收还要确认 Worker 只领取显式进入 `pending` 的商品，`draft` 商品绝不调用 AI，并保存 N1–N7 节点快照、推断台账和默认 8 个生成槽 PromptVersion。Prompt OS 4.1 的 N5/N6 优先消费 DeepSeek 非空输出；JSON 不合法、缺字段或普通空泛文本不触发 deterministic fallback；模型调用失败或空响应在生产直接失败并保存中文业务原因，只有显式 `PROMPT_OS_ALLOW_FALLBACK=true` 的测试/demo/无模型开发环境才允许 fallback。
 
 不要在常驻 `generation-worker` 已运行且队列非空时再执行 `run_generation_worker --once`。现有 worker 已通过数据库状态 CAS 认领任务，但真实付费模式下额外 one-shot 调试会和常驻 worker 争抢队列、干扰人工判断。仅在隔离测试栈或停止常驻 worker 后使用该命令。
 
-前端工作台使用双速项目工作区和项目结果页。手工验收路径为：登录测试账号 → 创建项目并确认默认“Shopee/东南亚通用/1:1/1K” → 选择整理模式上传图片/文件夹或输入 ERP SKU → 确认只出现商品卡且没有 Prompt/视觉模型调用 → 在卡内排序缩略图，或把图片拖入另一商品卡共同生成一套图 → 填写名称、补充信息或单品风格 → 选中商品点击预备生成 → 在固定侧浮层查看 N1–N7 进度、多外观身份卡和 9 槽 Prompt → 正式生成 → 白底图完成后生成营销图 → 结果进入待审核 → 人工通过需要导出的版本 → 圈选修改单张或重做失败项 → 下载本地 ZIP。正式生成若发现 Prompt 缺失或过期，须先返回准备态并自动完成同一 N1–N7 后续接；整理导入本身仍不得调用 AI。Shopee VN 普通店还须验证槽位 1 为真实来源图直通、槽位 2 白底完成后才提交槽位 3–9。未审核通过的结果不得导出。
+前端工作台使用双速项目工作区和项目结果页。手工验收路径为：登录测试账号 → 创建项目并确认默认“Shopee/东南亚通用/1:1/1K” → 选择整理模式上传图片/文件夹或输入 ERP SKU → 确认只出现商品卡且没有 Prompt/视觉模型调用 → 在卡内排序缩略图，或把图片拖入另一商品卡共同生成一套图 → 填写商品名称和补充信息 → 选中商品点击预备生成 → 在固定侧浮层查看 N1–N7 进度和 8 个可编辑中文生成 Prompt → 正式生成 → 下载本地 ZIP。正式生成若发现 Prompt 缺失或过期，须先返回准备态并自动完成同一 N1–N7 后续接；整理导入本身仍不得调用 AI。Shopee VN 普通店还须验证槽位 1 为真实来源图直通、后续 8 个生成槽按模板提交。结果页按完成且有图默认勾选导出，人工审核只用于质量判断、圈选修改和版本管理。
 
 阶段 1 的整理接口保持同源 Session/CSRF 与项目对象权限：`DELETE /api/assets/<asset_id>/` 删除单张参考图，`DELETE /api/clusters/<cluster_id>/` 删除商品。没有生成历史时返回 `{"status":"deleted"}` 并异步清理私有素材；存在历史时返回 `{"status":"archived"}` 并保留 Prompt、结果和审核记录；Prompt 正在准备、活跃生成或 `submit_unknown` 返回 `409`。发布 smoke 必须确认归档商品不会再次进入 Prompt Worker、Generation Worker、审核或 ZIP。
 
 ## 管理员规则、模板与发布
 
-管理员通过中文“提示词中心”维护 PromptNodeTemplate 的完整系统提示词、用户消息模板、输出 Schema、版本和发布状态；Django `/admin/` 继续维护平台规则、输出模板和槽位。输出 Schema 用于后台归一化和测试约束，N5/N6 生产请求不再把完整 Schema 直接发给 DeepSeek，以避免上下文和成本膨胀。每次规则发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。`seed_platform_templates` 发布全局 9 图模板、Prompt OS v3 共用事实链和 generic/shopee/tiktok 营销链、Shopee/TikTok 官网主规则包，以及已有官方证据的站点覆盖；没有覆盖的国家复用对应平台官网主规则包并标记 fallback。草稿、未核对项或 fallback 不得被描述成该国家的完整自动合规。
+管理员通过中文“提示词中心”维护 PromptNodeTemplate 的完整系统提示词、用户消息模板、输出 Schema、版本和发布状态；Django `/admin/` 继续维护平台规则、输出模板和槽位。输出 Schema 用于后台归一化和测试约束，N5/N6 生产请求不再把完整 Schema 直接发给 DeepSeek，以避免上下文和成本膨胀。每次规则发布都必须记录平台/站点、官方来源 URL、核对日期、版本、图片用途/比例/分辨率、禁止内容和审核 checklist。`seed_platform_templates` 发布全局 8 生成图模板、Prompt OS v3 共用事实链和 generic/shopee/tiktok 营销链、Shopee/TikTok 官网主规则包，以及已有官方证据的站点覆盖；没有覆盖的国家复用对应平台官网主规则包并标记 fallback。草稿、未核对项或 fallback 不得被描述成该国家的完整自动合规。
 
-ERP 登录名在 `PLATFORM_ADMIN_ERP_USERS` 中的用户会成为平台管理员并可进入 Django admin；普通员工不应进入模型节点、队列/用量或模板规则配置页。非 global 的市场覆盖规则若要在 admin 发布，必须填写官方来源 URL、站点、核对日期和版本；未逐站核实的 Shopee/TikTok 国家继续使用对应平台官网主规则包和全局 1+8 模板，不宣称该国家完整自动合规。
+ERP 登录名在 `PLATFORM_ADMIN_ERP_USERS` 中的用户会成为平台管理员并可进入 Django admin；普通员工不应进入模型节点、队列/用量或模板规则配置页。非 global 的市场覆盖规则若要在 admin 发布，必须填写官方来源 URL、站点、核对日期和版本；未逐站核实的 Shopee/TikTok 国家继续使用对应平台官网主规则包和全局 8 生成图模板，不宣称该国家完整自动合规。
 
 竞品图可经批准的 `gpt-5-nano-2025-08-07` 视觉观察器提炼为抽象构图或风格策略；不得作为商品参考图、事实来源、生产 Prompt、导出内容或传给 `gpt-image-2`。Prompt OS 可使用确认事实、直接观察和显式披露的合理推断；审核页必须显示推断的置信度、风险、证据和用途，高风险声明仍由规则闸门阻断。
 
@@ -162,6 +162,6 @@ HTTP 的 IP:端口入口仅供测试账号和非敏感素材。正式入口不�
 - `docker compose --env-file .env.example config --quiet` 成功。
 - 镜像构建包含 React 静态产物，Caddy 同源入口能返回前端并代理 Django 健康检查。
 - Django 检查、迁移状态、Web/数据库健康、两个 worker 的容器状态和日志已记录。
-- 假模式端到端路径、对象权限回归、真实 APIMart 三节点 smoke、真实 OSS 写读删和真实 1+8 付费生图 smoke 已通过。
+- 假模式端到端路径、对象权限回归、真实 APIMart/DeepSeek 节点 smoke、真实 OSS 写读删和真实 8 图付费生图 smoke 已通过。
 - 结果导出以员工勾选的 completed 且有结果文件版本为准；审核状态不再阻断 ZIP，未完成或无文件版本不得进入 ZIP。
 - 真实 ERP 员工账号成功登录和 SKU 导入如未验收，发布记录必须明确标注，不能以网络可达替代业务证明。

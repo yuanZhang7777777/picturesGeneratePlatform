@@ -116,7 +116,7 @@ test("renders long mixed-language recognition facts as compact Chinese operator 
   expect(screen.queryByText("confirmed_points")).not.toBeInTheDocument();
 });
 
-test("shows localized copy and visual prompt without exposing strategy labels", () => {
+test("shows only the final editable visual prompt without localized-copy side panels", () => {
   render(<PromptEditor sku={{
     ...sku,
     prompts: [
@@ -130,15 +130,16 @@ test("shows localized copy and visual prompt without exposing strategy labels", 
         localizedCopy: {
           language: "vi",
           lines: ["Xay mịn mỗi sáng", "Mang đi là xay"],
-          backTranslation: "每天早上顺滑搅拌，带上就能榨",
         },
       },
     ],
   }} onSave={() => undefined} />);
 
-  expect(screen.getByText(/每天早上顺滑搅拌/)).toBeInTheDocument();
-  expect(screen.getAllByText(/Xay mịn mỗi sáng/).length).toBeGreaterThan(0);
   expect((screen.getByLabelText("02 核心卖点图提示词") as HTMLTextAreaElement).value).toContain("通勤前");
+  expect(screen.queryByText(/每天早上顺滑搅拌/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Xay mịn mỗi sáng/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/图片文案/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/回译/)).not.toBeInTheDocument();
   expect(screen.queryByText("场景代入")).not.toBeInTheDocument();
   expect(screen.queryByText(/购买任务：/)).not.toBeInTheDocument();
   expect(screen.queryByText("高级：最终生图指令")).not.toBeInTheDocument();
@@ -155,7 +156,7 @@ test("shows backend final Chinese image prompt without inventing a field summary
       text: "Create a polished ecommerce listing image. Scene: a detail fills most of the frame. Only render these exact visible text lines.",
       displayPrompt: finalPrompt,
       decisionTask: "让买家相信产品细节经得起近看",
-      localizedCopy: { language: "th", lines: ["พร้อมใช้ทุกวัน"], backTranslation: "每天都适合使用" },
+      localizedCopy: { language: "th", lines: ["พร้อมใช้ทุกวัน"] },
     }],
   }} onSave={() => undefined} />);
 
@@ -165,7 +166,7 @@ test("shows backend final Chinese image prompt without inventing a field summary
   expect(field.value).not.toContain("动作：");
   expect(field.value).not.toContain("构图：");
   expect(field.value).not.toContain("Create a polished ecommerce");
-  expect(screen.getAllByText(/พร้อมใช้ทุกวัน/).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/พร้อมใช้ทุกวัน/)).not.toBeInTheDocument();
 });
 
 test("shows the available model prompt when Chinese display prompt is missing", () => {

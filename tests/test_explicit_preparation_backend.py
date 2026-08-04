@@ -24,9 +24,9 @@ def make_global_configuration():
     from platform_app.models import OutputSlot, OutputTemplate, RuleProfile
 
     template = OutputTemplate.objects.create(
-        seed_key="global-marketplace-nine-slot-template",
+        seed_key="global-marketplace-eight-slot-template",
         platform="global",
-        name="Global 1+8",
+        name="Global 8",
         default_size="1:1",
         default_resolution="1k",
     )
@@ -246,7 +246,7 @@ def test_cluster_effective_config_owns_template_and_rules_in_both_directions():
     )
     generic_slots = list(generic_template.slots.order_by("order"))
     assert generic_template.id == global_template.id
-    assert len(generic_slots) == 9
+    assert len(generic_slots) == 8
     assert not any(is_source_product_photo_slot(slot) for slot in generic_slots)
     assert standard_product_hero_slot(generic_template).order == 1
     assert generic_rules.id == global_rules.id
@@ -303,7 +303,7 @@ def test_formal_gated_prompt_runs_platform_n7_and_preserves_all_blocks(monkeypat
     }
     cluster.save(update_fields=["analysis_snapshot"])
     slot = template.slots.get(order=1)
-    n4 = PromptNodeTemplate.objects.get(node_name="N4", version="3.1.0")
+    n4 = PromptNodeTemplate.objects.get(node_name="N4", version="4.1.0")
 
     class GateClient:
         def __init__(self, block=None):

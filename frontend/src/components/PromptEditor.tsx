@@ -32,7 +32,6 @@ function fallbackChinesePrompt(order: number) {
     "展示商品大小、使用对象或空间比例。",
     "说明尺寸、包装或包含物；没有包装资料时只展示商品本身。",
     "做一张适合平台列表转化的营销图。",
-    "补充最后一个购买理由，让买家愿意下单。",
   ][order - 1] ?? `第 ${order} 张图的中文画面策划。`;
 }
 
@@ -103,14 +102,6 @@ function recognitionText(value: string) {
     .replace(/tray material resembles pressed pulp\/cardboard/gi, "托盘材质像纸浆或纸板")
     .trim();
   return /[\u3400-\u9fff]/.test(translated) ? translated : "";
-}
-
-function promptMeta(prompt: ProductPrompt) {
-  const copyLines = prompt.localizedCopy?.lines?.filter(Boolean) ?? [];
-  return {
-    copyLines,
-    backTranslation: prompt.localizedCopy?.backTranslation ?? "",
-  };
 }
 
 export function PromptEditor({
@@ -285,7 +276,6 @@ export function PromptEditor({
             return (
             <label className="block text-sm font-medium text-slate-700" key={prompt.slotOrder}>
               <span className="mb-2 block">{label}</span>
-              <PromptMeta prompt={prompt} />
               <textarea
                 aria-label={label}
                 disabled={prompt.readOnly}
@@ -319,16 +309,5 @@ function FactEvidence({ fact }: { fact: PromptFact }) {
       {fact.evidence_refs.length > 0 && <p className="mt-0.5 text-slate-400">来源：{Array.from(new Set(fact.evidence_refs.map(evidenceLabel))).join("、")}</p>}
       {fact.review_note && !/结构化|异常|price|certification|medical/i.test(fact.review_note) && <p className="mt-0.5 text-amber-700">{fact.review_note}</p>}
     </article>
-  );
-}
-
-function PromptMeta({ prompt }: { prompt: ProductPrompt }) {
-  const meta = promptMeta(prompt);
-  if (!meta.backTranslation && meta.copyLines.length === 0) return null;
-  return (
-    <div className="mb-2 rounded-md bg-white px-3 py-2 text-xs text-slate-600">
-      {meta.copyLines.length > 0 && <p className="mt-1">图片文案：{meta.copyLines.join(" / ")}</p>}
-      {meta.backTranslation && <p className="mt-1 text-slate-500">回译：{meta.backTranslation}</p>}
-    </div>
   );
 }

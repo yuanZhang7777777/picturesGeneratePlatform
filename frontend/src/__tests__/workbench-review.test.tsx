@@ -32,12 +32,11 @@ test("combines dirty card fields into one explicit versioned save", async () => 
   fireEvent.change(screen.getByLabelText("商品名称 旧名称"), { target: { value: "新名称" } });
   fireEvent.change(screen.getByLabelText("商品平台 新名称"), { target: { value: "tiktok" } });
   fireEvent.change(screen.getByLabelText("商品国家 新名称"), { target: { value: "VN" } });
-  fireEvent.change(screen.getByLabelText("创意 Brief 新名称"), { target: { value: "展示使用方式" } });
-  fireEvent.change(screen.getByLabelText("单品风格 新名称"), { target: { value: "自然光" } });
-  fireEvent.blur(screen.getByLabelText("单品风格 新名称"));
+  fireEvent.change(screen.getByLabelText("补充信息 新名称"), { target: { value: "展示使用方式\n风格/要求：自然光" } });
+  fireEvent.blur(screen.getByLabelText("补充信息 新名称"));
 
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-  expect(onSave).toHaveBeenCalledWith({ name: "新名称", product_facts: "展示使用方式", prompt_override: "自然光", platform_override: "tiktok", market_override: "VN" }, 1);
+  expect(onSave).toHaveBeenCalledWith({ name: "新名称", product_facts: "展示使用方式\n风格/要求：自然光", platform_override: "tiktok", market_override: "VN" }, 1);
 });
 
 test("preserves a dirty card draft and retries with the refreshed version after a 409", async () => {
@@ -80,10 +79,9 @@ test("accepts multiple dropped images when the browser has no folder entries", a
 
 test("shows exact blocked progress and no raw implementation configuration", () => {
   render(<ProductCard {...props} sku={sku} onSave={vi.fn()} />);
-  expect(screen.getByText("预备受阻 · 请确认商品身份")).toBeInTheDocument();
-  expect(screen.getByLabelText("商品平台 旧名称")).toHaveDisplayValue("Shopee 虾皮");
-  expect(screen.getByLabelText("商品国家 旧名称")).toHaveDisplayValue("新加坡");
-  expect(screen.queryByText("跟随项目")).not.toBeInTheDocument();
+  expect(screen.getByText("需要补充信息 · 请确认商品身份")).toBeInTheDocument();
+  expect(screen.getByLabelText("商品平台 旧名称")).toHaveDisplayValue("跟随项目");
+  expect(screen.getByLabelText("商品国家 旧名称")).toHaveDisplayValue("跟随项目");
 });
 
 test("keeps the large product card editable without forcing a square", () => {
@@ -91,7 +89,7 @@ test("keeps the large product card editable without forcing a square", () => {
   expect(view.container.querySelector(".product-card")).not.toHaveClass("aspect-square");
   expect(screen.getByRole("img", { name: "旧名称 商品参考图" })).toHaveClass("object-contain");
   expect(screen.getByLabelText("商品平台 旧名称")).toBeInTheDocument();
-  expect(screen.getByLabelText("创意 Brief 旧名称")).toBeInTheDocument();
+  expect(screen.getByLabelText("补充信息 旧名称")).toBeInTheDocument();
 });
 
 test("shows multiple references for drag sorting without a relation selector", () => {
@@ -148,6 +146,13 @@ test("only the thumbnail strip starts asset drag interactions", () => {
 
 test("renders product details in a fixed side panel", () => {
   render(<ProductCard {...props} sku={sku} expanded onSave={vi.fn()} />);
-  expect(screen.getByRole("dialog", { name: "旧名称 商品详情" })).toHaveClass("fixed");
-  expect(screen.getByLabelText("商品身份")).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "旧名称 商品详情" })).toHaveClass("fixed", "overscroll-contain");
+  expect(screen.queryByLabelText("商品身份")).not.toBeInTheDocument();
+});
+
+test("uses taller product platform and country selectors", () => {
+  render(<ProductCard {...props} sku={sku} onSave={vi.fn()} />);
+
+  expect(screen.getByLabelText("商品平台 旧名称")).toHaveClass("h-12", "min-h-12");
+  expect(screen.getByLabelText("商品国家 旧名称")).toHaveClass("h-12", "min-h-12");
 });

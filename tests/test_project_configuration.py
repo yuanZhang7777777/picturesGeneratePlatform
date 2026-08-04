@@ -20,14 +20,14 @@ def make_published_configuration():
     from platform_app.models import OutputSlot, OutputTemplate, RuleProfile
 
     global_template = OutputTemplate.objects.create(
-        seed_key="global-marketplace-nine-slot-template",
+        seed_key="global-marketplace-eight-slot-template",
         platform="global",
         site="",
         name="Global template",
         default_size="1:1",
         default_resolution="1k",
     )
-    for order in range(1, 10):
+    for order in range(1, 9):
         OutputSlot.objects.create(template=global_template, name=f"Global {order}", order=order)
     global_rules = RuleProfile.objects.create(
         seed_key="global-marketplace-prompt-os-v2-rule",

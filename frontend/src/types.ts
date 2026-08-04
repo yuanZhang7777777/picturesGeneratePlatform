@@ -46,8 +46,6 @@ export interface ProductPrompt {
   localizedCopy?: {
     language?: string;
     lines?: string[];
-    backTranslation?: string;
-    strategyMode?: string;
   };
 }
 

@@ -165,7 +165,7 @@ function progressMeta(sku: ProductSku) {
 
 function expectedGenerationTotal(sku: ProductSku) {
   const promptCount = (sku.prompts ?? []).filter((prompt) => !prompt.readOnly).length;
-  return promptCount || sku.outputs.length || 9;
+  return promptCount || sku.outputs.length || 8;
 }
 
 export function ProductCard({ sku, assets, selected, expanded = false, onOpen = () => undefined, onClose = () => undefined, onSelect, onSave, onReload, onDeleteAsset, onDelete, onPause, disabled }: {
@@ -270,7 +270,7 @@ export function ProductCard({ sku, assets, selected, expanded = false, onOpen = 
         </div>
       </div>
     </article>
-    {expanded && <section className="surface product-card-expanded-detail fixed inset-y-4 right-4 z-40 w-[min(720px,calc(100vw-2rem))] overflow-y-auto p-5 shadow-2xl" role="dialog" aria-modal="false" aria-label={`${label} 商品详情`}>
+    {expanded && <section className="surface product-card-expanded-detail fixed inset-y-4 right-4 z-40 w-[min(720px,calc(100vw-2rem))] overflow-y-auto overscroll-contain p-5 shadow-2xl" role="dialog" aria-modal="false" aria-label={`${label} 商品详情`}>
       <div className="flex items-center justify-between gap-3"><div><p className="section-label">商品信息与生成提示词</p><h2 className="mt-1 text-xl font-semibold">{label}</h2></div><button className="secondary-button" type="button" onClick={onClose}>收起</button></div>
       <ProductInfoEditor label={label} draft={draft} setDraft={setDraft} onBlur={submit} saving={saving || !!disabled} />
       <PromptEditor sku={sku} onSave={savePrompt} disabled={saving || disabled} />
@@ -294,8 +294,8 @@ function ProductConfigEditor({
 }) {
   const allMarkets = [...commonMarkets, ...extraMarkets];
   return <div className="grid grid-cols-2 gap-2">
-    <label className="text-xs font-medium text-slate-500">平台<select aria-label={`商品平台 ${label}`} className="mt-1 h-9" value={draft.platformOverride} disabled={saving} onChange={(event) => setDraft({ ...draft, platformOverride: event.target.value })} onBlur={() => void onBlur()}><option value="">跟随项目</option>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select></label>
-    <label className="text-xs font-medium text-slate-500">国家<select aria-label={`商品国家 ${label}`} className="mt-1 h-9" value={draft.marketOverride} disabled={saving} onChange={(event) => setDraft({ ...draft, marketOverride: event.target.value })} onBlur={() => void onBlur()}><option value="">跟随项目</option>{allMarkets.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select></label>
+    <label className="text-xs font-medium text-slate-500">平台<select aria-label={`商品平台 ${label}`} className="mt-1 h-12 min-h-12 leading-6" value={draft.platformOverride} disabled={saving} onChange={(event) => setDraft({ ...draft, platformOverride: event.target.value })} onBlur={() => void onBlur()}><option value="">跟随项目</option>{platforms.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select></label>
+    <label className="text-xs font-medium text-slate-500">国家<select aria-label={`商品国家 ${label}`} className="mt-1 h-12 min-h-12 leading-6" value={draft.marketOverride} disabled={saving} onChange={(event) => setDraft({ ...draft, marketOverride: event.target.value })} onBlur={() => void onBlur()}><option value="">跟随项目</option>{allMarkets.map(([code, text]) => <option key={code} value={code}>{text}</option>)}</select></label>
   </div>;
 }
 

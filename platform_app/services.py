@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlparse
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import DatabaseError, connection, transaction
-from django.db.models import F, Max, Prefetch, Q
+from django.db.models import Count, F, Max, Prefetch, Q
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image, UnidentifiedImageError
@@ -612,19 +612,8 @@ class FakeAPIMartClient:
                     "localized_copy": {
                         "language": slot_input.get("market_context", {}).get("language", "en"),
                         "lines": slot_input.get("slot_plan", {}).get("visible_text_lines", []),
-                        "back_translation": "",
-                        "strategy_mode": slot_input.get("slot_plan", {}).get("creative_strategy", {}).get("mode", "fab_value"),
                         "source_fact_refs": [],
                         "source_inference_refs": [],
-                        "quality": {
-                            "relevance": 90,
-                            "specificity": 90,
-                            "imagery": 90,
-                            "naturalness": 90,
-                            "truthfulness": 100,
-                            "mobile_readability": 90,
-                            "generic_phrase_hits": [],
-                        },
                     },
                     "prompt": prompt,
                     "character_count": len(prompt),
@@ -2051,6 +2040,24 @@ def rollback_prompt_node_template(node_name, version):
 
 def _global_fallback_template():
     for seed_key in (
+        "global-marketplace-eight-slot-template",
+        "global-marketplace-baseline-template",
+    ):
+        template = (
+            OutputTemplate.objects.annotate(slot_count=Count("slots"))
+            .filter(
+                platform="global",
+                site="",
+                status=OutputTemplate.Status.PUBLISHED,
+                seed_key=seed_key,
+                slot_count=8,
+            )
+            .exclude(slots__order=9)
+            .first()
+        )
+        if template is not None:
+            return template
+    for seed_key in (
         "global-marketplace-nine-slot-template",
         "global-marketplace-baseline-template",
     ):
@@ -2288,16 +2295,7 @@ def _copy_lock_checks(prompt, visible_text_lines, localized_copy, fact_ids):
         "fact_refs_valid": all(ref in known_fact_ids for ref in source_fact_refs),
         "generic_phrase_hits": generic_hits,
     }
-    warnings = []
-    if localized_copy and (
-        not copy_checks["lines_match_visible_text"]
-        or not copy_checks["each_line_present_once"]
-    ):
-        warnings.append("copy.literal_lock")
-    if localized_copy and not copy_checks["fact_refs_valid"]:
-        warnings.append("copy.unknown_fact_ref")
-    rewrite_reasons = ["copy.generic_or_repeated"] if generic_hits else []
-    return copy_checks, warnings, rewrite_reasons
+    return copy_checks, [], []
 
 
 def evaluate_prompt_rule_gate(
@@ -2775,31 +2773,7 @@ def _localized_copy_lines(prompt_version):
 
 
 def _image_model_submission_prompt(generation, batch, cluster):
-    _, _, effective_config = _effective_cluster_resources(batch, cluster)
-    language = _market_language(effective_config["market"])
-    localized_lines = _visible_text_for_language(
-        _localized_copy_lines(generation.prompt_version),
-        language,
-    )
-    prompt = generation.prompt_text.strip()
-    copy_policy = (
-        "Render only these quoted consumer-visible copy lines exactly once; do not translate, rewrite, add, omit, or render any other text: "
-        f"{json.dumps(localized_lines, ensure_ascii=False)}"
-        if localized_lines
-        else "Do not add new visible words, labels, product names, captions, badges, or random characters."
-    )
-    return "\n".join(
-        [
-            "Create the final ecommerce product image from the supplied product references.",
-            "Use the source prompt below as creative direction. If it contains Chinese operator notes, interpret them as requirements and express the visual instruction naturally in English before rendering.",
-            "Product names and internal notes are metadata; do not render them as visible text unless they are listed in the quoted copy policy.",
-            f"Consumer-visible copy language: {_language_display_name(language)}.",
-            "Before rendering, internally check that any quoted consumer copy is fluent, unambiguous, and suitable for the selected market and scene.",
-            copy_policy,
-            "Source prompt:",
-            prompt,
-        ]
-    )
+    return generation.prompt_text.strip()
 
 
 def _sanitize_image_prompt_language(prompt, language):
@@ -2900,27 +2874,32 @@ def compile_slot_prompt(
         f"Size: {size}",
         f"Resolution: {resolution}",
     ]
+    direct_directive = bool(slot_directive and preserve_directive_language)
     if slot_directive:
-        prompt_lines = [
-            str(slot_directive).strip(),
-            f"Product identity: {product_name}. Product facts: {product_facts}. Identity lock: {identity_lock}.",
-            "Use the supplied product reference images to understand product identity, usable components, included parts, variants, proportions, and material cues.",
-            "Create a new ecommerce composition with a fresh camera angle, background, lighting, scene, and product arrangement.",
-            "For lifestyle/use scenes, make the functional product component(s) needed for the action the hero.",
-            "If the product is a functional set with multiple co-primary usable pieces, show the natural co-use subset for the action instead of isolating only the easiest piece.",
-            "Storage cases, trays, boxes, holders, packaging, and extra kit pieces are secondary context only when they help the buyer understand the scene.",
-            "For white-background, overview, or contents slots, show the complete set clearly. For detail slots, show the component or touchpoint that proves the current buying point.",
-            "Keep visible copy, branding, and claims limited to confirmed product evidence and the locked localized text.",
-        ]
-    if visible_text_lines:
-        prompt_lines.append(
-            "Only render these exact quoted visible text lines; do not translate, rewrite, add, omit, or render any other text: "
-            f"{json.dumps(visible_text_lines, ensure_ascii=False)}"
-        )
-    else:
-        prompt_lines.append(
-            "Do not render any new text, title, product name, label, caption, watermark, or random characters; preserve only text physically present on the product if unavoidable."
-        )
+        if direct_directive:
+            prompt_lines = [str(slot_directive).strip()]
+        else:
+            prompt_lines = [
+                str(slot_directive).strip(),
+                f"Product identity: {product_name}. Product facts: {product_facts}. Identity lock: {identity_lock}.",
+                "Use the supplied product reference images to understand product identity, usable components, included parts, variants, proportions, and material cues.",
+                "Create a new ecommerce composition with a fresh camera angle, background, lighting, scene, and product arrangement.",
+                "For lifestyle/use scenes, make the functional product component(s) needed for the action the hero.",
+                "If the product is a functional set with multiple co-primary usable pieces, show the natural co-use subset for the action instead of isolating only the easiest piece.",
+                "Storage cases, trays, boxes, holders, packaging, and extra kit pieces are secondary context only when they help the buyer understand the scene.",
+                "For white-background, overview, or contents slots, show the complete set clearly. For detail slots, show the component or touchpoint that proves the current buying point.",
+                "Keep visible copy, branding, and claims limited to confirmed product evidence and the locked localized text.",
+            ]
+    if not direct_directive:
+        if visible_text_lines:
+            prompt_lines.append(
+                "Only render these exact quoted visible text lines; do not translate, rewrite, add, omit, or render any other text: "
+                f"{json.dumps(visible_text_lines, ensure_ascii=False)}"
+            )
+        else:
+            prompt_lines.append(
+                "Do not render any new text, title, product name, label, caption, watermark, or random characters; preserve only text physically present on the product if unavoidable."
+            )
     input_snapshot = {
         "market": market,
         "product_name": cluster.product_name,
@@ -2943,7 +2922,7 @@ def compile_slot_prompt(
     prompt, input_snapshot = apply_standard_product_hero_policy(slot, "\n".join(prompt_lines), input_snapshot)
     if not slot_directive or not preserve_directive_language:
         prompt = _sanitize_image_prompt_language(prompt, language)
-    prompt = _limit_generation_prompt(prompt, visible_text_lines)
+    prompt = prompt[:3500].rstrip() if direct_directive else _limit_generation_prompt(prompt, visible_text_lines)
     gate = evaluate_prompt_rule_gate(
         batch,
         slot,
@@ -3827,12 +3806,17 @@ def _validate_known_refs(refs, known, label):
 def _normalize_generation_parameters(payload):
     parameters = payload.get("generation_parameters")
     if not isinstance(parameters, dict):
-        raise ValueError("generation_parameters must be an object")
+        parameters = {}
+    parameters = copy.deepcopy(parameters)
+    parameters.setdefault("model", "gpt-image-2")
+    parameters.setdefault("n", 1)
+    parameters.setdefault("size", "1:1")
+    parameters.setdefault("resolution", "1k")
     if parameters.get("model") != "gpt-image-2" or parameters.get("n") != 1:
         raise ValueError("generation_parameters must use gpt-image-2 with n=1")
     if not isinstance(parameters.get("size"), str) or not isinstance(parameters.get("resolution"), str):
         raise ValueError("generation_parameters size and resolution are required")
-    return copy.deepcopy(parameters)
+    return parameters
 
 
 def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs, *, hero):
@@ -3845,31 +3829,40 @@ def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs,
         raise ValueError("slot_id must identify the requested slot") from None
     if normalized_slot != int(slot_order):
         raise ValueError("slot_id must identify the requested slot")
-    prompt = _required_string(payload, "prompt")
-    if len(prompt) > 3500:
-        raise ValueError("prompt must not exceed 3500 characters")
-    main_scene = _required_string(payload, "main_scene")
-    main_action = _required_string(payload, "main_action")
-    display_prompt = str(payload.get("display_prompt") or "").strip()
+    display_prompt = str(payload.get("display_prompt") or payload.get("prompt") or "").strip()
     if not display_prompt:
         if hero:
             display_prompt = "生成一张 1:1 标准白底商品图。商品完整居中呈现，结构、颜色、材质和数量清楚，使用均匀棚拍柔光和干净白色背景。"
         else:
             display_prompt = "生成一张 1:1 Shopee 商品营销图。用一个具体可见的购买瞬间呈现商品作用，写清镜头、光线、材质、色彩层次和目标语言文字版式。"
-    visible_text_lines = _required_string_list(payload, "visible_text_lines")
+    prompt = str(payload.get("prompt") or display_prompt).strip()
+    if not prompt:
+        prompt = display_prompt
+    if len(prompt) > 3500:
+        raise ValueError("prompt must not exceed 3500 characters")
+    main_scene = str(payload.get("main_scene") or "商品营销画面").strip()
+    main_action = str(payload.get("main_action") or ("none" if hero else "按当前导演稿呈现商品")).strip()
+    visible_text_lines = _string_list(payload.get("visible_text_lines"))
     if len(visible_text_lines) > 3 or (hero and visible_text_lines):
         raise ValueError("visible_text_lines violate the slot limit")
     if hero and main_action != "none":
         raise ValueError("standard white-background prompt main_action must be none")
     reference_plan = payload.get("reference_plan")
     if not isinstance(reference_plan, dict):
-        raise ValueError("reference_plan must be an object")
+        reference_plan = {
+            "primary_asset_id": identity.get("primary_asset_id"),
+            "supporting_asset_ids": list(identity.get("supporting_asset_ids", [])) if hero else [],
+        }
     primary_asset_id = reference_plan.get("primary_asset_id")
+    if primary_asset_id in (None, ""):
+        primary_asset_id = identity.get("primary_asset_id")
+        reference_plan["primary_asset_id"] = primary_asset_id
     if str(primary_asset_id) != str(identity.get("primary_asset_id")):
         raise ValueError("reference_plan primary_asset_id must match N2")
     supporting = reference_plan.get("supporting_asset_ids")
     if not isinstance(supporting, list):
-        raise ValueError("reference_plan supporting_asset_ids must be an array")
+        supporting = list(identity.get("supporting_asset_ids", [])) if hero else []
+        reference_plan["supporting_asset_ids"] = supporting
     supporting = [str(item) for item in supporting]
     appearance_asset_ids = {
         str(asset_id)
@@ -3891,13 +3884,14 @@ def _normalize_compiled_prompt(payload, slot_order, identity, ledger, rule_refs,
     inferred_ids = {
         item["fact_id"] for item in ledger["facts"] if item["fact_class"] == "inferred"
     }
-    fact_trace = _required_string_list(payload, "fact_trace")
-    inference_trace = _required_string_list(payload, "inference_trace")
-    resolved_rule_refs = _required_string_list(payload, "rule_refs")
+    fact_trace = _string_list(payload.get("fact_trace"))
+    inference_trace = _string_list(payload.get("inference_trace"))
+    resolved_rule_refs = _string_list(payload.get("rule_refs")) or sorted(str(item) for item in rule_refs)
     _validate_known_refs(fact_trace, fact_ids, "fact_refs")
     _validate_known_refs(inference_trace, inferred_ids, "inference_refs")
     _validate_known_refs(resolved_rule_refs, set(rule_refs), "rule_refs")
-    if payload.get("review_required") is not True:
+    review_required = payload.get("review_required", True)
+    if review_required is not True:
         raise ValueError("review_required must be true")
     normalized = copy.deepcopy(payload)
     normalized.update(
@@ -4298,62 +4292,19 @@ def _normalize_n6_prompt(payload, slot_order, identity, ledger, rule_refs):
     normalized["visual_theme"] = _required_string(payload, "visual_theme")
     normalized["text_layout_theme"] = _required_string(payload, "text_layout_theme")
     normalized["typography_plan"] = _required_string(payload, "typography_plan")
-    localized_copy = payload.get("localized_copy")
-    if not isinstance(localized_copy, dict):
-        raise ValueError("localized_copy must be an object")
+    localized_copy = payload.get("localized_copy") if isinstance(payload.get("localized_copy"), dict) else {}
     localized_copy = copy.deepcopy(localized_copy)
-    localized_copy["language"] = _required_string(localized_copy, "language")
-    raw_localized_lines = _required_string_list(localized_copy, "lines")
-    raw_visible_lines = list(normalized["visible_text_lines"])
-    localized_copy["lines"] = raw_localized_lines
-    localized_copy["source_fact_refs"] = _required_string_list(
-        localized_copy,
-        "source_fact_refs",
-    )
-    localized_copy["source_inference_refs"] = _required_string_list(
-        localized_copy,
-        "source_inference_refs",
-    )
-    fact_ids = {item["fact_id"] for item in ledger["facts"]}
-    inference_ids = {
-        item["fact_id"] for item in ledger["facts"] if item["fact_class"] == "inferred"
-    }
-    _validate_known_refs(localized_copy["source_fact_refs"], fact_ids, "fact_refs")
-    _validate_known_refs(
-        localized_copy["source_inference_refs"],
-        inference_ids,
-        "inference_refs",
-    )
-    localized_copy["lines"] = _visible_text_for_language(
-        localized_copy["lines"],
-        localized_copy["language"],
-    )
-    normalized["visible_text_lines"] = _visible_text_for_language(
-        normalized["visible_text_lines"],
-        localized_copy["language"],
-    )
-    if (raw_localized_lines or raw_visible_lines) and not normalized["visible_text_lines"]:
-        plan = {
-            "creative_strategy": payload.get("creative_strategy") or {},
-            "text_mode": payload.get("text_mode"),
-        }
-        fallback_lines = _fallback_marketing_copy_lines(
-            plan,
-            "",
-            localized_copy["language"],
-        )
-        localized_copy["lines"] = fallback_lines
-        normalized["visible_text_lines"] = fallback_lines
-        for line in set(raw_localized_lines + raw_visible_lines):
-            normalized["prompt"] = normalized["prompt"].replace(line, "")
-    if localized_copy["lines"] != normalized["visible_text_lines"]:
-        raise ValueError("localized_copy lines must match visible_text_lines")
-    normalized["prompt"] = _append_visible_copy_lock(
-        normalized["prompt"],
-        normalized["visible_text_lines"],
-    )
+    market_context = payload.get("market_context") if isinstance(payload.get("market_context"), dict) else {}
+    localized_copy["language"] = str(localized_copy.get("language") or market_context.get("language") or "en").strip() or "en"
+    localized_copy["lines"] = _string_list(localized_copy.get("lines"))
+    normalized["prompt"] = normalized["display_prompt"][:3500].rstrip()
     normalized["character_count"] = len(normalized["prompt"])
-    normalized["localized_copy"] = localized_copy
+    normalized["localized_copy"] = {
+        "language": localized_copy["language"],
+        "lines": list(normalized["visible_text_lines"] or localized_copy["lines"]),
+        "source_fact_refs": _string_list(localized_copy.get("source_fact_refs")),
+        "source_inference_refs": _string_list(localized_copy.get("source_inference_refs")),
+    }
     return normalized
 
 
@@ -4380,10 +4331,9 @@ def _normalize_n7_semantic(payload):
 def _fallback_n4_prompt(hero_input, identity, ledger, rule_refs):
     fact_trace = [item["fact_id"] for item in ledger["facts"][:2]]
     prompt = (
-        "Create a clean ecommerce white-background product image. "
-        "Use the uploaded product references as the source of truth. "
-        "Keep the visible product identity, quantities, colors, proportions, and included items unchanged. "
-        "No added text, watermark, logo, price, badge, or extra accessory."
+        "生成一张 1:1 标准白底商品图。只根据上传参考图呈现商品，商品完整居中，"
+        "颜色、结构、比例、材质、包含物和数量保持真实清楚；背景为纯白或接近纯白，"
+        "均匀棚拍柔光，不添加营销文字、徽章、价格、水印或额外配件。"
     )
     return _normalize_n4_prompt(
         {
@@ -4729,20 +4679,6 @@ def _fallback_display_prompt(plan, visible_text_lines):
     )
 
 
-def _append_visible_copy_lock(prompt, visible_text_lines):
-    tail = (
-        " Final visible copy lock: render only these exact localized copy lines once: "
-        f"{json.dumps(visible_text_lines, ensure_ascii=False)}. "
-        "Visible text is limited to that exact copy set."
-        if visible_text_lines
-        else " Final visible copy lock: keep the image free of visible marketing text, titles, captions, labels, watermarks, and random text."
-    )
-    prompt = str(prompt or "").strip()
-    if len(prompt) + len(tail) + 1 > 3500:
-        prompt = prompt[: max(0, 3499 - len(tail))].rstrip()
-    return f"{prompt} {tail}".strip()
-
-
 def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
     _require_prompt_os_fallback()
     plan = slot_input["slot_plan"]
@@ -4774,31 +4710,7 @@ def _fallback_n6_prompt(slot_input, identity, ledger, rule_refs):
     style_plan = _normalize_style_plan(plan)
     props = ", ".join(style_plan["props"]) if style_plan["props"] else "only restrained props that support the buying moment"
     display_prompt = _fallback_display_prompt(plan, visible_text_lines)
-    prompt_parts = [
-        f"Create a polished 1:1 Shopee ecommerce marketing image for {product_label}.",
-        f"Visual theme: {visual_theme}.",
-        f"Specific moment: {specific_moment}.",
-        f"Typography plan: {typography_plan}.",
-        f"Director brief in Chinese for composition, moment, lighting, material, scene, product count, and typography: {display_prompt}",
-        "Use the references only for product identity, visible structure, color, proportion, and material cues.",
-        f"Product scope: {subject_plan['product_scope']}. Visible unit count: {subject_plan['visible_unit_count']}. Usage/contact relationship: {subject_plan['usage_relationship']}.",
-        f"person/hand/pet/scale context: {subject_plan['person_presence']}.",
-        f"Scene and action: {plan['main_scene']}; {plan['main_action']}; exact moment: {specific_moment}.",
-        f"Camera and composition: {composition_plan['canvas']}; {composition_plan['camera']}; {composition_plan['shot_scale']}; subject share {composition_plan['subject_share']}; text area {composition_plan['text_area']}; composition detail {plan['composition']}.",
-        f"Lighting, material, palette, props: lighting {style_plan['lighting']}; material focus {style_plan['material_focus']}; palette {style_plan['palette']}; props {props}.",
-        f"Aesthetic direction: {aesthetic}. Keep creative freedom in background styling, small props, light, posture, and spatial rhythm while preserving the uploaded product identity.",
-    ]
-    if style:
-        prompt_parts.insert(4, f"Creative style to blend in: {style}.")
-    if visible_text_lines:
-        prompt_parts.append(
-            f"Text layout theme: {text_layout_theme}. Typography plan: {typography_plan}. Use transparent text overlay, mobile-readable typography on natural negative space with subtle translucent shadow. "
-            "Visible copy set, rendered exactly once: "
-            f"{json.dumps(visible_text_lines, ensure_ascii=False)}."
-        )
-    else:
-        prompt_parts.append("No visible marketing text; let the product, action, light, and composition carry the selling point.")
-    prompt = _append_visible_copy_lock(" ".join(prompt_parts), visible_text_lines)
+    prompt = display_prompt[:3500].rstrip()
     return _normalize_n6_prompt(
         {
             "slot_id": str(slot_input["slot_order"]),
@@ -5108,7 +5020,7 @@ def _limit_prompt_model_text(text, limit=PROMPT_MODEL_TEXT_LIMIT):
     return text[:limit].rstrip()
 
 
-def _slot_text_from_model_text(text, slot_order):
+def _slot_text_from_model_text(text, slot_order, *, allow_whole=True):
     text = str(text or "").strip()
     if not text:
         return ""
@@ -5123,7 +5035,7 @@ def _slot_text_from_model_text(text, slot_order):
         order = int(match.group(1))
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         sections[order] = text[match.start() : end].strip()
-    return _limit_prompt_model_text(sections.get(int(slot_order)) or text)
+    return _limit_prompt_model_text(sections.get(int(slot_order)) or (text if allow_whole else ""))
 
 
 def _deepseek_text_n5_plans(raw_text, marketing_input, marketing_slots, fact_ids, inference_ids, target_appearance_ids):
@@ -5197,7 +5109,7 @@ def _deepseek_text_n6_prompt(raw_text, slot_input, identity, ledger, rule_refs):
     text = str(raw_text or "").strip()
     plan = slot_input.get("slot_plan") or {}
     fact_trace = [item["fact_id"] for item in ledger["facts"][:2]]
-    prompt = _limit_generation_prompt(text, [], limit=3500)
+    prompt = text[:3500].rstrip()
     payload = {
         "slot_id": str(slot_input["slot_order"]),
         "main_scene": str(plan.get("main_scene") or text or "DeepSeek image design"),
@@ -5315,7 +5227,21 @@ def _n6_slot_fallback_text(item, slot_input):
         return json.dumps(item, ensure_ascii=False, sort_keys=True)
     slot_plan = slot_input.get("slot_plan") if isinstance(slot_input, dict) else {}
     if isinstance(slot_plan, dict) and slot_plan:
-        return json.dumps(slot_plan, ensure_ascii=False, sort_keys=True)
+        composition_plan = slot_plan.get("composition_plan") if isinstance(slot_plan.get("composition_plan"), dict) else {}
+        style_plan = slot_plan.get("style_plan") if isinstance(slot_plan.get("style_plan"), dict) else {}
+        parts = [
+            str(slot_plan.get("visual_theme") or slot_plan.get("role") or slot_plan.get("decision_task") or "").strip(),
+            str(slot_plan.get("specific_moment") or slot_plan.get("main_scene") or "").strip(),
+            str(slot_plan.get("main_action") or "").strip(),
+            str(composition_plan.get("camera_angle") or slot_plan.get("composition") or "").strip(),
+            str(style_plan.get("lighting") or "").strip(),
+            str(style_plan.get("material_focus") or "").strip(),
+            str(slot_plan.get("typography_direction") or "").strip(),
+        ]
+        text = "；".join(dict.fromkeys(part for part in parts if part))
+        if text:
+            return f"生成一张 1:1 商品营销图。{text}。"
+        return "生成一张 1:1 商品营销图。围绕当前槽位的商品卖点设计具体画面、镜头、光线、材质、构图和可见文字。"
     return json.dumps(slot_input, ensure_ascii=False, sort_keys=True)
 
 
@@ -5328,7 +5254,12 @@ def _normalize_n6_model_text(text, node_id, output_schema, payload, identity, le
             _validate_json_schema(value, output_schema)
         result = _normalize_n6_prompt(value, payload["slot_order"], identity, ledger, rule_refs)
     except Exception:
-        result = _deepseek_text_n6_prompt(text, payload, identity, ledger, rule_refs)
+        slot_text = str(text or "").strip()
+        try:
+            slot_text = _n6_slot_fallback_text(_json_object(text), payload)
+        except Exception:
+            pass
+        result = _deepseek_text_n6_prompt(slot_text, payload, identity, ledger, rule_refs)
     result["prompt_source"] = "deepseek"
     result.setdefault("raw_model_text", _limit_prompt_model_text(text, PROMPT_TRACE_TEXT_LIMIT))
     return result
@@ -5369,9 +5300,17 @@ def _normalize_n6_slot_set_model_text(text, output_schema, payload, identity, le
             results[order] = result
     except Exception:
         pass
+    raw_text = str(text or "").strip()
+    use_raw_text_for_single_slot = bool(raw_text) and len(slot_inputs) == 1
     for order, slot_input in slot_inputs.items():
         if order not in results:
-            slot_text = _n6_slot_fallback_text(None, slot_input)
+            slot_text = (
+                raw_text
+                if use_raw_text_for_single_slot
+                else _slot_text_from_model_text(raw_text, order, allow_whole=False)
+            )
+            if not slot_text:
+                slot_text = _n6_slot_fallback_text(None, slot_input)
             results[order] = _deepseek_text_n6_prompt(
                 slot_text,
                 slot_input,
@@ -5397,8 +5336,8 @@ def _prompt_node_n6_plan_set(client, node_id, instruction, payload, identity, le
             instruction,
             "本次 N6 仍然是图片 Prompt 编译节点，但要一次性编译 input_json.slots 中的全部营销槽位。",
             "input_json.common 是所有槽位共享的商品身份、事实、语言和参考图上下文；每个 slots 项只包含当前槽位差异。",
-            "输出顶层 JSON 对象，字段为 slots；每项对应输入 slot_order，并尽量包含 display_prompt、localized_copy、prompt 和 reference_plan。",
-            "字段不完整时后端会按模型文本补齐；不要复制 raw trace、历史快照或整套提示词到每个槽位。",
+            "输出顶层 JSON 对象，字段为 slots；每项对应输入 slot_order，并包含一段可直接生图的中文正式导演稿 display_prompt。",
+            "不要输出英文控制稿、回译、text_layout_theme JSON、raw trace、历史快照，也不要把整套提示词复制到每个槽位。",
             serialized,
         ]
     )
@@ -5947,65 +5886,94 @@ def process_prompt_once(client=None, storage=None):
                 ),
                 image_relations[0],
             )
-            references = [primary_relation.asset.storage_path]
-            with storage.reference_paths(references) as image_paths:
-                def observe_relation(index, relation, image_path):
-                    observation_input = {
-                        "asset_id": str(relation.asset_id),
-                        "asset_kind": "owned_product",
-                        "product_name": cluster.product_name,
-                        "confirmed_points": _string_list(cluster.product_facts),
-                    }
-                    try:
-                        observation = _validated_provider_json(
-                            client.observe_images(
-                                "\n".join(
-                                    [
-                                        "NODE N1",
-                                        f"ASSET_ID={relation.asset_id}",
-                                        observation_system,
-                                        _render_node_user_message(
-                                            "N1",
-                                            "Observe only visible product evidence in this single owned-product image. Return strict JSON with visible identity, candidate product name, confidence, role, and reference quality.",
-                                            observation_input,
-                                        ),
-                                    ]
-                                ),
-                                [image_path],
-                            ),
-                            lambda value, asset_id=relation.asset_id: _normalize_n1_observation(
-                                value,
-                                asset_id,
-                            ),
-                            lambda text, node_input=observation_input, path=image_path: _repair_observation_json(
-                                client,
-                                text,
-                                system_instruction=observation_system,
-                                observation_input=node_input,
-                                image_path=path,
-                            ),
-                        )
-                    except Exception:
-                        fallback_name = cluster.product_name.strip()
-                        if fallback_name == "名称待确认" or _is_schema_placeholder(fallback_name):
-                            fallback_name = ""
-                        observation = _fallback_n1_observation(
-                            relation.asset_id,
-                            fallback_name,
-                        )
-                    return index, observation_input, observation
-
-                n1_results = [observe_relation(0, primary_relation, image_paths[0])]
-                for _, observation_input, observation in n1_results:
-                    observations.append(observation)
-                    node_snapshots.append(
-                        _node_snapshot(
-                            "N1",
-                            settings.APIMART_VISION_MODEL,
-                            observation_input,
-                            observation,
-                        )
+            manual_product_name = cluster.product_name.strip()
+            if manual_product_name == "名称待确认" or _is_schema_placeholder(manual_product_name):
+                manual_product_name = ""
+            confirmed_points = _string_list(cluster.product_facts)
+            if manual_product_name:
+                observation_input = {
+                    "asset_id": str(primary_relation.asset_id),
+                    "asset_kind": "owned_product",
+                    "product_name": manual_product_name,
+                    "confirmed_points": confirmed_points,
+                    "skip_reason": "manual_product_name",
+                }
+                observation = _fallback_n1_observation(
+                    primary_relation.asset_id,
+                    manual_product_name,
+                )
+                if confirmed_points:
+                    observation["product_facts"] = confirmed_points
+                    observation["identity_lock"] = (
+                        f"保持参考图中的{manual_product_name}主体外观；人工补充信息："
+                        f"{'；'.join(confirmed_points)}"
                     )
+                observations.append(observation)
+                node_snapshots.append(
+                    _node_snapshot(
+                        "N1",
+                        "local-manual-product-identity",
+                        observation_input,
+                        observation,
+                    )
+                )
+            else:
+                references = [primary_relation.asset.storage_path]
+                with storage.reference_paths(references) as image_paths:
+                    def observe_relation(index, relation, image_path):
+                        observation_input = {
+                            "asset_id": str(relation.asset_id),
+                            "asset_kind": "owned_product",
+                            "product_name": cluster.product_name,
+                            "confirmed_points": confirmed_points,
+                        }
+                        try:
+                            observation = _validated_provider_json(
+                                client.observe_images(
+                                    "\n".join(
+                                        [
+                                            "NODE N1",
+                                            f"ASSET_ID={relation.asset_id}",
+                                            observation_system,
+                                            _render_node_user_message(
+                                                "N1",
+                                                "Observe only visible product evidence in this single owned-product image. Return strict JSON with visible identity, candidate product name, confidence, role, and reference quality.",
+                                                observation_input,
+                                            ),
+                                        ]
+                                    ),
+                                    [image_path],
+                                ),
+                                lambda value, asset_id=relation.asset_id: _normalize_n1_observation(
+                                    value,
+                                    asset_id,
+                                ),
+                                lambda text, node_input=observation_input, path=image_path: _repair_observation_json(
+                                    client,
+                                    text,
+                                    system_instruction=observation_system,
+                                    observation_input=node_input,
+                                    image_path=path,
+                                ),
+                            )
+                        except Exception:
+                            observation = _fallback_n1_observation(
+                                relation.asset_id,
+                                "",
+                            )
+                        return index, observation_input, observation
+
+                    n1_results = [observe_relation(0, primary_relation, image_paths[0])]
+                    for _, observation_input, observation in n1_results:
+                        observations.append(observation)
+                        node_snapshots.append(
+                            _node_snapshot(
+                                "N1",
+                                settings.APIMART_VISION_MODEL,
+                                observation_input,
+                                observation,
+                            )
+                        )
             if not any(
                 item.get("contains_target_product")
                 and item.get("target_is_physical_product")
@@ -9238,8 +9206,6 @@ def _prompt_slot_metadata(prompt):
             for key, value in {
                 "language": localized_copy.get("language"),
                 "lines": _string_list(localized_copy.get("lines")),
-                "backTranslation": localized_copy.get("back_translation"),
-                "strategyMode": localized_copy.get("strategy_mode"),
             }.items()
             if value
         }

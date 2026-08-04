@@ -170,8 +170,8 @@ def test_sku_import_keeps_success_when_another_sku_fails_and_exposes_plan_snapsh
     assert sku["productNameSource"] == "erp"
     assert sku["importStatus"] == "imported"
     assert snapshot["skuImports"] == [failed_item, imported_item]
-    assert len(snapshot["templateSlots"]) == 9
-    assert snapshot["preflight"]["generation_count"] == 9
+    assert len(snapshot["templateSlots"]) == 8
+    assert snapshot["preflight"]["generation_count"] == 8
 
 
 def test_sku_import_records_mode_and_can_append_after_generation_history(client, tmp_path, settings, monkeypatch):

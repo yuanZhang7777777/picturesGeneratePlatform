@@ -8,10 +8,10 @@ from platform_app.template_policy import STANDARD_PRODUCT_HERO_NAME, STANDARD_PR
 
 
 GLOBAL_NAME = "Global marketplace baseline"
-VERSION = "2026.07.9"
+VERSION = "2026.08.04"
 RULE_VERSION = "2026.07"
 GLOBAL_TEMPLATE_KEY = "global-marketplace-baseline-template"
-NINE_SLOT_TEMPLATE_KEY = "global-marketplace-nine-slot-template"
+EIGHT_SLOT_TEMPLATE_KEY = "global-marketplace-eight-slot-template"
 GLOBAL_RULE_KEY = "global-marketplace-baseline-rule"
 GLOBAL_SLOTS = (
     (1, STANDARD_PRODUCT_HERO_NAME, STANDARD_PRODUCT_HERO_PURPOSE),
@@ -22,7 +22,6 @@ GLOBAL_SLOTS = (
     (6, "Model or scale", "Show model, wearer, user, pet, or real-world scale without unverified claims"),
     (7, "Size, packaging, or contents", "Show verified size, packaging, or included items without inventing numbers"),
     (8, "Marketplace conversion", "Show marketplace-ready conversion creative in the target market language"),
-    (9, "Supplemental conversion", "Show one additional conversion angle without repeating earlier slots"),
 )
 REGIONAL_SITES = {
     "shopee": ("SG", "MY", "TH", "VN", "PH", "ID", "TW", "BR"),
@@ -96,7 +95,7 @@ competitor_style 模式只提炼抽象色彩、光线、构图、场景密度和
     "N4": """
 你是标准白底商品图编译器。只编译当前模板中语义为标准白底商品图的槽位，不策划营销场景。
 
-最终英文 prompt 必须：
+最终中文白底提示词必须：
 1. 声明主参考图优先，准确锁定商品轮廓、颜色、Logo、接口、精确部件数量、排列、比例和已验证结构。
 2. 只包含一个纯白商业摄影棚场景，主要动作为 none。
 3. 商品完整、居中、无遮挡、不裁切，使用正面或最能验证结构的轻微三分之四视角。
@@ -106,7 +105,7 @@ competitor_style 模式只提炼抽象色彩、光线、构图、场景密度和
 7. 不得依靠推断改变商品身份；inference_trace 只能记录不影响身份的低风险展示判断。
 8. 合并重复否定句，prompt 按 Unicode 字符计数不得超过调用方限制。
 
-只输出符合调用方指定结构的单个 JSON 对象，不输出 Markdown 或解释。prompt 必须是可直接交给 gpt-image-2 的英文纯文本，visible_text_lines 必须为空。
+只输出符合调用方指定结构的单个 JSON 对象，不输出 Markdown 或解释。prompt 必须是可直接交给 gpt-image-2 的中文纯文本，visible_text_lines 必须为空。
 """.strip(),
     "N5": """
 你是商品套图营销导演。根据输入的实际营销槽位，为每个槽位设计一个独立购买决策任务，不生成最终图片 Prompt。
@@ -134,20 +133,20 @@ competitor_style 模式只提炼抽象色彩、光线、构图、场景密度和
 
 场景与人物：
 4. 最终 prompt 只能有一个主场景和一个主要动作。
-5. 人物、婴幼儿、成人或宠物必须符合商品目标消费者并正确使用商品，不能只是站在旁边；slot_plan.subject_plan.person_presence 写了真人、手部、身体局部、用户、宠物、模特、比例或尺度时，display_prompt 和最终英文 prompt 都必须完整保留这层关系。
+5. 人物、婴幼儿、成人或宠物必须符合商品目标消费者并正确使用商品，不能只是站在旁边；slot_plan.subject_plan.person_presence 写了真人、手部、身体局部、用户、宠物、模特、比例或尺度时，display_prompt 必须完整保留这层关系。
 6. 不可见内部结构、配件、承重关系和工作原理不得推断。
 
 本地化文字：
 7. 根据 market_context 生成母语级电商短文案，不逐字翻译。
 8. visible_text_lines 最多三行，每行短、自然、只出现一次。
 9. text_enabled=false 或平台规则禁字时必须输出零行。
-10. 图片控制指令用英文；消费者可见文字保持目标语言，不翻回英文。
-11. prompt 必须明确只允许显示列出的文字和商品自身真实品牌/型号，不得生成字段名、站点代码、乱码或额外促销文字。
+10. 图片控制指令用中文正式导演稿；消费者可见文字保持目标语言，不翻成英文。
+11. display_prompt 必须明确写出画面可见文字逐字渲染哪些内容，不得生成字段名、站点代码、乱码或额外促销文字。
 
 输出：
-12. prompt 按 Unicode 字符计数不得超过调用方限制。
+12. display_prompt 按 Unicode 字符计数不得超过调用方限制。
 13. 合并重复约束，删除无必要的镜头数字、装饰、多场景和多动作链。
-14. 只输出符合调用方指定结构的单个 JSON 对象，不输出 Markdown 或解释；prompt 必须是可直接交给 gpt-image-2 的英文纯文本。
+14. 只输出符合调用方指定结构的单个 JSON 对象，不输出 Markdown 或解释；字段只保留 slot_id、slot_order、display_prompt，不得输出英文翻译稿、回译、自评过程或 JSON 版式块。
 """.strip(),
     "N7": """
 你是商品图规则语义审查器。后端确定性检查结果不可更改，你只能补充确定性规则难以覆盖的语义风险。
@@ -330,7 +329,7 @@ class Command(BaseCommand):
         )
         if not created and (template.version != VERSION or template.slots.count() != len(GLOBAL_SLOTS)):
             template, _ = OutputTemplate.objects.get_or_create(
-                seed_key=NINE_SLOT_TEMPLATE_KEY,
+                seed_key=EIGHT_SLOT_TEMPLATE_KEY,
                 defaults={
                     "platform": "global",
                     "site": "",

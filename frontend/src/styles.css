@@ -3,10 +3,18 @@
 @layer base {
   body { @apply m-0 min-w-80 bg-slate-50 font-sans antialiased; }
   input, select, textarea { @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100; }
-  textarea { @apply min-h-24 resize-y; }
+  textarea { @apply min-h-24 resize-y pb-5 leading-6; scrollbar-gutter: stable; }
   table { @apply w-full min-w-175 border-collapse text-left text-sm; }
   th { @apply border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500; }
   td { @apply border-b border-slate-100 px-5 py-4 align-middle text-slate-600; }
+  * { scrollbar-color: rgb(148 163 184 / 0.65) transparent; scrollbar-width: thin; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 999px; background: rgb(148 163 184 / 0.65); background-clip: content-box; }
+  *::-webkit-scrollbar-thumb:hover { background: rgb(100 116 139 / 0.85); background-clip: content-box; }
+  *::-webkit-scrollbar-corner { background: transparent; }
+  *::-webkit-resizer { background: transparent; }
 }
 
 @layer components {

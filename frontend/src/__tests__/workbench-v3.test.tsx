@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import App from "../App";
 import type { ProductSku, Project } from "../types";
 
-const slots = ["hero", "angle", "selling_point", "detail", "scene", "scale", "package", "conversion", "extra"];
+const slots = ["hero", "angle", "selling_point", "detail", "scene", "scale", "package", "conversion"];
 const product = (id: string, name: string): ProductSku => ({
   id,
   name,
@@ -23,7 +23,7 @@ const product = (id: string, name: string): ProductSku => ({
   productStyle: "柔和自然光",
   preparationStatus: "preparing",
   preparation: { status: "preparing", stage: "N3", current: 3, total: 7, error: "" },
-  generationProgress: { status: "idle", current: 0, total: 9 },
+  generationProgress: { status: "idle", current: 0, total: 8 },
   overrides: { platform: null, market: null, sellerTier: null },
   effectiveConfig: { platform: "generic", market: "SEA", sellerTier: "general", size: "1:1", resolution: "1k", globalPrompt: "" },
   analysisSnapshot: {
@@ -330,7 +330,7 @@ test("does not submit generation while selected products already have active out
       ...project.skus[0],
       preparationStatus: "ready" as const,
       preparation: { status: "ready", stage: "N7", current: 7, total: 7, error: "" },
-      generationProgress: { status: "running", current: 1, completed: 1, active: 2, failed: 0, total: 9 },
+      generationProgress: { status: "running", current: 1, completed: 1, active: 2, failed: 0, total: 8 },
     }],
   };
   const fetchMock = stubFetch({ projectSnapshot: runningProject });
@@ -351,7 +351,7 @@ test("does not offer pause when selected products have no active work", async ()
       ...project.skus[0],
       preparationStatus: "ready" as const,
       preparation: { status: "ready", stage: "N7", current: 7, total: 7, error: "" },
-      generationProgress: { status: "completed", current: 9, completed: 9, active: 0, failed: 0, total: 9 },
+      generationProgress: { status: "completed", current: 8, completed: 8, active: 0, failed: 0, total: 8 },
     }],
   };
   const fetchMock = stubFetch({ projectSnapshot: idleProject });
@@ -470,14 +470,14 @@ test("reports mixed generation failures without per-product market overrides", a
       ...project.skus[0],
       preparationStatus: "ready",
       preparation: { status: "ready", stage: "N7", current: 7, total: 7, error: "" },
-      generationProgress: { status: "completed", current: 7, completed: 7, active: 0, failed: 2, total: 9 },
+      generationProgress: { status: "completed", current: 6, completed: 6, active: 0, failed: 2, total: 8 },
     }],
   };
   const fetchMock = stubFetch({ projectSnapshot: failedProject });
   renderApp();
 
   await screen.findByLabelText("商品名称 桌面灯");
-  expect(screen.getByText(/有 2 张失败/)).toHaveTextContent("出图已结束 · 7/9 · 有 2 张失败");
+  expect(screen.getByText(/有 2 张失败/)).toHaveTextContent("出图已结束 · 6/8 · 有 2 张失败");
   expect(screen.queryByText(/预备完成/)).not.toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/clusters/one/")).toBe(false);
 });
@@ -496,7 +496,7 @@ test("shows active generation progress without a 0/0 denominator", async () => {
   renderApp();
 
   await screen.findByLabelText("商品名称 桌面灯");
-  expect(screen.getByText("出图中 · 0/9")).toBeInTheDocument();
+  expect(screen.getByText("出图中 · 0/8")).toBeInTheDocument();
   expect(screen.queryByText(/0\/0/)).not.toBeInTheDocument();
 });
 
@@ -649,11 +649,16 @@ test("opens one product in a fixed side panel and consumes the first outside cli
   expect((screen.getAllByLabelText("补充信息 桌面灯")[0] as HTMLTextAreaElement).value).toContain("适合明亮桌面场景");
   expect(screen.queryByLabelText("商品身份")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("主要外观")).not.toBeInTheDocument();
-  expect(screen.getByText("9 张生成提示词")).toBeInTheDocument();
+  expect(screen.getByText("8 张生成提示词")).toBeInTheDocument();
   expect(screen.getByText("01 标准白底产品图提示词")).toBeInTheDocument();
   expect(screen.getByText("02 核心卖点图提示词")).toBeInTheDocument();
   expect(screen.queryByText("1+8 输出提示词")).not.toBeInTheDocument();
   expect(screen.queryByText(/第 1 张输出图提示词/)).not.toBeInTheDocument();
+
+  const dialog = screen.getByRole("dialog", { name: "桌面灯 商品详情" });
+  fireEvent.pointerDown(dialog);
+  fireEvent.click(document.body);
+  expect(screen.getByRole("dialog", { name: "桌面灯 商品详情" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "折叠椅 详情" }));
   expect(screen.queryByRole("dialog", { name: "桌面灯 商品详情" })).not.toBeInTheDocument();
