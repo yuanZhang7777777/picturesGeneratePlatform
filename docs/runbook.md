@@ -33,7 +33,7 @@ SKU 商品资料导入使用当前登录用户的 ERP Token 调用 `CATALOG_QUER
 
 正式素材存储使用 `STORAGE_BACKEND=oss`，并配置 `OSS_ENDPOINT`、`OSS_BUCKET`、`OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` 和 `OSS_PREFIX=independent-image-platform`。原图、SKU 拉取图、生成结果和历史版本写入该 OSS 私有前缀；导出 ZIP 临时生成后由浏览器下载到员工本地，不在服务器或 OSS 长期保留。`LOCAL_MEDIA_ROOT` 仅用于开发和假模式回退。
 
-DeepSeek 文本节点使用官方 OpenAI-compatible Chat Completions：`DEEPSEEK_BASE_URL=https://api.deepseek.com`、`DEEPSEEK_PROMPT_MODEL=deepseek-v4-flash`、`DEEPSEEK_REASONING_EFFORT=high`、`DEEPSEEK_THINKING_ENABLED=1`，鉴权只读 `DEEPSEEK_API_KEY`，不再复用 `APIMART_API_KEY`。平台从 `choices[].message.content`、`reasoning_content`、`reasoning`、`output_text` 和列表/对象内容块提取非空正文；第一次返回空正文会内部重试一次。APIMart 仍负责视觉观察和图片生成：`gpt-5-nano-2025-08-07` 走 `/v1/responses` 并从 `output[].content[].text` 提取文本；`gpt-image-2` 先通过 `/v1/uploads/images` 上传我方参考图，再用字符串数组 `image_urls` 提交 `/v1/images/generations`，任务完成后必须下载结果并归档到受控存储。真实模式下两组 key 都必须按用途配置，日志不得打印任一 key。
+DeepSeek 文本节点使用官方 OpenAI-compatible Chat Completions：`DEEPSEEK_BASE_URL=https://api.deepseek.com`、`DEEPSEEK_PROMPT_MODEL=deepseek-v4-flash`，鉴权只读 `DEEPSEEK_API_KEY`，不再复用 `APIMART_API_KEY`。成本控制默认关闭隐藏推理：`DEEPSEEK_REASONING_EFFORT=`、`DEEPSEEK_THINKING_ENABLED=0`；只有明确要更强推理时才显式设置 `DEEPSEEK_REASONING_EFFORT=high` 和 `DEEPSEEK_THINKING_ENABLED=1`。平台从 `choices[].message.content`、`reasoning_content`、`reasoning`、`output_text` 和列表/对象内容块提取非空正文；第一次返回空正文会内部重试一次。APIMart 仍负责视觉观察和图片生成：`gpt-5-nano-2025-08-07` 走 `/v1/responses` 并从 `output[].content[].text` 提取文本；`gpt-image-2` 先通过 `/v1/uploads/images` 上传我方参考图，再用字符串数组 `image_urls` 提交 `/v1/images/generations`，任务完成后必须下载结果并归档到受控存储。真实模式下两组 key 都必须按用途配置，日志不得打印任一 key。
 
 本地 APIMart/DeepSeek 三节点 smoke 命令：
 

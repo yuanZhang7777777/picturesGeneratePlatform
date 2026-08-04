@@ -173,13 +173,33 @@ def test_optimize_prompt_posts_official_deepseek_flash_payload():
     assert kwargs["json"]["model"] == "deepseek-v4-flash"
     assert kwargs["json"]["stream"] is False
     assert "temperature" not in kwargs["json"]
-    assert kwargs["json"]["reasoning_effort"] == "high"
-    assert kwargs["json"]["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in kwargs["json"]
+    assert "thinking" not in kwargs["json"]
     assert kwargs["timeout"] == 20
     assert kwargs["json"]["messages"][0] == {
         "role": "system",
         "content": "You are the complete production node instruction.",
     }
+
+
+@override_settings(
+    DEEPSEEK_API_KEY="deepseek-key",
+    DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    DEEPSEEK_PROMPT_MODEL="deepseek-v4-flash",
+    DEEPSEEK_REASONING_EFFORT="high",
+    DEEPSEEK_THINKING_ENABLED=True,
+)
+def test_complete_chat_can_enable_deepseek_reasoning_controls():
+    from platform_app.services import APIMartClient
+
+    session = Session([Response(200, {"choices": [{"message": {"content": "ok"}}]})])
+    client = APIMartClient(session=session)
+
+    client.complete_chat([{"role": "user", "content": "hello"}])
+
+    payload = session.calls[0][2]["json"]
+    assert payload["reasoning_effort"] == "high"
+    assert payload["thinking"] == {"type": "enabled"}
 
 
 @pytest.mark.parametrize("temperature", [-0.1, 2.1])

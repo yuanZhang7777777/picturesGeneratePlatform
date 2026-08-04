@@ -770,7 +770,7 @@ class APIMartClient:
         reasoning_effort = str(getattr(settings, "DEEPSEEK_REASONING_EFFORT", "") or "").strip()
         if reasoning_effort:
             payload["reasoning_effort"] = reasoning_effort
-        if getattr(settings, "DEEPSEEK_THINKING_ENABLED", True):
+        if getattr(settings, "DEEPSEEK_THINKING_ENABLED", False):
             payload["thinking"] = {"type": "enabled"}
         last_timeout = None
         last_payload = {}
@@ -5089,6 +5089,25 @@ def _n6_slot_items(payload):
     return []
 
 
+def _n6_slot_fallback_text(item, slot_input):
+    if isinstance(item, dict):
+        parts = []
+        for field in ("display_prompt", "prompt", "visual_theme", "main_scene", "main_action", "typography_plan"):
+            value = str(item.get(field) or "").strip()
+            if value:
+                parts.append(value)
+        localized = item.get("localized_copy")
+        if isinstance(localized, dict):
+            parts.extend(str(line).strip() for line in localized.get("lines", []) if str(line).strip())
+        if parts:
+            return "\n".join(parts)
+        return json.dumps(item, ensure_ascii=False, sort_keys=True)
+    slot_plan = slot_input.get("slot_plan") if isinstance(slot_input, dict) else {}
+    if isinstance(slot_plan, dict) and slot_plan:
+        return json.dumps(slot_plan, ensure_ascii=False, sort_keys=True)
+    return json.dumps(slot_input, ensure_ascii=False, sort_keys=True)
+
+
 def _normalize_n6_model_text(text, node_id, output_schema, payload, identity, ledger, rule_refs):
     try:
         value = _json_object(text)
@@ -5126,8 +5145,9 @@ def _normalize_n6_slot_set_model_text(text, output_schema, payload, identity, le
                     rule_refs_by_order.get(order, set()),
                 )
             except Exception:
+                slot_text = _n6_slot_fallback_text(item, slot_inputs[order])
                 result = _deepseek_text_n6_prompt(
-                    text,
+                    slot_text,
                     slot_inputs[order],
                     identity,
                     ledger,
@@ -5140,8 +5160,9 @@ def _normalize_n6_slot_set_model_text(text, output_schema, payload, identity, le
         pass
     for order, slot_input in slot_inputs.items():
         if order not in results:
+            slot_text = _n6_slot_fallback_text(None, slot_input)
             results[order] = _deepseek_text_n6_prompt(
-                text,
+                slot_text,
                 slot_input,
                 identity,
                 ledger,

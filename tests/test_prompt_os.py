@@ -581,6 +581,53 @@ def test_n6_validation_exception_keeps_returned_deepseek_text(monkeypatch):
     assert "生成一张 1:1 Shopee 商品营销图" in result["raw_model_text"]
 
 
+def test_n6_batch_fallback_uses_only_current_slot_text():
+    import json
+
+    from platform_app import services
+
+    identity = {
+        "primary_asset_id": "asset-1",
+        "supporting_asset_ids": [],
+        "target_appearances": [],
+    }
+    ledger = {"facts": [{"fact_id": "fact-1", "fact_class": "observed"}]}
+    payload = {
+        "slots": [
+            {
+                "slot_order": 2,
+                "slot_plan": {"main_scene": "slot 2 scene", "main_action": "slot 2 action"},
+                "market_context": {"language": "vi"},
+                "size": "1:1",
+                "resolution": "1k",
+            },
+            {
+                "slot_order": 3,
+                "slot_plan": {"main_scene": "slot 3 scene", "main_action": "slot 3 action"},
+                "market_context": {"language": "vi"},
+                "size": "1:1",
+                "resolution": "1k",
+            },
+        ]
+    }
+    raw = json.dumps(
+        {
+            "slots": [
+                {"slot_id": "2", "prompt": "ONLY_SLOT_2_DESIGN", "main_scene": "slot 2 scene", "main_action": "slot 2 action"},
+                {"slot_id": "3", "prompt": "ONLY_SLOT_3_DESIGN", "main_scene": "slot 3 scene", "main_action": "slot 3 action"},
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    results = services._normalize_n6_slot_set_model_text(raw, {}, payload, identity, ledger, {2: set(), 3: set()})
+
+    assert "ONLY_SLOT_2_DESIGN" in results[2]["prompt"]
+    assert "ONLY_SLOT_3_DESIGN" not in results[2]["prompt"]
+    assert "ONLY_SLOT_3_DESIGN" in results[3]["prompt"]
+    assert "ONLY_SLOT_2_DESIGN" not in results[3]["prompt"]
+
+
 def test_n6_marketing_slots_use_one_product_level_call(tmp_path, settings):
     import time
 
