@@ -266,6 +266,14 @@ def test_workspace_and_project_snapshots_are_scoped_and_sanitized(client, tmp_pa
         ["id", "name", "platform", "market", "template", "size", "status", "updatedAt", "assets", "skus"]
     ) <= set(project)
     sku = project["skus"][0]
+    assert "facts" not in sku
+    assert "identityLock" not in sku
+    assert "prompt" not in sku["outputs"][0]
+
+    detail = client.get(reverse("api_project_snapshot", args=[owner_batch.id]))
+    assert detail.status_code == 200
+    project = detail.json()
+    sku = project["skus"][0]
     assert sku["version"] == owner_cluster.version
     assert sku["facts"] == "BPA-free silicone"
     assert sku["identityLock"] == "Keep the sage green cup and two handles"

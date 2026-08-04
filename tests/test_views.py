@@ -143,6 +143,69 @@ def test_project_progress_api_returns_lightweight_active_state(client, tmp_path,
     assert "identity" not in sku
 
 
+def test_workspace_snapshot_uses_lightweight_project_summary(client, tmp_path, settings):
+    from platform_app.models import Batch, Cluster, Generation, OutputSlot, OutputTemplate
+    from platform_app.services import register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    user = make_user()
+    template = OutputTemplate.objects.create(platform="global", site="", name="Workspace summary")
+    slot = OutputSlot.objects.create(template=template, name="Hero", order=1)
+    batch = Batch.objects.create(owner=user, name="Heavy project", output_template=template)
+    asset = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
+    cluster = asset.clusters.get()
+    cluster.preparation_status = Cluster.PreparationStatus.READY
+    cluster.analysis_snapshot = {
+        "identity": {"product_name": "Heavy item"},
+        "prompt_os": [{"node_id": "N6", "input_snapshot": "x" * 20000}],
+    }
+    cluster.save(update_fields=["preparation_status", "analysis_snapshot"])
+    generation = Generation.objects.create(batch=batch, cluster=cluster, output_slot=slot, status=Generation.Status.COMPLETED)
+    client.force_login(user)
+
+    response = client.get(reverse("api_workspace_snapshot"))
+
+    assert response.status_code == 200
+    project = response.json()["projects"][0]
+    sku = project["skus"][0]
+    output = sku["outputs"][0]
+    assert output["id"] == str(generation.id)
+    assert "analysisSnapshot" not in sku
+    assert "identity" not in sku
+    assert "prompts" not in sku
+    assert "prompt" not in output
+    assert "assets" not in sku
+
+
+def test_project_snapshot_omits_internal_prompt_os_snapshots(client, tmp_path, settings):
+    from platform_app.models import Batch, Cluster
+    from platform_app.services import register_uploaded_asset
+
+    settings.MEDIA_ROOT = tmp_path
+    make_global_baseline()
+    user = make_user()
+    batch = Batch.objects.create(owner=user, name="Project detail")
+    asset = register_uploaded_asset(batch, "a.png", image_file("a.png").read(), "image/png")
+    cluster = asset.clusters.get()
+    cluster.analysis_snapshot = {
+        "identity": {"product_name": "Detail item"},
+        "fact_ledger": {"facts": [{"statement": "visible"}]},
+        "readiness": {"status": "ready"},
+        "prompt_os": [{"node_id": "N6", "input_snapshot": "x" * 20000}],
+    }
+    cluster.save(update_fields=["analysis_snapshot"])
+    client.force_login(user)
+
+    response = client.get(reverse("api_project_snapshot", args=[batch.id]))
+
+    assert response.status_code == 200
+    analysis = response.json()["skus"][0]["analysisSnapshot"]
+    assert analysis["identity"]["product_name"] == "Detail item"
+    assert analysis["fact_ledger"]["facts"][0]["statement"] == "visible"
+    assert analysis["readiness"] == {"status": "ready"}
+    assert "prompt_os" not in analysis
+
+
 def test_upload_api_creates_assets_and_default_clusters(client, tmp_path, settings):
     from platform_app.models import Batch
 

@@ -46,6 +46,7 @@ from .services import (
     safe_storage_path,
     serialize_project,
     serialize_project_progress,
+    serialize_workspace_project,
     StorageError,
     UploadError,
     update_cluster_content,
@@ -215,7 +216,7 @@ def api_workspace_snapshot(request):
             "currentUser": {
                 "role": "admin" if request.user.is_platform_admin else "operator"
             },
-            "projects": [_serialize_project(batch) for batch in queryset],
+            "projects": [serialize_workspace_project(batch) for batch in queryset],
         }
     )
 

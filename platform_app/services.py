@@ -9057,6 +9057,80 @@ def _prompt_slot_metadata(prompt):
     return metadata
 
 
+def _public_analysis_snapshot(analysis):
+    if not isinstance(analysis, dict):
+        return {}
+    public = {
+        key: copy.deepcopy(analysis[key])
+        for key in ("identity", "fact_ledger", "rule_gate", "readiness")
+        if key in analysis
+    }
+    public["identity"] = _strip_schema_placeholders(public.get("identity") or {})
+    return public
+
+
+def _serialize_output_summary(generation):
+    return {
+        "id": str(generation.id),
+        "name": generation.output_slot.name,
+        "slot": generation.output_slot.name,
+        "slotId": str(generation.output_slot_id),
+        "slotOrder": generation.output_slot.order,
+        "attempt": generation.attempt,
+        "version": generation.attempt,
+        "status": _generation_status(generation.status),
+        "reviewStatus": (
+            Generation.ReviewStatus.CHANGES_REQUESTED
+            if generation.review_status == Generation.ReviewStatus.REJECTED
+            else generation.review_status
+        ),
+        "promptVersionId": str(generation.prompt_version_id) if generation.prompt_version_id else None,
+    }
+
+
+def serialize_workspace_project(batch):
+    template = batch.output_template or _global_fallback_template()
+    skus = []
+    for cluster in batch.clusters.filter(archived_at__isnull=True).order_by("created_at", "id"):
+        latest_outputs = {}
+        for generation in cluster.generations.select_related("output_slot").order_by("output_slot__order", "attempt", "id"):
+            latest_outputs[generation.output_slot_id] = _serialize_output_summary(generation)
+        outputs = sorted(latest_outputs.values(), key=lambda item: item["slotOrder"])
+        skus.append({
+            "id": str(cluster.id),
+            "name": "" if cluster.product_name == "名称待确认" or _is_schema_placeholder(cluster.product_name) else cluster.product_name,
+            "preparationStatus": cluster.preparation_status,
+            "preparation": {
+                "status": cluster.preparation_status,
+                "stage": cluster.preparation_stage,
+                "current": cluster.preparation_current,
+                "total": cluster.preparation_total,
+                "error": cluster.preparation_error,
+            },
+            "generationProgress": {
+                "completed": sum(item["status"] == "completed" for item in outputs),
+                "active": sum(item["status"] in {"queued", "running"} for item in outputs),
+                "failed": sum(item["status"] == "failed" for item in outputs),
+                "total": len(outputs),
+            },
+            "outputs": outputs,
+        })
+    return {
+        "id": str(batch.id),
+        "name": batch.name,
+        "platform": batch.platform,
+        "market": batch.market or batch.site,
+        "sellerTier": batch.seller_tier,
+        "template": template.name,
+        "size": batch.size,
+        "resolution": (batch.resolution or "1k").upper(),
+        "status": _project_status(batch.status),
+        "updatedAt": batch.updated_at.isoformat(),
+        "assets": [],
+        "skus": skus,
+    }
+
+
 def serialize_project(batch):
     assets = list(batch.assets.filter(archived_at__isnull=True).order_by("created_at", "id"))
     serialized_assets = {
@@ -9141,9 +9215,7 @@ def serialize_project(batch):
         analysis = cluster.analysis_snapshot if isinstance(cluster.analysis_snapshot, dict) else {}
         public_product_name = "" if cluster.product_name == "名称待确认" or _is_schema_placeholder(cluster.product_name) else cluster.product_name
         public_identity = _strip_schema_placeholders(analysis.get("identity") or {})
-        public_analysis = copy.deepcopy(analysis)
-        if isinstance(public_analysis, dict):
-            public_analysis["identity"] = public_identity
+        public_analysis = _public_analysis_snapshot(analysis)
         effective_config = _effective_config(batch, cluster)
         effective_config["resolution"] = effective_config["resolution"].upper()
         sku_assets = [serialized_assets[item.asset_id] for item in cluster_assets]
