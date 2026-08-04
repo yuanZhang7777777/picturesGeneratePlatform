@@ -2372,6 +2372,47 @@ def _compact_prompt_model_value(value):
     return value
 
 
+def _compact_n6_model_payload(payload):
+    if not isinstance(payload, dict) or not isinstance(payload.get("slots"), list):
+        return _compact_prompt_model_value(payload)
+    slots = [slot for slot in payload["slots"] if isinstance(slot, dict)]
+    if not slots:
+        return _compact_prompt_model_value(payload)
+    common_keys = {
+        "product_name",
+        "product_profile",
+        "identity_lock",
+        "fact_ledger",
+        "market_context",
+        "primary_asset_id",
+        "supporting_asset_ids",
+        "target_appearances",
+        "size",
+        "resolution",
+        "prompt_limits",
+    }
+    common = {}
+    for key in common_keys:
+        if key in slots[0] and all(slot.get(key) == slots[0][key] for slot in slots[1:]):
+            common[key] = _compact_prompt_model_value(slots[0][key])
+    compact = {
+        key: _compact_prompt_model_value(value)
+        for key, value in payload.items()
+        if key != "slots"
+    }
+    if common:
+        compact["common"] = common
+    compact["slots"] = [
+        {
+            key: _compact_prompt_model_value(value)
+            for key, value in slot.items()
+            if key not in common
+        }
+        for slot in slots
+    ]
+    return compact
+
+
 def _compact_prompt_trace_value(value):
     if isinstance(value, dict):
         compact = {}
@@ -5289,13 +5330,14 @@ def _prompt_node_n6_plan_set(client, node_id, instruction, payload, identity, le
     node_template = _published_prompt_node(node_id)
     single_schema = copy.deepcopy(node_template.output_schema) if node_template is not None else {}
     output_schema = _n6_set_schema(single_schema)
-    request_payload = _compact_prompt_model_value(payload)
+    request_payload = _compact_n6_model_payload(payload)
     serialized = json.dumps(request_payload, ensure_ascii=False, sort_keys=True)
     node_text = "\n".join(
         [
             f"NODE {node_id}",
             instruction,
             "本次 N6 仍然是图片 Prompt 编译节点，但要一次性编译 input_json.slots 中的全部营销槽位。",
+            "input_json.common 是所有槽位共享的商品身份、事实、语言和参考图上下文；每个 slots 项只包含当前槽位差异。",
             "输出顶层 JSON 对象，字段为 slots；每项对应输入 slot_order，并尽量包含 display_prompt、localized_copy、prompt 和 reference_plan。",
             "字段不完整时后端会按模型文本补齐；不要复制 raw trace、历史快照或整套提示词到每个槽位。",
             serialized,
@@ -5312,7 +5354,7 @@ def _prompt_node_n6_plan_set(client, node_id, instruction, payload, identity, le
         node_text,
         _prompt_node_temperature(node_id),
     )
-    return _normalize_n6_slot_set_model_text(text, output_schema, request_payload, identity, ledger, rule_refs_by_order)
+    return _normalize_n6_slot_set_model_text(text, output_schema, payload, identity, ledger, rule_refs_by_order)
 
 
 def _prompt_node_n6_plan_from_rendered(client, node_id, rendered, payload, identity, ledger, rule_refs):

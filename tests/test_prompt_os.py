@@ -723,9 +723,30 @@ def test_marketing_model_requests_omit_schema_and_raw_trace(settings):
                         "raw_model_text": huge_trace,
                     },
                     "product_name": "商品",
-                    "product_profile": {},
-                    "identity_lock": {},
-                    "fact_ledger": {"facts": []},
+                    "product_profile": {"shared": "shared-profile"},
+                    "identity_lock": {"shared": "shared-lock"},
+                    "fact_ledger": {"facts": [{"fact_id": "f1", "fact_class": "confirmed", "text": "shared-fact"}]},
+                    "market_context": {"language": "vi"},
+                    "primary_asset_id": "asset-1",
+                    "supporting_asset_ids": [],
+                    "target_appearances": [],
+                    "appearance_ids": [],
+                    "resolved_rule_directives": [],
+                    "rule_refs": [],
+                    "size": "1:1",
+                    "resolution": "1k",
+                },
+                {
+                    "slot_order": 3,
+                    "slot_plan": {
+                        "visual_theme": "微距质感",
+                        "main_scene": "细节特写",
+                        "main_action": "none",
+                    },
+                    "product_name": "商品",
+                    "product_profile": {"shared": "shared-profile"},
+                    "identity_lock": {"shared": "shared-lock"},
+                    "fact_ledger": {"facts": [{"fact_id": "f1", "fact_class": "confirmed", "text": "shared-fact"}]},
                     "market_context": {"language": "vi"},
                     "primary_asset_id": "asset-1",
                     "supporting_asset_ids": [],
@@ -739,14 +760,18 @@ def test_marketing_model_requests_omit_schema_and_raw_trace(settings):
             ]
         },
         {"primary_asset_id": "asset-1", "supporting_asset_ids": []},
-        {"facts": []},
-        {2: set()},
+        {"facts": [{"fact_id": "f1", "fact_class": "confirmed"}]},
+        {2: set(), 3: set()},
     )
 
     assert "OUTPUT_SCHEMA=" not in client.text
     assert "raw_model_text" not in client.text
     assert huge_trace not in client.text
-    assert json.loads(client.text.rsplit("\n", 1)[-1])["slots"][0]["slot_plan"]["visual_theme"] == "清晨使用瞬间"
+    request_json = json.loads(client.text.rsplit("\n", 1)[-1])
+    assert request_json["common"]["product_profile"]["shared"] == "shared-profile"
+    assert client.text.count("shared-profile") == 1
+    assert request_json["slots"][0]["slot_plan"]["visual_theme"] == "清晨使用瞬间"
+    assert "product_profile" not in request_json["slots"][0]
 
 
 def test_raw_n5_text_is_split_by_slot_without_copying_full_trace():
