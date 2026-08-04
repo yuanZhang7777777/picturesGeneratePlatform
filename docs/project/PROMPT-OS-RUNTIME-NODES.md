@@ -77,7 +77,7 @@ OSS 只负责私有存储，不等于模型能直接读取图片。N1 识别的�
 
 ## 运行容错与耗时边界
 
-- DeepSeek 文本节点单次等待 20 秒；空响应、坏 JSON 或缺少非关键字段时使用当前商品事实生成兜底结构，不让商品卡因为内部 Schema 错误卡死。
+- DeepSeek 文本节点非空文本优先继续传递：JSON 不合法、缺字段或结构不完整时保留 `raw_model_text` 并继续交给下游；只有模型调用失败或空响应才按业务失败处理，测试/demo 环境显式开启 fallback 时才允许本地兜底。
 - `preparing` 超过 120 秒会回到待处理，下一轮 Prompt Worker 继续预备。
 - 正式生成只复用当前配置下已通过 N7 的 `PromptVersion`，不再在创建 `Generation` 时二次跑 N7。
 - `submitting` 且没有 `provider_task_id` 超过 600 秒会回到队列重新提交，用于恢复部署中断或网络提交中断。
