@@ -14,6 +14,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
 from django.middleware.csrf import get_token
 from django.db import connection, transaction
+from django.db.models import Prefetch
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -208,7 +209,13 @@ def api_project_create(request):
 @password_change_required
 @require_http_methods(["GET"])
 def api_workspace_snapshot(request):
-    queryset = Batch.objects.select_related("output_template").order_by("-updated_at", "-id")
+    generation_summary = Generation.objects.select_related("output_slot").order_by("output_slot__order", "attempt", "id")
+    cluster_summary = Cluster.objects.filter(archived_at__isnull=True).order_by("created_at", "id").prefetch_related(
+        Prefetch("generations", queryset=generation_summary)
+    )
+    queryset = Batch.objects.select_related("output_template").prefetch_related(
+        Prefetch("clusters", queryset=cluster_summary)
+    ).order_by("-updated_at", "-id")
     if not request.user.is_platform_admin:
         queryset = queryset.filter(owner=request.user)
     return JsonResponse(

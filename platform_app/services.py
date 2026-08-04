@@ -9091,9 +9091,19 @@ def _serialize_output_summary(generation):
 def serialize_workspace_project(batch):
     template = batch.output_template or _global_fallback_template()
     skus = []
-    for cluster in batch.clusters.filter(archived_at__isnull=True).order_by("created_at", "id"):
+    clusters = batch._prefetched_objects_cache.get("clusters") if hasattr(batch, "_prefetched_objects_cache") else None
+    if clusters is None:
+        clusters = batch.clusters.filter(archived_at__isnull=True).order_by("created_at", "id")
+    for cluster in clusters:
         latest_outputs = {}
-        for generation in cluster.generations.select_related("output_slot").order_by("output_slot__order", "attempt", "id"):
+        generations = (
+            cluster._prefetched_objects_cache.get("generations")
+            if hasattr(cluster, "_prefetched_objects_cache")
+            else None
+        )
+        if generations is None:
+            generations = cluster.generations.select_related("output_slot").order_by("output_slot__order", "attempt", "id")
+        for generation in generations:
             latest_outputs[generation.output_slot_id] = _serialize_output_summary(generation)
         outputs = sorted(latest_outputs.values(), key=lambda item: item["slotOrder"])
         skus.append({
